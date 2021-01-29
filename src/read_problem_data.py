@@ -1,0 +1,200 @@
+import pandas as pd
+from typing import List, Dict, Tuple
+
+
+class ProblemData:
+
+    def __init__(self, file_path: str) -> None:
+        self.vessel_capacities = pd.read_excel(file_path, sheet_name='vessel_capacity', index_col=0, skiprows=[0])
+        self.inventory_capacities = pd.read_excel(file_path, sheet_name='inventory_capacity', index_col=0, skiprows=[0])
+        self.order_nodes_for_factories = pd.read_excel(file_path, sheet_name='order_nodes_for_factory', index_col=0,
+                                                       skiprows=[0])
+        self.time_windows_for_orders = pd.read_excel(file_path, sheet_name='time_windows_for_order', index_col=0,
+                                                     skiprows=[0])
+        self.time_periods_for_vessels = pd.read_excel(file_path, sheet_name='time_periods_for_vessel', index_col=0,
+                                                      skiprows=[0])
+        self.vessel_initial_loads = pd.read_excel(file_path, sheet_name='initial_vessel_load', index_col=0,
+                                                  skiprows=[0])
+        self.nodes_for_vessels = pd.read_excel(file_path, sheet_name='nodes_for_vessel', index_col=0, skiprows=[0])
+        self.initial_inventories = pd.read_excel(file_path, sheet_name='initial_inventory', index_col=0, skiprows=[0])
+        self.inventory_unit_costs = pd.read_excel(file_path, sheet_name='inventory_cost', index_col=0, skiprows=[0])
+        self.transport_unit_costs = pd.read_excel(file_path, sheet_name='transport_cost', index_col=0, skiprows=[0])
+        self.transport_times = pd.read_excel(file_path, sheet_name='transport_time', index_col=0, skiprows=[0])
+        self.unloading_times = pd.read_excel(file_path, sheet_name='unloading_time', index_col=0, skiprows=[0])
+        self.loading_times = pd.read_excel(file_path, sheet_name='loading_time', index_col=0, skiprows=[0])
+        self.demands = pd.read_excel(file_path, sheet_name='demand', index_col=0, skiprows=[0])
+        self.production_unit_costs = pd.read_excel(file_path, sheet_name='production_cost', index_col=0, skiprows=[0])
+        self.production_max_capacities = pd.read_excel(file_path, sheet_name='production_max_capacity', index_col=0,
+                                                       skiprows=[0])
+        self.production_min_capacities = pd.read_excel(file_path, sheet_name='production_min_capacity', index_col=0,
+                                                       skiprows=[0])
+        self.production_lines_for_factories = pd.read_excel(file_path, sheet_name='production_lines_for_factory',
+                                                            index_col=0, skiprows=[0])
+
+        # Validate sets
+        self._validate_set_consistency()
+
+    def _validate_set_consistency(self) -> None:
+        # Products
+        assert set(self.get_products()) == set(self.initial_inventories.columns)
+        assert set(self.get_products()) == set(self.vessel_initial_loads.index)
+        assert set(self.get_products()) == set(self.demands.columns)
+        assert set(self.get_products()) == set(self.production_unit_costs.index)
+        assert set(self.get_products()) == set(self.production_max_capacities.index)
+        assert set(self.get_products()) == set(self.production_min_capacities.index)
+
+        # Production lines
+        assert set(self.get_production_lines()) == set(self.production_max_capacities.columns)
+        assert set(self.get_production_lines()) == set(self.production_min_capacities.columns)
+        assert set(self.get_production_lines()) == set(self.production_lines_for_factories.index)
+
+        # Vessels
+        assert set(self.get_vessels()) == set(self.nodes_for_vessels.index)
+        assert set(self.get_vessels()) == set(self.time_periods_for_vessels.index)
+        assert set(self.get_vessels()) == set(self.vessel_capacities.index)
+        assert set(self.get_vessels()) == set(self.transport_unit_costs.index)
+        assert set(self.get_vessels()) == set(self.unloading_times.columns)
+        assert set(self.get_vessels()) == set(self.loading_times.columns)
+        assert set(self.get_vessels()) == set(self.vessel_initial_loads.columns)
+
+        # Factories
+        assert set(self.get_factory_nodes()) == set(self.order_nodes_for_factories.columns)
+        assert set(self.get_factory_nodes()) == set(self.inventory_capacities.index)
+        assert set(self.get_factory_nodes()) == set(self.initial_inventories.index)
+        assert set(self.get_factory_nodes()) == set(self.inventory_unit_costs.index)
+        assert set(self.get_factory_nodes()) == set(self.production_unit_costs.columns)
+        assert set(self.get_factory_nodes()) == set(self.production_lines_for_factories['factory'])  # At least 1 production line per factory
+
+        # Order nodes
+        assert set(self.get_order_nodes()) == set(self.order_nodes_for_factories.index)
+        assert set(self.get_order_nodes()) == set(self.time_windows_for_orders.index)
+        assert set(self.get_order_nodes()) == set(self.demands.index)
+
+        # All nodes
+        assert set(self.get_nodes()) == set(self.nodes_for_vessels.columns)
+        assert set(self.get_nodes()) == set(self.transport_times.index)
+        assert set(self.get_nodes()) == set(self.transport_times.columns)
+        assert set(self.get_nodes()) == set(self.unloading_times.index)
+        assert set(self.get_nodes()) == set(self.loading_times.index)
+
+        # Time periods
+        assert set(self.get_time_periods()) == set(self.time_windows_for_orders.columns)
+        assert set(self.get_time_periods()) == set(self.time_periods_for_vessels.columns)
+
+    def get_vessels(self) -> List[str]:
+        return list(self.vessel_capacities.index)
+
+    def get_vessel_ton_capacities_dict(self) -> Dict[str, int]:
+        return {vessel: self.vessel_capacities.loc[vessel, 'capacity [t]'] for vessel in self.vessel_capacities.index}
+
+    def get_vessel_nprod_capacities_dict(self) -> Dict[str, int]:
+        return {vessel: self.vessel_capacities.loc[vessel, 'capacity [nProd]'] for vessel in
+                self.vessel_capacities.index}
+
+    def get_order_nodes_for_factories_dict(self) -> Dict[Tuple[str, str], int]:
+        return {(factory_node, order_node): self.order_nodes_for_factories.loc[order_node, factory_node]
+                for order_node in self.order_nodes_for_factories.index
+                for factory_node in self.order_nodes_for_factories.columns}
+
+    def get_order_nodes(self) -> List[str]:
+        return list(self.order_nodes_for_factories.index)
+
+    def get_factory_nodes(self) -> List[str]:
+        return list(self.order_nodes_for_factories.columns)
+
+    def get_nodes(self) -> List[str]:
+        return self.get_order_nodes() + self.get_factory_nodes()
+
+    def get_time_periods(self) -> List[int]:
+        return list(int(time_period) for time_period in self.time_windows_for_orders.columns)
+
+    def get_time_windows_for_orders_dict(self) -> Dict[Tuple[str, int], int]:
+        return {(order_node, int(time_period)): self.time_windows_for_orders.loc[order_node, time_period]
+                for order_node in self.time_windows_for_orders.index
+                for time_period in self.time_windows_for_orders.columns}
+
+    def get_time_periods_for_vessels_dict(self) -> Dict[Tuple[str, int], int]:
+        return {(vessel, int(time_period)): self.time_periods_for_vessels.loc[vessel, time_period]
+                for vessel in self.time_periods_for_vessels.index
+                for time_period in self.time_periods_for_vessels.columns}
+
+    def get_nodes_for_vessels_dict(self) -> Dict[Tuple[str, str], int]:
+        return {(vessel, node): self.nodes_for_vessels.loc[vessel, node]
+                for vessel in self.nodes_for_vessels.index
+                for node in self.nodes_for_vessels.columns}
+
+    def get_vessel_initial_loads_dict(self) -> Dict[Tuple[str, str], int]:
+        return {(vessel, product): self.vessel_initial_loads.loc[product, vessel]
+                for product in self.vessel_initial_loads.index
+                for vessel in self.vessel_initial_loads.columns}
+
+    def get_products(self) -> List[str]:
+        return list(self.initial_inventories.columns)
+
+    def get_production_lines(self) -> List[str]:
+        return list(self.production_max_capacities.columns)
+
+    def get_initial_inventories_dict(self) -> Dict[Tuple[str, str], int]:
+        return {(factory_node, product): self.initial_inventories.loc[factory_node, product]
+                for factory_node in self.initial_inventories.index
+                for product in self.initial_inventories.columns}
+
+    def get_inventory_capacities_dict(self) -> Dict[Tuple[str, str], int]:
+        return {factory_node: self.inventory_capacities.loc[factory_node, 'capacity [t]'] for factory_node in
+                self.inventory_capacities.index}
+
+    def get_inventory_unit_costs_dict(self) -> Dict[str, int]:
+        return {factory_node: self.inventory_unit_costs.loc[factory_node, 'unit_cost'] for factory_node in
+                self.inventory_unit_costs.index}
+
+    def get_transport_costs_dict(self) -> Dict[str, int]:
+        return {vessel: self.transport_unit_costs.loc[vessel, 'unit_transport_cost'] for vessel in
+                self.transport_unit_costs.index}
+
+    def get_transport_times_dict(self) -> Dict[Tuple[str, str], int]:
+        return {**{(node1, node2): self.transport_times.loc[node1, node2]
+                for node1 in self.transport_times.index
+                for node2 in self.transport_times.columns}, **{('d_0', node): 0 for node in self.transport_times.index}}
+
+    def get_unloading_times_dict(self) -> Dict[Tuple[str, str], int]:
+        return {(vessel, node): self.unloading_times.loc[node, vessel]
+                for node in self.unloading_times.index
+                for vessel in self.unloading_times.columns}
+
+    def get_loading_times_dict(self) -> Dict[Tuple[str, str], int]:
+        return {(vessel, node): int(self.loading_times.loc[node, vessel])
+                for node in self.loading_times.index
+                for vessel in self.loading_times.columns}
+
+    def get_demands_dict(self) -> Dict[Tuple[str, str], int]:
+        order_node_dict = {(order_node, order_node, product): int(self.demands.loc[order_node, product])
+                           for order_node in self.demands.index
+                           for product in self.demands.columns}
+
+        order_nodes_for_factories = self.get_order_nodes_for_factories_dict()  # On the form "(factory, order): 0/1"
+        factory_node_dict = {(factory_node, order_node, product): -int(self.demands.loc[order_node, product])
+                             for (factory_node, order_node) in order_nodes_for_factories.keys() if
+                             order_nodes_for_factories[factory_node, order_node] == 1
+                             for product in self.demands.columns}
+
+        return {**order_node_dict, **factory_node_dict}
+
+    def get_production_unit_costs_dict(self) -> Dict[Tuple[str, str], int]:
+        return {(factory_node, product): int(self.production_unit_costs.loc[product, factory_node])
+                for product in self.production_unit_costs.index
+                for factory_node in self.production_unit_costs.columns}
+
+    def get_production_max_capacities_dict(self) -> Dict[Tuple[str, str], int]:
+        return {(production_line, product): int(self.production_max_capacities.loc[product, production_line])
+                for product in self.production_max_capacities.index
+                for production_line in self.production_max_capacities.columns}
+
+    def get_production_min_capacities_dict(self) -> Dict[Tuple[str, str], int]:
+        return {(production_line, product): int(self.production_min_capacities.loc[product, production_line])
+                for product in self.production_min_capacities.index
+                for production_line in self.production_min_capacities.columns}
+
+    def get_production_lines_for_factories_list(self) -> List[Tuple[str, str]]:
+        return [(self.production_lines_for_factories.at[production_line, 'factory'], production_line) for
+                production_line
+                in self.production_lines_for_factories.index]
