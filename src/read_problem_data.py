@@ -10,7 +10,7 @@ class ProblemData:
         self.time_windows_for_orders = pd.read_excel(file_path, sheet_name='time_windows_for_order', index_col=0,
                                                      skiprows=[0])
         self.vessel_availability = pd.read_excel(file_path, sheet_name='vessel_availability', index_col=0,
-                                                      skiprows=[0])
+                                                 skiprows=[0])
         self.vessel_initial_loads = pd.read_excel(file_path, sheet_name='initial_vessel_load', index_col=0,
                                                   skiprows=[0])
         self.nodes_for_vessels = pd.read_excel(file_path, sheet_name='nodes_for_vessel', index_col=0, skiprows=[0])
@@ -30,9 +30,14 @@ class ProblemData:
                                                             index_col=0, skiprows=[0])
         self.production_line_min_times = pd.read_excel(file_path, sheet_name='production_line_min_time',
                                                        index_col=0, skiprows=[0])
+        self.product_groups = pd.read_excel(file_path, sheet_name='product_group', index_col=0, skiprows=[0])
+        self.key_values = pd.read_excel(file_path, sheet_name='key_values', index_col=0, skiprows=[0])
+        self.factory_max_vessels_loading = pd.read_excel(file_path, sheet_name='factory_max_vessel_loading', index_col=0, skiprows=[0])
+        self.factory_max_vessel_destination = pd.read_excel(file_path, sheet_name='factory_max_vessel_destination', index_col=0, skiprows=[0])
 
         # Validate sets
         self._validate_set_consistency()
+        self._validate_feasible_problem()
 
     def _validate_set_consistency(self) -> None:
         # Products
@@ -43,6 +48,7 @@ class ProblemData:
         assert set(self.get_products()) == set(self.production_max_capacities.index)
         assert set(self.get_products()) == set(self.production_min_capacities.index)
         assert set(self.get_products()) == set(self.production_line_min_times.index)
+        assert set(self.get_products()) == set(self.product_groups.index)
 
         # Production lines
         assert set(self.get_production_lines()) == set(self.production_max_capacities.columns)
@@ -66,6 +72,8 @@ class ProblemData:
         assert set(self.get_factory_nodes()) == set(self.production_unit_costs.columns)
         assert set(self.get_factory_nodes()) == set(
             self.production_lines_for_factories['factory'])  # At least 1 production line per factory
+        assert set(self.get_factory_nodes()) == set(self.factory_max_vessels_loading.columns)
+        assert set(self.get_factory_nodes()) == set(self.factory_max_vessel_destination.index)
 
         # Order nodes
         assert set(self.get_order_nodes()) == set(self.time_windows_for_orders.index)
@@ -80,6 +88,12 @@ class ProblemData:
 
         # Time periods
         assert set(self.get_time_periods()) == set(self.time_windows_for_orders.columns)
+        assert set(self.get_time_periods()) == set(self.factory_max_vessels_loading.index)
+
+    def _validate_feasible_problem(self) -> None:
+        assert (sum(int(self.factory_max_vessel_destination.loc[factory, 'vessel_number'])
+                    for factory in self.factory_max_vessel_destination.index)
+                >= len(self.get_vessels()))
 
     def get_vessels(self) -> List[str]:
         return list(self.vessel_capacities.index)
@@ -90,11 +104,6 @@ class ProblemData:
     def get_vessel_nprod_capacities_dict(self) -> Dict[str, int]:
         return {vessel: self.vessel_capacities.loc[vessel, 'capacity [nProd]'] for vessel in
                 self.vessel_capacities.index}
-
-    # def get_order_nodes_for_factories_dict(self) -> Dict[Tuple[str, str], int]:
-    #     return {(factory_node, order_node): self.order_nodes_for_factories.loc[order_node, factory_node]
-    #             for order_node in self.order_nodes_for_factories.index
-    #             for factory_node in self.order_nodes_for_factories.columns}
 
     def get_order_nodes(self) -> List[str]:
         return list(self.time_windows_for_orders.index)
@@ -179,12 +188,10 @@ class ProblemData:
         order_node_dict = {(order_node, order_node, product): int(self.demands.loc[order_node, product])
                            for order_node in self.demands.index
                            for product in self.demands.columns}
-
         factory_node_dict = {(factory_node, order_node, product): -int(self.demands.loc[order_node, product])
                              for factory_node in self.get_factory_nodes()
                              for order_node in self.get_order_nodes()
                              for product in self.demands.columns}
-
         return {**order_node_dict, **factory_node_dict}
 
     def get_production_unit_costs_dict(self) -> Dict[Tuple[str, str], int]:
@@ -206,3 +213,25 @@ class ProblemData:
         return [(self.production_lines_for_factories.at[production_line, 'factory'], production_line) for
                 production_line
                 in self.production_lines_for_factories.index]
+
+    def get_key_values(self) -> Dict[str, int]:
+        return {key: int(self.key_values.loc[key, 'value']) for key in self.key_values.index}
+
+    def get_product_groups(self) -> Dict[str, str]:
+        return {product: self.product_groups.loc[product, 'product_group'] for product in self.product_groups.index}
+
+    def get_product_shifting_costs(self) -> Dict[Tuple[str, str], int]:
+        product_groups = self.get_product_groups()
+        return {(product1, product2): (self.get_key_values()['shifting_cost'] *
+                                       (0 if (product_groups[product1] == product_groups[product2]) else 1))
+                for product1 in self.get_products()
+                for product2 in self.get_products()}
+
+    def get_factory_max_vessels_loading_dict(self) -> Dict[Tuple[str, int], int]:
+        return {(factory, time_period): int(self.factory_max_vessels_loading.loc[time_period, factory])
+                for time_period in self.factory_max_vessels_loading.index
+                for factory in self.factory_max_vessels_loading.columns}
+
+    def get_factory_max_vessels_destination_dict(self) -> Dict[str, int]:
+        return {factory: int(self.factory_max_vessel_destination.loc[factory])
+                for factory in self.factory_max_vessel_destination.index}

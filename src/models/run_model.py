@@ -29,11 +29,14 @@ def model_create():
                       production_max_capacities=problem_data.get_production_max_capacities_dict(),
                       production_lines=problem_data.get_production_lines(),
                       production_lines_for_factories=problem_data.get_production_lines_for_factories_list(),
-                      production_line_min_times=problem_data.get_production_line_min_times_dict()
+                      production_line_min_times=problem_data.get_production_line_min_times_dict(),
+                      product_shifting_costs=problem_data.get_product_shifting_costs(),
+                      factory_max_vessels_destination=problem_data.get_factory_max_vessels_destination_dict(),
+                      factory_max_vessels_loading=problem_data.get_factory_max_vessels_loading_dict()
                       )
 
 
-problem_data = ProblemData('../../data/input_data/small_testcase.xlsx')
+problem_data = ProblemData('../../data/input_data/medium_testcase1.xlsx')
 
 model = model_create()
 model.solve()
