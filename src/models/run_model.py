@@ -6,12 +6,12 @@ def model_create():
     return BasicModel(nodes=problem_data.get_nodes(),
                       factory_nodes=problem_data.get_factory_nodes(),
                       order_nodes=problem_data.get_order_nodes(),
-                      order_nodes_for_factories=problem_data.get_order_nodes_for_factories_dict(),
                       nodes_for_vessels=problem_data.get_nodes_for_vessels_dict(),
                       products=problem_data.get_products(),
                       vessels=problem_data.get_vessels(),
                       time_periods=problem_data.get_time_periods(),
                       time_periods_for_vessels=problem_data.get_time_periods_for_vessels_dict(),
+                      vessel_initial_locations=problem_data.get_vessel_first_location(),
                       time_windows_for_orders=problem_data.get_time_windows_for_orders_dict(),
                       vessel_ton_capacities=problem_data.get_vessel_ton_capacities_dict(),
                       vessel_nprod_capacities=problem_data.get_vessel_nprod_capacities_dict(),
@@ -28,7 +28,8 @@ def model_create():
                       production_min_capacities=problem_data.get_production_min_capacities_dict(),
                       production_max_capacities=problem_data.get_production_max_capacities_dict(),
                       production_lines=problem_data.get_production_lines(),
-                      production_lines_for_factories=problem_data.get_production_lines_for_factories_list()
+                      production_lines_for_factories=problem_data.get_production_lines_for_factories_list(),
+                      production_line_min_times=problem_data.get_production_line_min_times_dict()
                       )
 
 
