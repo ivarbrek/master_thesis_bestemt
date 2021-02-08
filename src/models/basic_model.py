@@ -304,7 +304,6 @@ class BasicModel:
                     + sum(100000000000 * model.e[i] for i in model.ORDER_NODES))  # TODO: Remove when done with testing
 
         self.m.objective = pyo.Objective(rule=obj, sense=pyo.minimize)
-        # self.m.objective.pprint()
 
         print("Done setting objective")
 
@@ -357,15 +356,9 @@ class BasicModel:
         def constr_sailing_after_loading_unloading(model, v, i, t):
             unloading_time = pyo.value(model.unloading_times[v, i])
             loading_time = pyo.value(model.loading_times[v, i])
-            relevant_destination_nodes = {j for (vessel, j) in model.NODES_FOR_VESSELS_TUP if vessel == v}
+            relevant_destination_nodes = {j for (vessel, j) in model.NODES_FOR_VESSELS_TUP
+                                          if vessel == v}
             relevant_destination_nodes.add('d_-1')  # Adds the dummy end node
-
-            # This simplification didn't work out...
-            # if max(model.loading_times[v, i], model.unloading_times[v, i]) > t or t == -1:
-            #     return Constraint.Feasible
-            # else:
-            #     return ((model.y_minus[v, i, (t - unloading_time)] + model.y_plus[v, i, (t - loading_time)])
-            #             == sum(model.x[v, i, j, t] for j in relevant_destination_nodes))
 
             if t < unloading_time and t < loading_time:  # Neither unloading_time nor loading_time is valid
                 return Constraint.Feasible
@@ -392,15 +385,24 @@ class BasicModel:
         def constr_wait_load_unload_after_sailing(model, v, i, t):
             relevant_nodes = {j for (vessel, j) in model.NODES_FOR_VESSELS_TUP if
                               vessel == v and model.transport_times[j, i] <= t}.union({'d_0'})
-            if t == 0:
+            if t == 0:  # exclude w_t-1
                 return (sum(model.x[v, j, i, (t - model.transport_times[j, i])] for j in relevant_nodes)
                         ==
                         model.y_minus[v, i, t] + model.y_plus[v, i, t] + model.w[v, i, t] + model.x[v, i, 'd_-1', t])
-            else:
-                return (sum(model.x[v, j, i, (t - model.transport_times[j, i])] for j in relevant_nodes) +
-                        model.w[v, i, (t - 1)]
-                        ==
-                        model.y_minus[v, i, t] + model.y_plus[v, i, t] + model.w[v, i, t] + model.x[v, i, 'd_-1', t])
+
+            # Only include load, unload and wait activities on rhs if they are finished within planning horizon
+            relevant_rhs_parts = [model.x[v, i, 'd_-1', t]]
+            if t + model.unloading_times[v, i] in model.TIME_PERIODS:
+                relevant_rhs_parts += [model.y_minus[v, i, t]]
+            if t + model.loading_times[v, i] in model.TIME_PERIODS:
+                relevant_rhs_parts += [model.y_plus[v, i, t]]
+            if t + 1 in model.TIME_PERIODS:
+                relevant_rhs_parts += [model.w[v, i, t]]
+
+            return (sum(model.x[v, j, i, (t - model.transport_times[j, i])] for j in relevant_nodes) +
+                    model.w[v, i, (t - 1)]
+                    ==
+                    sum(relevant_rhs_parts))
 
         self.m.constr_wait_load_unload_after_sailing = pyo.Constraint(self.m.NODES_FOR_VESSELS_TUP,
                                                                       self.m.TIME_PERIODS,
@@ -437,6 +439,33 @@ class BasicModel:
                     == 1)
 
         self.m.constr_end_route_once = pyo.Constraint(self.m.VESSELS, rule=constr_end_route_once)
+
+        def constr_load_in_planning_horizon(model, v, i, t):  # TODO: Not in overleaf
+            if t + model.loading_times[v, i] not in model.TIME_PERIODS:
+                return model.y_plus[v, i, t] == 0
+            else:
+                return Constraint.Skip
+
+        self.m.constr_load_in_planning_horizon = pyo.Constraint(self.m.NODES_FOR_VESSELS_TUP,
+                                                                self.m.TIME_PERIODS,
+                                                                rule=constr_load_in_planning_horizon)
+
+        def constr_unload_in_planning_horizon(model, v, i, t):  # TODO: Not in overleaf
+            if t + model.unloading_times[v, i] not in model.TIME_PERIODS:
+                return model.y_minus[v, i, t] == 0
+            else:
+                return Constraint.Skip
+
+        self.m.constr_unload_in_planning_horizon = pyo.Constraint(self.m.NODES_FOR_VESSELS_TUP,
+                                                                  self.m.TIME_PERIODS,
+                                                                  rule=constr_unload_in_planning_horizon)
+
+        def constr_sail_to_dummy_from_factory(model, v, i, t):  # TODO: Not in overleaf
+            return model.x[v, i, 'd_-1', t] == 0
+
+        self.m.constr_sail_to_dummy_from_factory = pyo.Constraint(self.m.ORDER_NODES_FOR_VESSELS_TUP,
+                                                                  self.m.TIME_PERIODS_INCLUDING_DUMMY,
+                                                                  rule=constr_sail_to_dummy_from_factory)
 
         def constr_pickup_requires_factory_visit(model, v, i, j, t):
             return model.z[v, i, j, t] <= model.y_plus[v, i, t]
@@ -556,8 +585,6 @@ class BasicModel:
         if self.results.solver.termination_condition != pyo.TerminationCondition.optimal:
             raise RuntimeError("Termination condition not optimal, ", self.results.solver.termination_condition)
         print("Solve time: ", round(time() - t, 1))
-        for v in self.m.VESSELS:
-            print(v, ": ", self.m.x[v, 'd_0', 'f_1', 3]())
 
     def print_result(self):
 
@@ -716,10 +743,9 @@ class BasicModel:
                 for v in self.m.VESSELS:
                     print("LOAD AT VESSEL", v)
                     for t in self.m.TIME_PERIODS:
-                        for p in self.m.PRODUCTS:
-                            if pyo.value(self.m.l[v, p, t]) >= 0.5:
-                                print(t, ": load of ", round(pyo.value(self.m.l[v, p, t]), 1), " tons of product ", p,
-                                      sep="")
+                        curr_load = [round(self.m.l[v, p, t]()) for p in self.m.PRODUCTS]
+                        if sum(curr_load) > 0.5:
+                            print(t, ": ", curr_load, sep="")
                     print()
 
             def print_production_and_inventory():
