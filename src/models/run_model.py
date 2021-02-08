@@ -28,7 +28,8 @@ def model_create():
                       production_min_capacities=problem_data.get_production_min_capacities_dict(),
                       production_max_capacities=problem_data.get_production_max_capacities_dict(),
                       production_lines=problem_data.get_production_lines(),
-                      production_lines_for_factories=problem_data.get_production_lines_for_factories_list()
+                      production_lines_for_factories=problem_data.get_production_lines_for_factories_list(),
+                      production_line_min_times=problem_data.get_production_line_min_times_dict()
                       )
 
 
