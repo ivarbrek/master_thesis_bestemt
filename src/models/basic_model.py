@@ -200,7 +200,8 @@ class BasicModel:
                                                    initialize=time_periods_for_vessels)
 
         self.m.vessel_initial_locations = pyo.Param(self.m.VESSELS,
-                                                    initialize=vessel_initial_locations)
+                                                    initialize=vessel_initial_locations,
+                                                    within=pyo.Any)
 
         self.m.product_shifting_costs = pyo.Param(self.m.PRODUCTS,
                                                   self.m.PRODUCTS,
@@ -679,12 +680,14 @@ class BasicModel:
 
         print("Done setting constraints!")
 
-    def solve(self):
+    def solve(self, verbose: bool = True, time_limit: int = None) -> None:
         print("Solver running...")
+        if time_limit:
+            self.solver_factory.options['TimeLimit'] = time_limit  # time limit in seconds
         t = time()
-        self.results = self.solver_factory.solve(self.m, tee=True)
+        self.results = self.solver_factory.solve(self.m, tee=verbose)  # logfile=f'../../log_files/console_output_{log_name}.log'
         if self.results.solver.termination_condition != pyo.TerminationCondition.optimal:
-            raise RuntimeError("Termination condition not optimal, ", self.results.solver.termination_condition)
+            print("Not optimal termination condition: ", self.results.solver.termination_condition)
         print("Solve time: ", round(time() - t, 1))
 
     def print_result(self):
@@ -811,6 +814,18 @@ class BasicModel:
             print_production_starts()
 
         def print_result_eventwise():
+            def print_routes_simple():
+                for v in self.m.VESSELS:
+                    route_string = v + ": "
+                    route_started = False
+                    for t in self.m.TIME_PERIODS_INCLUDING_DUMMY:
+                        for i in self.m.NODES_INCLUDING_DUMMIES:
+                            for j in self.m.NODES_INCLUDING_DUMMIES:
+                                if self.m.x[v, i, j, t]() > 0.5:
+                                    route_string += " -> " + j if route_started else i + " -> " + j
+                                    route_started = True
+                    print(route_string)
+                print()
 
             def print_routing(include_loads=True):
                 for v in self.m.VESSELS:
@@ -908,6 +923,7 @@ class BasicModel:
             print_routing()
             print_vessel_load()
             print_production_and_inventory()
+            print_routes_simple()
             print_product_shifting()
 
         def print_objective_function_components():

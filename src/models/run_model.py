@@ -36,8 +36,11 @@ def model_create():
                       )
 
 
-problem_data = ProblemData('../../data/input_data/medium_testcase1.xlsx')
+# problem_data = ProblemData('../../data/input_data/small_testcase.xlsx')
+# problem_data = ProblemData('../../data/input_data/medium_testcase.xlsx')
+problem_data = ProblemData('../../data/input_data/large_testcase.xlsx')
+# problem_data = ProblemData('../../data/input_data/larger_testcase.xlsx')
 
 model = model_create()
-model.solve()
+model.solve(time_limit=20)
 model.print_result()
