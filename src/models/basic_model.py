@@ -2,6 +2,7 @@ import pyomo.environ as pyo
 from typing import Dict, List
 from time import time
 from pyomo.core import Constraint
+from tabulate import tabulate
 
 
 # TODO IN THIS FILE
@@ -43,7 +44,9 @@ class BasicModel:
                  production_line_min_times: Dict,
                  product_shifting_costs: Dict,
                  factory_max_vessels_destination: Dict,
-                 factory_max_vessels_loading: Dict
+                 factory_max_vessels_loading: Dict,
+                 inventory_targets: Dict,
+                 inventory_unit_rewards: Dict
                  ) -> None:
 
         # GENERAL MODEL SETUP
@@ -173,6 +176,9 @@ class BasicModel:
         self.m.inventory_unit_costs = pyo.Param(self.m.FACTORY_NODES,
                                                 initialize=inventory_unit_costs)
 
+        self.m.inventory_unit_rewards = pyo.Param(self.m.FACTORY_NODES,
+                                                  initialize=inventory_unit_rewards)
+
         self.m.transport_unit_costs = pyo.Param(self.m.VESSELS,
                                                 initialize=transport_unit_costs)
 
@@ -212,6 +218,10 @@ class BasicModel:
         self.m.factory_max_vessels_loading = pyo.Param(self.m.FACTORY_NODES,
                                                        self.m.TIME_PERIODS,
                                                        initialize=factory_max_vessels_loading)
+
+        self.m.inventory_targets = pyo.Param(self.m.FACTORY_NODES,
+                                             self.m.PRODUCTS,
+                                             initialize=inventory_targets)
 
         print("Done setting parameters!")
 
@@ -273,6 +283,10 @@ class BasicModel:
                            self.m.TIME_PERIODS,
                            domain=pyo.NonNegativeReals)
 
+        self.m.r_plus = pyo.Var(self.m.FACTORY_NODES,
+                                self.m.PRODUCTS,
+                                domain=pyo.NonNegativeReals)
+
         self.m.a = pyo.Var(self.m.PRODUCTION_LINES,
                            self.m.TIME_PERIODS,
                            domain=pyo.Boolean,
@@ -320,7 +334,10 @@ class BasicModel:
                           for p in model.PRODUCTS
                           for q in model.PRODUCTS
                           for t in model.TIME_PERIODS)
-                    + sum(100000000000 * model.e[i] for i in model.ORDER_NODES))  # TODO: Remove when done with testing
+                    - sum(model.inventory_unit_rewards[i] * model.r_plus[i, p]
+                          for i in model.FACTORY_NODES
+                          for p in model.PRODUCTS)
+                    + sum(10000 * model.e[i] for i in model.ORDER_NODES))  # TODO: Remove when done with testing
 
         self.m.objective = pyo.Objective(rule=obj, sense=pyo.minimize)
 
@@ -648,7 +665,7 @@ class BasicModel:
                                                                          rule=constr_produce_minimum_number_of_periods)
 
         def constr_production_line_availability(model, l, t):  # NB! <= in overleaf!
-            return model.a[l, t] <= 1 - sum(model.g[l, p, t] for p in model.PRODUCTS)
+            return model.a[l, t] == 1 - sum(model.g[l, p, t] for p in model.PRODUCTS)
 
         self.m.constr_production_line_availability = pyo.Constraint(self.m.PRODUCTION_LINES,
                                                                     self.m.TIME_PERIODS,
@@ -658,7 +675,7 @@ class BasicModel:
             if t == 0:
                 return Constraint.Feasible
             return (model.delta[l, q, t]
-                    ==
+                    <=
                     model.a[l, t - 1] + sum(model.gamma[l, p, q, t] for p in model.PRODUCTS if q != p))
 
         self.m.constr_production_start_or_shift = pyo.Constraint(self.m.PRODUCTION_LINES,
@@ -669,13 +686,35 @@ class BasicModel:
         def constr_activate_product_shift(model, l, p, q, t):
             if t == 0:
                 return Constraint.Feasible
-            return model.gamma[l, p, q, t] <= model.g[l, p, t - 1]
+            return sum(model.gamma[l, p, q, t] for q in model.PRODUCTS) <= model.g[l, p, t - 1]
 
         self.m.constr_activate_product_shift = pyo.Constraint(self.m.PRODUCTION_LINES,
                                                               self.m.PRODUCTS,
                                                               self.m.PRODUCTS,
                                                               self.m.TIME_PERIODS,
                                                               rule=constr_activate_product_shift)
+
+        def constr_restrict_product_shift(model, l, q, t):
+            return sum(model.gamma[l, p, q, t] for p in model.PRODUCTS) <= model.delta[l, q, t]
+
+        self.m.constr_restrict_product_shift = pyo.Constraint(self.m.PRODUCTION_LINES,
+                                                              self.m.PRODUCTS,
+                                                              self.m.TIME_PERIODS,
+                                                              rule=constr_restrict_product_shift)
+
+        def constr_rewarded_inventory_below_inventory_level(model, i, p):
+            return model.r_plus[i, p] <= model.r[i, p, max(model.TIME_PERIODS)]
+
+        self.m.constr_rewarded_inventory_below_inventory_level = pyo.Constraint(self.m.FACTORY_NODES,
+                                                                                self.m.PRODUCTS,
+                                                                                rule=constr_rewarded_inventory_below_inventory_level)
+
+        def constr_rewarded_inventory_below_inventory_target(model, i, p):
+            return model.r_plus[i, p] <= model.inventory_targets[i, p]
+
+        self.m.constr_rewarded_inventory_below_inventory_target = pyo.Constraint(self.m.FACTORY_NODES,
+                                                                                 self.m.PRODUCTS,
+                                                                                 rule=constr_rewarded_inventory_below_inventory_target)
 
         print("Done setting constraints!")
 
@@ -797,6 +836,37 @@ class BasicModel:
                                           pyo.value(self.m.q[l, p, t]), "is produced")
                         print()
 
+            def print_production_happens():
+                print("PRODUCTION HAPPENS (g variable)")
+                for i in self.m.FACTORY_NODES:
+                    relevant_production_lines = {l for (ii, l) in self.m.PRODUCTION_LINES_FOR_FACTORIES_TUP if ii == i}
+                    for l in relevant_production_lines:
+                        print("Production line", l, "at factory", i)
+                        for t in self.m.TIME_PERIODS:
+                            for p in self.m.PRODUCTS:
+                                if pyo.value(self.m.g[l, p, t]) >= 0.5:
+                                    print(t, ": production of product ", p, " happens ", sep="")
+                        print()
+
+
+
+            def print_final_inventory():
+                print("FINAL INVENTORY AND TARGETS (r_plus variable)")
+                for i in self.m.FACTORY_NODES:
+                    print("Factory", i)
+                    for p in self.m.PRODUCTS:
+                        print("Rewarded inventory of product ", p, " is ", pyo.value(self.m.r_plus[i, p]),
+                              ", total final inventory is ", pyo.value(self.m.r[i, p, (max(self.m.TIME_PERIODS))]),
+                              " and its target is ", pyo.value(self.m.inventory_targets[i, p]), sep="")
+                    print()
+
+            def print_available_production_lines():
+                print("AVAILABLE PRODUCTION LINES")
+                for ll in self.m.PRODUCTION_LINES:
+                    for t in self.m.TIME_PERIODS:
+                        print(t, ": production line ", ll, " has value ", pyo.value(self.m.a[ll, t]), sep="")
+                    print()
+
             # PRINTING
             print()
             # print_factory_production()
@@ -809,6 +879,9 @@ class BasicModel:
             # print_vessel_load()
             print_orders_not_delivered()
             print_production_starts()
+            print_final_inventory()
+            print_production_happens()
+            # print_available_production_lines()
 
         def print_result_eventwise():
 
@@ -852,7 +925,6 @@ class BasicModel:
                             for t in self.m.DUMMY_TIME_PERIODS:
                                 if pyo.value(self.m.x[v, i, j, t]) >= 0.5:
                                     print(t, ": ", i, " --> ", j, sep="")
-                    # Space before next vessel
                     print()
 
             def print_vessel_load():
@@ -905,10 +977,36 @@ class BasicModel:
                                               self.m.product_shifting_costs[p, q], " at production line ", l, sep="")
                     print()
 
+            def print_production_simple():
+                for i in self.m.FACTORY_NODES:
+                    relevant_production_lines = {l for (ii, l) in self.m.PRODUCTION_LINES_FOR_FACTORIES_TUP if ii == i}
+                    table = []
+                    for p in self.m.PRODUCTS:
+                        row = [p, "prod"]
+                        for t in self.m.TIME_PERIODS:
+                            if sum(self.m.g[l, p, t]() for l in relevant_production_lines) > 0.5:
+                                row.append(str(sum(self.m.q[l, p, t]() for l in relevant_production_lines))) # + " [" + str(self.m.r[i, p, t]()) + "]")
+                            else:
+                                row.append(" ")
+                        table.append(row)
+                        row = ["\"", "inv"]
+                        for t in self.m.TIME_PERIODS:
+                            if t == 0:
+                                row.append(self.m.r[i, p, 0]())
+                            elif abs(self.m.r[i, p, t]() - self.m.r[i, p, t-1]()) > 0.5:
+                                row.append(str(self.m.r[i, p, t]())) # + " [" + str(self.m.r[i, p, t]()) + "]")
+                            else:
+                                row.append(" ")
+                        table.append(row)
+                        table.append(["____"]*(len(list(self.m.TIME_PERIODS))+2))
+                    print(tabulate(table, headers=["product", "prod/inv"] + list(self.m.TIME_PERIODS)))
+                    print()
+
             print_routing()
             print_vessel_load()
             print_production_and_inventory()
             print_product_shifting()
+            print_production_simple()
 
         def print_objective_function_components():
             production_cost = (sum(self.m.production_unit_costs[i, p] * pyo.value(self.m.q[l, p, t])
@@ -931,10 +1029,21 @@ class BasicModel:
                                          for p in self.m.PRODUCTS
                                          for q in self.m.PRODUCTS
                                          for t in self.m.TIME_PERIODS))
+            final_inventory_reward = (-sum(self.m.inventory_unit_rewards[i] * pyo.value(self.m.r_plus[i, p])
+                                      for i in self.m.FACTORY_NODES
+                                      for p in self.m.PRODUCTS))
+            unmet_order_cost = (sum(10000 * pyo.value(self.m.e[i])
+                                      for i in self.m.ORDER_NODES))
+
             print("Production cost:", round(production_cost, 2))
             print("Inventory cost:", round(inventory_cost, 2))
             print("Transport cost:", round(transport_cost, 2))
             print("Product shifting cost:", round(product_shifting_cost, 2))
+            print("Final inventory reward (negative cost):", round(final_inventory_reward, 2))
+            print("Unmet order cost:", round(unmet_order_cost, 2))
+
+            print("Sum of above cost components:", round(production_cost+inventory_cost+transport_cost+product_shifting_cost+final_inventory_reward+unmet_order_cost, 15))
+            print("Objective value (from Gurobi):", pyo.value(self.m.objective))
 
         print_result_variablewise()
         print_result_eventwise()
