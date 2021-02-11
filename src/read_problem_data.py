@@ -1,6 +1,6 @@
 import pandas as pd
 from typing import List, Dict, Tuple
-
+from collections import defaultdict
 
 class ProblemData:
 
@@ -34,10 +34,19 @@ class ProblemData:
         self.key_values = pd.read_excel(file_path, sheet_name='key_values', index_col=0, skiprows=[0])
         self.factory_max_vessels_loading = pd.read_excel(file_path, sheet_name='factory_max_vessel_loading', index_col=0, skiprows=[0])
         self.factory_max_vessel_destination = pd.read_excel(file_path, sheet_name='factory_max_vessel_destination', index_col=0, skiprows=[0])
+        self.order_zones = pd.read_excel(file_path, sheet_name='order_zones', index_col=0, skiprows=[0])
 
         # Validate sets
         self._validate_set_consistency()
         self._validate_feasible_problem()
+
+
+    def get_zone_orders_dict(self):
+        zone_orders_dict = defaultdict(list)
+        for order in self.order_zones.index:
+            zone = self.order_zones.loc[order, 'zone']
+            zone_orders_dict[zone].append(order)
+        return zone_orders_dict
 
     def _validate_set_consistency(self) -> None:
         # Products
@@ -214,15 +223,39 @@ class ProblemData:
                 production_line
                 in self.production_lines_for_factories.index]
 
-    def get_key_values(self) -> Dict[str, int]:
-        return {key: int(self.key_values.loc[key, 'value']) for key in self.key_values.index}
+    def get_key_value(self, key):
+        return self.key_values.loc[key, 'value']
+
+    def get_min_wait_if_sick(self) -> Dict:
+        orders_for_zones = self.get_zone_orders_dict()
+        transport_times = self.get_transport_times_dict()
+        min_wait = int(self.get_key_value('min_wait_if_sick'))
+
+        # Find wait time periods from red/yellow to green
+        min_wait_times_if_sick = {(i, j): min_wait - transport_times[i, j]
+                                  for i in orders_for_zones['red'] + orders_for_zones['yellow']
+                                  for j in orders_for_zones['green']
+                                  if min_wait - transport_times[i, j] > 0}
+
+        # Add wait time periods from red to yellow
+        min_wait_times_if_sick.update({(i, j): max(0, min_wait - transport_times[i, j])
+                                       for i in orders_for_zones['red']
+                                       for j in orders_for_zones['yellow']
+                                       if min_wait - transport_times[i, j] > 0})
+        return min_wait_times_if_sick
+
+    def get_max_time_window_violation(self) -> int:
+        return int(self.get_key_value('max_tw_violation'))
+
+    def get_tw_violation_cost(self) -> float:
+        return float(self.get_key_value('tw_violation_unit_cost'))
 
     def get_product_groups(self) -> Dict[str, str]:
         return {product: self.product_groups.loc[product, 'product_group'] for product in self.product_groups.index}
 
     def get_product_shifting_costs(self) -> Dict[Tuple[str, str], int]:
         product_groups = self.get_product_groups()
-        return {(product1, product2): (self.get_key_values()['shifting_cost'] *
+        return {(product1, product2): (self.get_key_value('shifting_cost') *
                                        (0 if (product_groups[product1] == product_groups[product2]) else 1))
                 for product1 in self.get_products()
                 for product2 in self.get_products()}

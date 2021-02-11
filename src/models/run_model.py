@@ -2,10 +2,11 @@ from src.models.basic_model import BasicModel
 from src.read_problem_data import ProblemData
 
 
-def model_create():
+def model_create(problem_data: ProblemData):
     return BasicModel(nodes=problem_data.get_nodes(),
                       factory_nodes=problem_data.get_factory_nodes(),
                       order_nodes=problem_data.get_order_nodes(),
+                      orders_for_zones=problem_data.get_zone_orders_dict(),
                       nodes_for_vessels=problem_data.get_nodes_for_vessels_dict(),
                       products=problem_data.get_products(),
                       vessels=problem_data.get_vessels(),
@@ -13,6 +14,9 @@ def model_create():
                       time_periods_for_vessels=problem_data.get_time_periods_for_vessels_dict(),
                       vessel_initial_locations=problem_data.get_vessel_first_location(),
                       time_windows_for_orders=problem_data.get_time_windows_for_orders_dict(),
+                      max_tw_violation=problem_data.get_max_time_window_violation(),
+                      tw_violation_unit_cost=problem_data.get_tw_violation_cost(),
+                      min_wait_if_sick=problem_data.get_min_wait_if_sick(),
                       vessel_ton_capacities=problem_data.get_vessel_ton_capacities_dict(),
                       vessel_nprod_capacities=problem_data.get_vessel_nprod_capacities_dict(),
                       vessel_initial_loads=problem_data.get_vessel_initial_loads_dict(),
@@ -36,11 +40,13 @@ def model_create():
                       )
 
 
+# problem_data = ProblemData('../../data/input_data/small_testcase_one_vessel.xlsx')
 # problem_data = ProblemData('../../data/input_data/small_testcase.xlsx')
-# problem_data = ProblemData('../../data/input_data/medium_testcase.xlsx')
-problem_data = ProblemData('../../data/input_data/large_testcase.xlsx')
+problem_data = ProblemData('../../data/input_data/medium_testcase.xlsx')
+# problem_data = ProblemData('../../data/input_data/large_testcase.xlsx')
 # problem_data = ProblemData('../../data/input_data/larger_testcase.xlsx')
+# problem_data = ProblemData('../../data/input_data/larger_testcase_4vessels.xlsx')
 
-model = model_create()
-model.solve(time_limit=20)
+model = model_create(problem_data)
+model.solve(time_limit=100)
 model.print_result()

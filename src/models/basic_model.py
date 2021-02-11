@@ -1,18 +1,16 @@
 import pyomo.environ as pyo
 from typing import Dict, List
 from time import time
+from tabulate import tabulate
 from pyomo.core import Constraint
 
 
 # TODO IN THIS FILE
 # ----------------------------------------------------------------------------------------------------------------------------
-# TODO: pipenv with Python 3.8?
 # TODO: Have not made any difference between different start/end time periods (so for now, not possible to have different time period lengths)
 # TODO: Check code marked with TODO
-# TODO: Add features (extensions)
 
 class BasicModel:
-
     def __init__(self,
                  nodes: List,
                  factory_nodes: List,
@@ -43,7 +41,15 @@ class BasicModel:
                  production_line_min_times: Dict,
                  product_shifting_costs: Dict,
                  factory_max_vessels_destination: Dict,
-                 factory_max_vessels_loading: Dict
+                 factory_max_vessels_loading: Dict,
+
+                 # Extensions
+                 orders_for_zones: Dict,
+                 min_wait_if_sick: Dict,
+                 max_tw_violation: int,
+                 tw_violation_unit_cost: float,
+                 extended_model=False,
+
                  ) -> None:
 
         # GENERAL MODEL SETUP
@@ -51,6 +57,7 @@ class BasicModel:
         self.solver_factory = pyo.SolverFactory('gurobi')
         self.results = None
         self.solution = None
+        self.m.extended_model = extended_model
 
         ################################################################################################################
         # SETS #########################################################################################################
@@ -87,19 +94,17 @@ class BasicModel:
         self.m.ORDERS_RELATED_TO_NODES_TUP = pyo.Set(dimen=2, initialize=orders_related_to_nodes_tup)
 
         nodes_for_vessels_tup = [(vessel, node)
-                                 for (vessel, node) in nodes_for_vessels.keys()
+                                 for vessel, node in nodes_for_vessels.keys()
                                  if nodes_for_vessels[vessel, node] == 1]
         self.m.NODES_FOR_VESSELS_TUP = pyo.Set(dimen=2, initialize=nodes_for_vessels_tup)
 
         factory_nodes_for_vessels_tup = [(vessel, node)
-                                         for (vessel, node) in
-                                         nodes_for_vessels_tup
+                                         for vessel, node in nodes_for_vessels_tup
                                          if node in factory_nodes]
         self.m.FACTORY_NODES_FOR_VESSELS_TUP = pyo.Set(dimen=2, initialize=factory_nodes_for_vessels_tup)
 
         order_nodes_for_vessels_tup = [(vessel, node)
-                                       for (vessel, node) in
-                                       nodes_for_vessels_tup
+                                       for vessel, node in nodes_for_vessels_tup
                                        if node in order_nodes]
         self.m.ORDER_NODES_FOR_VESSELS_TUP = pyo.Set(dimen=2, initialize=order_nodes_for_vessels_tup)
 
@@ -122,19 +127,49 @@ class BasicModel:
         self.m.ORDER_NODES_FACTORY_NODES_FOR_VESSELS_TRIP = pyo.Set(dimen=3, initialize=vessels_factorynodes_ordernodes)
 
         vessels_for_factory_nodes_tup = [(node, vessel)
-                                         for (vessel, node) in nodes_for_vessels_tup
+                                         for vessel, node in nodes_for_vessels_tup
                                          if node in factory_nodes]
         self.m.VESSELS_FOR_FACTORY_NODES_TUP = pyo.Set(dimen=2, initialize=vessels_for_factory_nodes_tup)
 
         time_windows_for_orders_tup = [(order, time_period)
-                                       for (order, time_period) in
-                                       time_windows_for_orders.keys()
+                                       for order, time_period in time_windows_for_orders.keys()
                                        if time_windows_for_orders[order, time_period] == 1]
         self.m.TIME_WINDOWS_FOR_ORDERS_TUP = pyo.Set(dimen=2, initialize=time_windows_for_orders_tup)
 
         self.m.PRODUCTION_LINES = pyo.Set(initialize=production_lines)
 
         self.m.PRODUCTION_LINES_FOR_FACTORIES_TUP = pyo.Set(dimen=2, initialize=production_lines_for_factories)
+
+        # Extension
+        if extended_model:
+            self.m.ZONES = pyo.Set(initialize=orders_for_zones.keys())
+
+            orders_for_zones_tup = [(zone, order)
+                                    for zone, li in orders_for_zones.items()
+                                    for order in li]
+            self.m.ORDERS_FOR_ZONES_TUP = pyo.Set(dimen=2, initialize=orders_for_zones_tup)
+
+            green_nodes_for_vessel_tup = [(vessel, node)
+                                          for vessel, node in nodes_for_vessels_tup
+                                          if node in orders_for_zones['green']]
+            self.m.GREEN_NODES_FOR_VESSEL_TUP = pyo.Set(dimen=2, initialize=green_nodes_for_vessel_tup)
+
+            green_and_yellow_nodes_for_vessel_tup = [(vessel, node)
+                                                     for vessel, node in nodes_for_vessels_tup
+                                                     if node in orders_for_zones['green'] + orders_for_zones['yellow']]
+            self.m.GREEN_AND_YELLOW_NODES_FOR_VESSEL_TUP = pyo.Set(initialize=green_and_yellow_nodes_for_vessel_tup)
+
+            self.m.WAIT_EDGES = pyo.Set(dimen=2, initialize=min_wait_if_sick.keys())
+
+            wait_edges_for_vessels_trip = [(v, i, j)
+                                           for v in self.m.VESSELS
+                                           for i, j in self.m.WAIT_EDGES
+                                           if (v, i) in self.m.ORDER_NODES_FOR_VESSELS_TUP
+                                           and (v, j) in self.m.ORDER_NODES_FOR_VESSELS_TUP]
+
+            self.m.WAIT_EDGES_FOR_VESSEL_TRIP = pyo.Set(dimen=3, initialize=wait_edges_for_vessels_trip)
+
+            self.m.TIME_WINDOW_VIOLATIONS = pyo.Set(initialize=[i for i in range(-max_tw_violation, max_tw_violation+1)])
 
         print("Done setting sets!")
 
@@ -214,6 +249,23 @@ class BasicModel:
                                                        self.m.TIME_PERIODS,
                                                        initialize=factory_max_vessels_loading)
 
+        # Extension
+        if extended_model:
+            tw_violation_unit_cost = {k: tw_violation_unit_cost * abs(k) for k in self.m.TIME_WINDOW_VIOLATIONS}
+            self.m.time_window_violation_cost = pyo.Param(self.m.TIME_WINDOW_VIOLATIONS,
+                                                          initialize=tw_violation_unit_cost)
+
+            # Fetch first (min) and last (max) time period within the time window of each order
+            tw_min, tw_max = {}, {}
+            for i in self.m.ORDER_NODES:
+                tw_min[i] = min(t for i2, t in time_windows_for_orders_tup if i == i2)
+                tw_max[i] = max(t for i2, t in time_windows_for_orders_tup if i == i2)
+
+            self.m.tw_min = pyo.Param(self.m.ORDER_NODES, initialize=tw_min)
+            self.m.tw_max = pyo.Param(self.m.ORDER_NODES, initialize=tw_max)
+
+            self.m.min_wait_if_sick = pyo.Param(self.m.WAIT_EDGES,
+                                                initialize=min_wait_if_sick)
         print("Done setting parameters!")
 
         ################################################################################################################
@@ -296,6 +348,15 @@ class BasicModel:
                            domain=pyo.Boolean,
                            initialize=0)  # To be removed, implemented to avoid infeasibility during testing
 
+        # Extension
+        if extended_model:
+            self.m.lambd = pyo.Var(self.m.ORDER_NODES,
+                                   self.m.TIME_WINDOW_VIOLATIONS,
+                                   domain=pyo.Boolean,
+                                   initialize=0)
+
+
+
         print("Done setting variables!")
 
         ################################################################################################################
@@ -321,9 +382,18 @@ class BasicModel:
                           for p in model.PRODUCTS
                           for q in model.PRODUCTS
                           for t in model.TIME_PERIODS)
-                    + sum(100000000000 * model.e[i] for i in model.ORDER_NODES))  # TODO: Remove when done with testing
+                    + sum(10000000 * model.e[i] for i in model.ORDER_NODES))
 
-        self.m.objective = pyo.Objective(rule=obj, sense=pyo.minimize)
+        def obj_extended(model):
+            return (obj(model)
+                    + sum(model.time_window_violation_cost[k] * model.lambd[i, k]
+                          for i in model.ORDER_NODES
+                          for k in model.TIME_WINDOW_VIOLATIONS))
+
+        if extended_model:
+            self.m.objective = pyo.Objective(rule=obj_extended, sense=pyo.minimize)
+        else:
+            self.m.objective = pyo.Objective(rule=obj, sense=pyo.minimize)
 
         print("Done setting objective")
 
@@ -678,7 +748,130 @@ class BasicModel:
                                                               self.m.TIME_PERIODS,
                                                               rule=constr_activate_product_shift)
 
+        # Extension
+        if extended_model:
+            def constr_delivery_no_tw_violation(model, i):
+                return (sum(model.y_minus[v, i, t]
+                            for v, j in model.ORDER_NODES_FOR_VESSELS_TUP if i == j
+                            for j, t in model.TIME_WINDOWS_FOR_ORDERS_TUP if i == j)
+                        ==
+                        model.lambd[i, 0])
+
+            self.m.constr_delivery_within_time_window.deactivate()  # Deactivate the current delivery constraint
+            self.m.constr_delivery_no_tw_violation = pyo.Constraint(self.m.ORDER_NODES,
+                                                                    rule=constr_delivery_no_tw_violation)
+
+            def constr_delivery_tw_violation_earlier(model, i, k):
+                if k < 0 and self.m.tw_min[i] + k in model.TIME_PERIODS:
+                    return (sum(model.y_minus[v, i, self.m.tw_min[i] + k]
+                                for v, j in model.ORDER_NODES_FOR_VESSELS_TUP if i == j)
+                            ==
+                            model.lambd[i, k])
+                else:
+                    return Constraint.Skip
+
+            self.m.constr_delivery_tw_violation_earlier = pyo.Constraint(self.m.ORDER_NODES,
+                                                                         self.m.TIME_WINDOW_VIOLATIONS,
+                                                                         rule=constr_delivery_tw_violation_earlier)
+
+            def constr_delivery_tw_violation_later(model, i, k):
+                if k > 0 and self.m.tw_max[i] + k in model.TIME_PERIODS:
+                    return (sum(model.y_minus[v, i, self.m.tw_max[i] + k]
+                                for v, j in model.ORDER_NODES_FOR_VESSELS_TUP if i == j)
+                            ==
+                            model.lambd[i, k])
+                else:
+                    return Constraint.Skip
+
+            self.m.constr_delivery_tw_violation_later = pyo.Constraint(self.m.ORDER_NODES,
+                                                                       self.m.TIME_WINDOW_VIOLATIONS,
+                                                                       rule=constr_delivery_tw_violation_later)
+
+            def constr_choose_one_tw_violation(model, i):
+                return (sum(model.lambd[i, k]
+                            for k in model.TIME_WINDOW_VIOLATIONS
+                            if model.tw_max[i] + k in model.TIME_PERIODS
+                            and model.tw_min[i] + k in model.TIME_PERIODS)
+                        + model.e[i]
+                        == 1)
+
+            self.m.constr_choose_one_tw_violation = pyo.Constraint(self.m.ORDER_NODES,
+                                                                   rule=constr_choose_one_tw_violation)
+
+            def constr_wait_if_visit_sick_farm(model, v, i, j, t):
+                if model.transport_times[i, j] <= t <= len(model.TIME_PERIODS_INCLUDING_DUMMY) - model.min_wait_if_sick[i, j]:
+                    return (model.min_wait_if_sick[i, j] * model.x[v, i, j, t - model.transport_times[i, j]]
+                            <=
+                            sum(model.w[v, j, tau] for tau in range(t, t + model.min_wait_if_sick[i, j])))
+                else:
+                    return Constraint.Feasible
+
+            self.m.constr_wait_if_visit_sick_farm = pyo.Constraint(self.m.WAIT_EDGES_FOR_VESSEL_TRIP,
+                                                                   self.m.TIME_PERIODS,
+                                                                   rule=constr_wait_if_visit_sick_farm)
+
+            def constr_max_one_factory_visit(model, v):
+                return sum(model.y_plus[v, i, t] for i in model.FACTORY_NODES for t in model.TIME_PERIODS) <= 2
+
+            self.m.constr_max_one_factory_visit = pyo.Constraint(self.m.VESSELS, rule=constr_max_one_factory_visit)
+
         print("Done setting constraints!")
+
+        # UNUSED CONSTRAINTS
+        # def constr_max_one_delivery(model, i):
+        #     return (sum(model.y_minus[v, i, t]
+        #                 for v, j in model.ORDER_NODES_FOR_VESSELS_TUP if j == i
+        #                 for t in model.TIME_PERIODS)
+        #             <= 1)
+        #
+        # self.m.constr_max_one_delivery = pyo.Constraint(self.m.ORDER_NODES,
+        #                                                 rule=constr_max_one_delivery)
+
+        # self.m.b = pyo.Var(self.m.ORDER_NODES_FOR_VESSELS_TUP,
+        #                    self.m.TIME_PERIODS,
+        #                    domain=pyo.Boolean,
+        #                    initialize=0)
+        #
+        # def constr_precedence_yellow(model, v, i, t):
+        #     return (sum(model.y_minus[v, j, t] for zone, j in model.ORDERS_FOR_ZONES_TUP if zone == 'yellow')
+        #             <=
+        #             1 - model.b[v, i, t])
+        #
+        # self.m.constr_precedence_yellow = pyo.Constraint(self.m.GREEN_NODES_FOR_VESSEL_TUP,
+        #                                                  self.m.TIME_PERIODS,
+        #                                                  rule=constr_precedence_yellow)
+        #
+        # def constr_precedence_red(model, v, i, t):
+        #     return (sum(model.y_minus[v, j, t] for zone, j in model.ORDERS_FOR_ZONES_TUP if zone == 'red')
+        #             <=
+        #             1 - model.b[v, i, t])
+        #
+        # self.m.constr_precedence_red = pyo.Constraint(self.m.GREEN_AND_YELLOW_NODES_FOR_VESSEL_TUP,
+        #                                               self.m.TIME_PERIODS,
+        #                                               rule=constr_precedence_red)
+        #
+        # def constr_precedence_allow_visit(model, v, i, t):
+        #     return model.y_minus[v, i, t] <= model.b[v, i, t]
+        #
+        # self.m.constr_precedence_allow_visit = pyo.Constraint(self.m.ORDER_NODES_FOR_VESSELS_TUP,
+        #                                                       self.m.TIME_PERIODS,
+        #                                                       rule=constr_precedence_allow_visit)
+        #
+        # def constr_precedence_visit_after_wait(model, v, i, t):
+        #     if t == 0:
+        #         return Constraint.Skip
+        #     else:
+        #         return (model.b[v, i, t]
+        #                 <=
+        #                 sum(model.y_plus[v, j, t] for v2, j in model.FACTORY_NODES_FOR_VESSELS_TUP if v2 == v) +
+        #                 # sum(model.x[v, 'W', j, t] for v2, j in model.NODES_FOR_VESSELS_TUP if v2 == v) +
+        #                 model.b[v, i, t-1])
+        #
+        #
+        # self.m.constr_precedence_visit_after_wait = pyo.Constraint(self.m.ORDER_NODES_FOR_VESSELS_TUP,
+        #                                                            self.m.TIME_PERIODS,
+        #                                                            rule=constr_precedence_visit_after_wait)
+
 
     def solve(self, verbose: bool = True, time_limit: int = None) -> None:
         print("Solver running...")
@@ -800,6 +993,16 @@ class BasicModel:
                                           pyo.value(self.m.q[l, p, t]), "is produced")
                         print()
 
+            def print_time_window_violations():
+                if self.m.extended_model:
+                    for k in self.m.TIME_WINDOW_VIOLATIONS:
+                        orders_with_k_violation = [i for i in self.m.ORDER_NODES if self.m.lambd[i, k]() > 0.5]
+                        s = "" if k <= 0 else "+"
+                        print(s + str(k), "violation:", orders_with_k_violation)
+                else:
+                    print("No time window violation, extension is not applied")
+                print()
+
             # PRINTING
             print()
             # print_factory_production()
@@ -811,20 +1014,36 @@ class BasicModel:
             # print_waiting()
             # print_vessel_load()
             print_orders_not_delivered()
-            print_production_starts()
+            # print_production_starts()
+            print_time_window_violations()
+
+
 
         def print_result_eventwise():
             def print_routes_simple():
+                table = []
                 for v in self.m.VESSELS:
-                    route_string = v + ": "
-                    route_started = False
-                    for t in self.m.TIME_PERIODS_INCLUDING_DUMMY:
-                        for i in self.m.NODES_INCLUDING_DUMMIES:
-                            for j in self.m.NODES_INCLUDING_DUMMIES:
+                    row = [v]
+                    for t in self.m.TIME_PERIODS:
+                        action_in_period = False
+                        for i in self.m.NODES:
+                            # Check if node may be visited by vessel
+                            if i not in [i2 for v2, i2 in self.m.NODES_FOR_VESSELS_TUP if v2 == v]:
+                                continue
+                            if self.m.y_plus[v, i, t]() > 0.5 or self.m.y_minus[v, i, t]() > 0.5:
+                                row.append(i)  # load
+                                action_in_period = True
+                            if self.m.w[v, i, t]() > 0.5:
+                                row.append('.')  # wait
+                                action_in_period = True
+                            for j in self.m.NODES:
                                 if self.m.x[v, i, j, t]() > 0.5:
-                                    route_string += " -> " + j if route_started else i + " -> " + j
-                                    route_started = True
-                    print(route_string)
+                                    row.append(">")  # sail
+                                    action_in_period = True
+                        if not action_in_period:
+                            row.append(" ")
+                    table.append(row)
+                print(tabulate(table, headers=["vessel"] + list(self.m.TIME_PERIODS_INCLUDING_DUMMY)))
                 print()
 
             def print_routing(include_loads=True):
@@ -920,11 +1139,11 @@ class BasicModel:
                                               self.m.product_shifting_costs[p, q], " at production line ", l, sep="")
                     print()
 
-            print_routing()
-            print_vessel_load()
-            print_production_and_inventory()
+            # print_routing(include_loads=False)
+            # print_vessel_load()
+            # print_production_and_inventory()
+            # print_product_shifting()
             print_routes_simple()
-            print_product_shifting()
 
         def print_objective_function_components():
             production_cost = (sum(self.m.production_unit_costs[i, p] * pyo.value(self.m.q[l, p, t])
@@ -947,10 +1166,17 @@ class BasicModel:
                                          for p in self.m.PRODUCTS
                                          for q in self.m.PRODUCTS
                                          for t in self.m.TIME_PERIODS))
+            if self.m.extended_model:
+                time_window_violation_cost = (sum(self.m.time_window_violation_cost[k] * self.m.lambd[i, k]()
+                                                  for i in self.m.ORDER_NODES
+                                                  for k in self.m.TIME_WINDOW_VIOLATIONS))
+                print("Time window violation cost:", round(time_window_violation_cost, 2))
+
             print("Production cost:", round(production_cost, 2))
             print("Inventory cost:", round(inventory_cost, 2))
             print("Transport cost:", round(transport_cost, 2))
             print("Product shifting cost:", round(product_shifting_cost, 2))
+
 
         print_result_variablewise()
         print_result_eventwise()

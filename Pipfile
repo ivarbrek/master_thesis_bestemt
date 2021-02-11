@@ -8,6 +8,7 @@ pyomo = "*"
 pandas = "*"
 numpy = "*"
 openpyxl = "*"
+tabulate = "*"
 
 [dev-packages]
 
