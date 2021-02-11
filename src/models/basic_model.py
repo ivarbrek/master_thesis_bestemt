@@ -59,7 +59,7 @@ class BasicModel:
         self.solver_factory = pyo.SolverFactory('gurobi')
         self.results = None
         self.solution = None
-        self.m.extended_model = extended_model
+        self.extended_model = extended_model
 
         ################################################################################################################
         # SETS #########################################################################################################
@@ -397,7 +397,7 @@ class BasicModel:
                           for p in model.PRODUCTS
                           for q in model.PRODUCTS
                           for t in model.TIME_PERIODS)
-                    + sum(10000000 * model.e[i] for i in model.ORDER_NODES))
+                    + sum(1000000 * model.e[i] for i in model.ORDER_NODES))
 
         def obj_extended(model):
             return (obj(model)
@@ -1037,16 +1037,17 @@ class BasicModel:
                                     print(t, ": production of product ", p, " happens ", sep="")
                         print()
 
-
-
             def print_final_inventory():
                 print("FINAL INVENTORY AND TARGETS (r_plus variable)")
                 for i in self.m.FACTORY_NODES:
                     print("Factory", i)
                     for p in self.m.PRODUCTS:
-                        print("Rewarded inventory of product ", p, " is ", pyo.value(self.m.r_plus[i, p]),
-                              ", total final inventory is ", pyo.value(self.m.r[i, p, (max(self.m.TIME_PERIODS))]),
-                              " and its target is ", pyo.value(self.m.inventory_targets[i, p]), sep="")
+                        if self.extended_model:
+                            print("Rewarded inventory of product ", p, " is ", pyo.value(self.m.r_plus[i, p]),
+                                  ", total final inventory is ", pyo.value(self.m.r[i, p, (max(self.m.TIME_PERIODS))]),
+                                  " and its target is ", pyo.value(self.m.inventory_targets[i, p]), sep="")
+                        else:
+                            print("Final inventory for", p, "is", pyo.value(self.m.r[i, p, (max(self.m.TIME_PERIODS))]))
                     print()
 
             def print_available_production_lines():
@@ -1057,7 +1058,7 @@ class BasicModel:
                     print()
 
             def print_time_window_violations():
-                if self.m.extended_model:
+                if self.extended_model:
                     for k in self.m.TIME_WINDOW_VIOLATIONS:
                         orders_with_k_violation = [i for i in self.m.ORDER_NODES if self.m.lambd[i, k]() > 0.5]
                         s = "" if k <= 0 else "+"
@@ -1078,8 +1079,8 @@ class BasicModel:
             # print_vessel_load()
             print_orders_not_delivered()
             print_production_starts()
-            print_final_inventory()
             print_production_happens()
+            print_final_inventory()
             # print_available_production_lines()
             print_time_window_violations()
 
@@ -1258,11 +1259,11 @@ class BasicModel:
                                          for p in self.m.PRODUCTS
                                          for q in self.m.PRODUCTS
                                          for t in self.m.TIME_PERIODS))
-            unmet_order_cost = (sum(10000 * pyo.value(self.m.e[i])
+            unmet_order_cost = (sum(1000000 * pyo.value(self.m.e[i])
                                       for i in self.m.ORDER_NODES))
 
             sum_obj = production_cost + inventory_cost + transport_cost + product_shifting_cost + unmet_order_cost
-            if self.m.extended_model:
+            if self.extended_model:
                 time_window_violation_cost = (sum(self.m.time_window_violation_cost[k] * self.m.lambd[i, k]()
                                                   for i in self.m.ORDER_NODES
                                                   for k in self.m.TIME_WINDOW_VIOLATIONS))
