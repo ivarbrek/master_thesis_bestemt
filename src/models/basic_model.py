@@ -1,8 +1,8 @@
 import pyomo.environ as pyo
 from typing import Dict, List
 from time import time
-from tabulate import tabulate
 from pyomo.core import Constraint
+from tabulate import tabulate
 
 
 # TODO IN THIS FILE
@@ -48,6 +48,8 @@ class BasicModel:
                  min_wait_if_sick: Dict,
                  max_tw_violation: int,
                  tw_violation_unit_cost: float,
+                 inventory_targets: Dict,
+                 inventory_unit_rewards: Dict,
                  extended_model=False,
 
                  ) -> None:
@@ -208,6 +210,9 @@ class BasicModel:
         self.m.inventory_unit_costs = pyo.Param(self.m.FACTORY_NODES,
                                                 initialize=inventory_unit_costs)
 
+        self.m.inventory_unit_rewards = pyo.Param(self.m.FACTORY_NODES,
+                                                  initialize=inventory_unit_rewards)
+
         self.m.transport_unit_costs = pyo.Param(self.m.VESSELS,
                                                 initialize=transport_unit_costs)
 
@@ -249,6 +254,7 @@ class BasicModel:
                                                        self.m.TIME_PERIODS,
                                                        initialize=factory_max_vessels_loading)
 
+
         # Extension
         if extended_model:
             tw_violation_unit_cost = {k: tw_violation_unit_cost * abs(k) for k in self.m.TIME_WINDOW_VIOLATIONS}
@@ -266,6 +272,10 @@ class BasicModel:
 
             self.m.min_wait_if_sick = pyo.Param(self.m.WAIT_EDGES,
                                                 initialize=min_wait_if_sick)
+
+            self.m.inventory_targets = pyo.Param(self.m.FACTORY_NODES,
+                                                 self.m.PRODUCTS,
+                                                 initialize=inventory_targets)
         print("Done setting parameters!")
 
         ################################################################################################################
@@ -326,6 +336,7 @@ class BasicModel:
                            self.m.TIME_PERIODS,
                            domain=pyo.NonNegativeReals)
 
+
         self.m.a = pyo.Var(self.m.PRODUCTION_LINES,
                            self.m.TIME_PERIODS,
                            domain=pyo.Boolean,
@@ -354,6 +365,10 @@ class BasicModel:
                                    self.m.TIME_WINDOW_VIOLATIONS,
                                    domain=pyo.Boolean,
                                    initialize=0)
+
+            self.m.r_plus = pyo.Var(self.m.FACTORY_NODES,
+                                    self.m.PRODUCTS,
+                                    domain=pyo.NonNegativeReals)
 
 
 
@@ -719,7 +734,7 @@ class BasicModel:
                                                                          rule=constr_produce_minimum_number_of_periods)
 
         def constr_production_line_availability(model, l, t):  # NB! <= in overleaf!
-            return model.a[l, t] <= 1 - sum(model.g[l, p, t] for p in model.PRODUCTS)
+            return model.a[l, t] == 1 - sum(model.g[l, p, t] for p in model.PRODUCTS)
 
         self.m.constr_production_line_availability = pyo.Constraint(self.m.PRODUCTION_LINES,
                                                                     self.m.TIME_PERIODS,
@@ -729,7 +744,7 @@ class BasicModel:
             if t == 0:
                 return Constraint.Feasible
             return (model.delta[l, q, t]
-                    ==
+                    <=
                     model.a[l, t - 1] + sum(model.gamma[l, p, q, t] for p in model.PRODUCTS if q != p))
 
         self.m.constr_production_start_or_shift = pyo.Constraint(self.m.PRODUCTION_LINES,
@@ -740,7 +755,7 @@ class BasicModel:
         def constr_activate_product_shift(model, l, p, q, t):
             if t == 0:
                 return Constraint.Feasible
-            return model.gamma[l, p, q, t] <= model.g[l, p, t - 1]
+            return sum(model.gamma[l, p, q, t] for q in model.PRODUCTS) <= model.g[l, p, t - 1]
 
         self.m.constr_activate_product_shift = pyo.Constraint(self.m.PRODUCTION_LINES,
                                                               self.m.PRODUCTS,
@@ -810,10 +825,27 @@ class BasicModel:
                                                                    self.m.TIME_PERIODS,
                                                                    rule=constr_wait_if_visit_sick_farm)
 
-            def constr_max_one_factory_visit(model, v):
-                return sum(model.y_plus[v, i, t] for i in model.FACTORY_NODES for t in model.TIME_PERIODS) <= 2
+            def constr_restrict_product_shift(model, l, q, t):
+                return sum(model.gamma[l, p, q, t] for p in model.PRODUCTS) <= model.delta[l, q, t]
 
-            self.m.constr_max_one_factory_visit = pyo.Constraint(self.m.VESSELS, rule=constr_max_one_factory_visit)
+            self.m.constr_restrict_product_shift = pyo.Constraint(self.m.PRODUCTION_LINES,
+                                                                  self.m.PRODUCTS,
+                                                                  self.m.TIME_PERIODS,
+                                                                  rule=constr_restrict_product_shift)
+
+            def constr_rewarded_inventory_below_inventory_level(model, i, p):
+                return model.r_plus[i, p] <= model.r[i, p, max(model.TIME_PERIODS)]
+
+            self.m.constr_rewarded_inventory_below_inventory_level = pyo.Constraint(self.m.FACTORY_NODES,
+                                                                                    self.m.PRODUCTS,
+                                                                                    rule=constr_rewarded_inventory_below_inventory_level)
+
+            def constr_rewarded_inventory_below_inventory_target(model, i, p):
+                return model.r_plus[i, p] <= model.inventory_targets[i, p]
+
+            self.m.constr_rewarded_inventory_below_inventory_target = pyo.Constraint(self.m.FACTORY_NODES,
+                                                                                 self.m.PRODUCTS,
+                                                                                 rule=constr_rewarded_inventory_below_inventory_target)
 
         print("Done setting constraints!")
 
@@ -993,6 +1025,37 @@ class BasicModel:
                                           pyo.value(self.m.q[l, p, t]), "is produced")
                         print()
 
+            def print_production_happens():
+                print("PRODUCTION HAPPENS (g variable)")
+                for i in self.m.FACTORY_NODES:
+                    relevant_production_lines = {l for (ii, l) in self.m.PRODUCTION_LINES_FOR_FACTORIES_TUP if ii == i}
+                    for l in relevant_production_lines:
+                        print("Production line", l, "at factory", i)
+                        for t in self.m.TIME_PERIODS:
+                            for p in self.m.PRODUCTS:
+                                if pyo.value(self.m.g[l, p, t]) >= 0.5:
+                                    print(t, ": production of product ", p, " happens ", sep="")
+                        print()
+
+
+
+            def print_final_inventory():
+                print("FINAL INVENTORY AND TARGETS (r_plus variable)")
+                for i in self.m.FACTORY_NODES:
+                    print("Factory", i)
+                    for p in self.m.PRODUCTS:
+                        print("Rewarded inventory of product ", p, " is ", pyo.value(self.m.r_plus[i, p]),
+                              ", total final inventory is ", pyo.value(self.m.r[i, p, (max(self.m.TIME_PERIODS))]),
+                              " and its target is ", pyo.value(self.m.inventory_targets[i, p]), sep="")
+                    print()
+
+            def print_available_production_lines():
+                print("AVAILABLE PRODUCTION LINES")
+                for ll in self.m.PRODUCTION_LINES:
+                    for t in self.m.TIME_PERIODS:
+                        print(t, ": production line ", ll, " has value ", pyo.value(self.m.a[ll, t]), sep="")
+                    print()
+
             def print_time_window_violations():
                 if self.m.extended_model:
                     for k in self.m.TIME_WINDOW_VIOLATIONS:
@@ -1014,12 +1077,16 @@ class BasicModel:
             # print_waiting()
             # print_vessel_load()
             print_orders_not_delivered()
-            # print_production_starts()
+            print_production_starts()
+            print_final_inventory()
+            print_production_happens()
+            # print_available_production_lines()
             print_time_window_violations()
 
 
 
         def print_result_eventwise():
+
             def print_routes_simple():
                 table = []
                 for v in self.m.VESSELS:
@@ -1086,7 +1153,6 @@ class BasicModel:
                             for t in self.m.DUMMY_TIME_PERIODS:
                                 if pyo.value(self.m.x[v, i, j, t]) >= 0.5:
                                     print(t, ": ", i, " --> ", j, sep="")
-                    # Space before next vessel
                     print()
 
             def print_vessel_load():
@@ -1139,10 +1205,36 @@ class BasicModel:
                                               self.m.product_shifting_costs[p, q], " at production line ", l, sep="")
                     print()
 
-            # print_routing(include_loads=False)
-            # print_vessel_load()
-            # print_production_and_inventory()
-            # print_product_shifting()
+            def print_production_simple():
+                for i in self.m.FACTORY_NODES:
+                    relevant_production_lines = {l for (ii, l) in self.m.PRODUCTION_LINES_FOR_FACTORIES_TUP if ii == i}
+                    table = []
+                    for p in self.m.PRODUCTS:
+                        row = [p, "prod"]
+                        for t in self.m.TIME_PERIODS:
+                            if sum(self.m.g[l, p, t]() for l in relevant_production_lines) > 0.5:
+                                row.append(str(sum(self.m.q[l, p, t]() for l in relevant_production_lines))) # + " [" + str(self.m.r[i, p, t]()) + "]")
+                            else:
+                                row.append(" ")
+                        table.append(row)
+                        row = ["\"", "inv"]
+                        for t in self.m.TIME_PERIODS:
+                            if t == 0:
+                                row.append(self.m.r[i, p, 0]())
+                            elif abs(self.m.r[i, p, t]() - self.m.r[i, p, t-1]()) > 0.5:
+                                row.append(str(self.m.r[i, p, t]())) # + " [" + str(self.m.r[i, p, t]()) + "]")
+                            else:
+                                row.append(" ")
+                        table.append(row)
+                        table.append(["____"]*(len(list(self.m.TIME_PERIODS))+2))
+                    print(tabulate(table, headers=["product", "prod/inv"] + list(self.m.TIME_PERIODS)))
+                    print()
+
+            print_routing(include_loads=False)
+            print_vessel_load()
+            print_production_and_inventory()
+            print_product_shifting()
+            print_production_simple()
             print_routes_simple()
 
         def print_objective_function_components():
@@ -1166,17 +1258,29 @@ class BasicModel:
                                          for p in self.m.PRODUCTS
                                          for q in self.m.PRODUCTS
                                          for t in self.m.TIME_PERIODS))
+            unmet_order_cost = (sum(10000 * pyo.value(self.m.e[i])
+                                      for i in self.m.ORDER_NODES))
+
+            sum_obj = production_cost + inventory_cost + transport_cost + product_shifting_cost + unmet_order_cost
             if self.m.extended_model:
                 time_window_violation_cost = (sum(self.m.time_window_violation_cost[k] * self.m.lambd[i, k]()
                                                   for i in self.m.ORDER_NODES
                                                   for k in self.m.TIME_WINDOW_VIOLATIONS))
+                final_inventory_reward = (-sum(self.m.inventory_unit_rewards[i] * pyo.value(self.m.r_plus[i, p])
+                                          for i in self.m.FACTORY_NODES
+                                          for p in self.m.PRODUCTS))
+                sum_obj += time_window_violation_cost + final_inventory_reward
                 print("Time window violation cost:", round(time_window_violation_cost, 2))
+                print("Final inventory reward (negative cost):", round(final_inventory_reward, 2))
 
             print("Production cost:", round(production_cost, 2))
             print("Inventory cost:", round(inventory_cost, 2))
             print("Transport cost:", round(transport_cost, 2))
             print("Product shifting cost:", round(product_shifting_cost, 2))
+            print("Unmet order cost:", round(unmet_order_cost, 2))
 
+            print("Sum of above cost components:", round(sum_obj, 15))
+            print("Objective value (from Gurobi):", pyo.value(self.m.objective))
 
         print_result_variablewise()
         print_result_eventwise()

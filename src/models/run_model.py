@@ -36,7 +36,9 @@ def model_create(problem_data: ProblemData):
                       production_line_min_times=problem_data.get_production_line_min_times_dict(),
                       product_shifting_costs=problem_data.get_product_shifting_costs(),
                       factory_max_vessels_destination=problem_data.get_factory_max_vessels_destination_dict(),
-                      factory_max_vessels_loading=problem_data.get_factory_max_vessels_loading_dict()
+                      factory_max_vessels_loading=problem_data.get_factory_max_vessels_loading_dict(),
+                      inventory_targets=problem_data.get_inventory_targets(),
+                      inventory_unit_rewards=problem_data.get_inventory_unit_rewards_dict()
                       )
 
 

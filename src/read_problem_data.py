@@ -2,6 +2,7 @@ import pandas as pd
 from typing import List, Dict, Tuple
 from collections import defaultdict
 
+
 class ProblemData:
 
     def __init__(self, file_path: str) -> None:
@@ -15,7 +16,7 @@ class ProblemData:
                                                   skiprows=[0])
         self.nodes_for_vessels = pd.read_excel(file_path, sheet_name='nodes_for_vessel', index_col=0, skiprows=[0])
         self.initial_inventories = pd.read_excel(file_path, sheet_name='initial_inventory', index_col=0, skiprows=[0])
-        self.inventory_unit_costs = pd.read_excel(file_path, sheet_name='inventory_cost', index_col=0, skiprows=[0])
+        self.inventory_unit_costs_rewards = pd.read_excel(file_path, sheet_name='inventory_cost', index_col=0, skiprows=[0])
         self.transport_unit_costs = pd.read_excel(file_path, sheet_name='transport_cost', index_col=0, skiprows=[0])
         self.transport_times = pd.read_excel(file_path, sheet_name='transport_time', index_col=0, skiprows=[0])
         self.unloading_times = pd.read_excel(file_path, sheet_name='unloading_time', index_col=0, skiprows=[0])
@@ -35,18 +36,11 @@ class ProblemData:
         self.factory_max_vessels_loading = pd.read_excel(file_path, sheet_name='factory_max_vessel_loading', index_col=0, skiprows=[0])
         self.factory_max_vessel_destination = pd.read_excel(file_path, sheet_name='factory_max_vessel_destination', index_col=0, skiprows=[0])
         self.order_zones = pd.read_excel(file_path, sheet_name='order_zones', index_col=0, skiprows=[0])
+        self.inventory_targets = pd.read_excel(file_path, sheet_name='inventory_target', index_col=0, skiprows=[0])
 
         # Validate sets
         self._validate_set_consistency()
         self._validate_feasible_problem()
-
-
-    def get_zone_orders_dict(self):
-        zone_orders_dict = defaultdict(list)
-        for order in self.order_zones.index:
-            zone = self.order_zones.loc[order, 'zone']
-            zone_orders_dict[zone].append(order)
-        return zone_orders_dict
 
     def _validate_set_consistency(self) -> None:
         # Products
@@ -58,6 +52,7 @@ class ProblemData:
         assert set(self.get_products()) == set(self.production_min_capacities.index)
         assert set(self.get_products()) == set(self.production_line_min_times.index)
         assert set(self.get_products()) == set(self.product_groups.index)
+        assert set(self.get_products()) == set(self.inventory_targets.index)
 
         # Production lines
         assert set(self.get_production_lines()) == set(self.production_max_capacities.columns)
@@ -77,12 +72,13 @@ class ProblemData:
         # Factories
         assert set(self.get_factory_nodes()) == set(self.inventory_capacities.index)
         assert set(self.get_factory_nodes()) == set(self.initial_inventories.index)
-        assert set(self.get_factory_nodes()) == set(self.inventory_unit_costs.index)
+        assert set(self.get_factory_nodes()) == set(self.inventory_unit_costs_rewards.index)
         assert set(self.get_factory_nodes()) == set(self.production_unit_costs.columns)
         assert set(self.get_factory_nodes()) == set(
             self.production_lines_for_factories['factory'])  # At least 1 production line per factory
         assert set(self.get_factory_nodes()) == set(self.factory_max_vessels_loading.columns)
         assert set(self.get_factory_nodes()) == set(self.factory_max_vessel_destination.index)
+        assert set(self.get_factory_nodes()) == set(self.inventory_targets.columns)
 
         # Order nodes
         assert set(self.get_order_nodes()) == set(self.time_windows_for_orders.index)
@@ -116,6 +112,13 @@ class ProblemData:
 
     def get_order_nodes(self) -> List[str]:
         return list(self.time_windows_for_orders.index)
+
+    def get_zone_orders_dict(self):
+        zone_orders_dict = defaultdict(list)
+        for order in self.order_zones.index:
+            zone = self.order_zones.loc[order, 'zone']
+            zone_orders_dict[zone].append(order)
+        return zone_orders_dict
 
     def get_factory_nodes(self) -> List[str]:
         return list(self.initial_inventories.index)
@@ -170,8 +173,12 @@ class ProblemData:
                 self.inventory_capacities.index}
 
     def get_inventory_unit_costs_dict(self) -> Dict[str, int]:
-        return {factory_node: self.inventory_unit_costs.loc[factory_node, 'unit_cost'] for factory_node in
-                self.inventory_unit_costs.index}
+        return {factory_node: self.inventory_unit_costs_rewards.loc[factory_node, 'unit_cost'] for factory_node in
+                self.inventory_unit_costs_rewards.index}
+
+    def get_inventory_unit_rewards_dict(self) -> Dict[str, int]:
+        return {factory_node: self.inventory_unit_costs_rewards.loc[factory_node, 'unit_reward'] for factory_node in
+                self.inventory_unit_costs_rewards.index}
 
     def get_transport_costs_dict(self) -> Dict[str, int]:
         return {vessel: self.transport_unit_costs.loc[vessel, 'unit_transport_cost'] for vessel in
@@ -268,3 +275,8 @@ class ProblemData:
     def get_factory_max_vessels_destination_dict(self) -> Dict[str, int]:
         return {factory: int(self.factory_max_vessel_destination.loc[factory])
                 for factory in self.factory_max_vessel_destination.index}
+
+    def get_inventory_targets(self) -> Dict[Tuple[str, str], int]:
+        return {(factory, product): int(self.inventory_targets.loc[product, factory])
+                for product in self.inventory_targets.index
+                for factory in self.inventory_targets.columns}
