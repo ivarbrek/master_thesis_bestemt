@@ -120,8 +120,11 @@ class ProblemData:
             zone_orders_dict[zone].append(order)
         return zone_orders_dict
 
-    def get_factory_nodes(self) -> List[str]:
-        return list(self.initial_inventories.index)
+    def get_factory_nodes(self, v: str = None) -> List[str]:
+        if v:
+            return [i for i in self.initial_inventories.index if i in self.get_nodes_for_vessels_dict2()[v]]
+        else:
+            return list(self.initial_inventories.index)
 
     def get_nodes(self) -> List[str]:
         return self.get_order_nodes() + self.get_factory_nodes()
@@ -133,6 +136,12 @@ class ProblemData:
         return {(order_node, int(time_period)): self.time_windows_for_orders.loc[order_node, time_period]
                 for order_node in self.time_windows_for_orders.index
                 for time_period in self.time_windows_for_orders.columns}
+
+    def get_time_window_start(self, order_node):
+        return min(t for (i, t), val in self.get_time_windows_for_orders_dict().items() if i == order_node and val == 1)
+
+    def get_time_window_end(self, order_node):
+        return max(t for (i, t), val in self.get_time_windows_for_orders_dict().items() if i == order_node and val == 1)
 
     def get_time_periods_for_vessels_dict(self) -> Dict[str, int]:
         return {vessel: int(self.vessel_availability.loc[vessel, 'time_period'])
@@ -146,6 +155,11 @@ class ProblemData:
         return {(vessel, node): self.nodes_for_vessels.loc[vessel, node]
                 for vessel in self.nodes_for_vessels.index
                 for node in self.nodes_for_vessels.columns}
+
+    def get_nodes_for_vessels_dict2(self) -> Dict[str, List[str]]:
+        return {vessel: [node for node in self.nodes_for_vessels.columns
+                         if self.nodes_for_vessels.loc[vessel, node] == 1]
+                for vessel in self.nodes_for_vessels.index}
 
     def get_vessel_initial_loads_dict(self) -> Dict[Tuple[str, str], int]:
         return {(vessel, product): self.vessel_initial_loads.loc[product, vessel]
@@ -188,7 +202,8 @@ class ProblemData:
         return {**{(node1, node2): self.transport_times.loc[node1, node2]
                    for node1 in self.transport_times.index
                    for node2 in self.transport_times.columns},
-                **{('d_0', node): 0 for node in self.transport_times.index}}
+                **{('d_0', node): 1 for node in self.transport_times.index},
+                **{(node, 'd_-1'): 1 for node in self.transport_times.index}}
 
     def get_loading_unloading_times_dict(self) -> Dict[Tuple[str, str], int]:
         return {(vessel, node): int(self.loading_unloading_times.loc[node, vessel])
@@ -280,3 +295,35 @@ class ProblemData:
         return {(factory, product): int(self.inventory_targets.loc[product, factory])
                 for product in self.inventory_targets.index
                 for factory in self.inventory_targets.columns}
+
+    def get_arcs_for_vessel_dict(self) -> Dict[str, List[Tuple[str, str]]]:
+        dummy_start_arc = {v: [('d_0', i)] for v, i in self.get_vessel_first_location().items()}
+        dummy_end_arcs = {v: [(i, 'd_-1') for i in self.get_factory_nodes(v)] for v in self.get_vessels()}
+        all_other_arcs = {v: [(i, j)
+                              for i in self.get_nodes_for_vessels_dict2()[v]
+                              for j in self.get_nodes_for_vessels_dict2()[v]
+                              if i != j
+                              and not self._has_tw_conflict(v, i, j)]
+                          for v in self.get_vessels()}
+        return {v: dummy_start_arc[v] + dummy_end_arcs[v] + all_other_arcs[v] for v in self.get_vessels()}
+
+    def _has_tw_conflict(self, v, i, j, soft_tw=False):
+        # i or j is a factory node
+        if i in self.get_factory_nodes() or j in self.get_factory_nodes():
+            return False
+
+        # i or j's time window ends before vessel becomes available
+        elif (self.get_time_window_end(j) < self.get_time_periods_for_vessels_dict()[v]
+                or self.get_time_window_end(i) < self.get_time_periods_for_vessels_dict()[v]):
+            return False
+
+        else:
+            extra_violation = self.get_max_time_window_violation() if soft_tw else 0
+            return (self.get_time_window_start(i)
+                    + self.get_unloading_times_dict()[v, i]
+                    + self.get_transport_times_dict()[i, j]
+                    + extra_violation
+                    >
+                    self.get_time_window_end(j))
+
+

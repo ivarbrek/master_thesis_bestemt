@@ -8,6 +8,7 @@ def model_create(problem_data: ProblemData):
                       order_nodes=problem_data.get_order_nodes(),
                       orders_for_zones=problem_data.get_zone_orders_dict(),
                       nodes_for_vessels=problem_data.get_nodes_for_vessels_dict(),
+                      arcs_for_vessels=problem_data.get_arcs_for_vessel_dict(),
                       products=problem_data.get_products(),
                       vessels=problem_data.get_vessels(),
                       time_periods=problem_data.get_time_periods(),
@@ -44,13 +45,13 @@ def model_create(problem_data: ProblemData):
                       )
 
 
-# problem_data = ProblemData('../../data/input_data/small_testcase_one_vessel.xlsx')
+problem_data = ProblemData('../../data/input_data/small_testcase_one_vessel.xlsx')
 # problem_data = ProblemData('../../data/input_data/small_testcase.xlsx')
-problem_data = ProblemData('../../data/input_data/medium_testcase.xlsx')
+# problem_data = ProblemData('../../data/input_data/medium_testcase.xlsx')
 # problem_data = ProblemData('../../data/input_data/large_testcase.xlsx')
 # problem_data = ProblemData('../../data/input_data/larger_testcase.xlsx')
 # problem_data = ProblemData('../../data/input_data/larger_testcase_4vessels.xlsx')
 
 model = model_create(problem_data)
-model.solve(time_limit=100)
+model.solve(time_limit=30)
 model.print_result()
