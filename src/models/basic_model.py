@@ -354,10 +354,6 @@ class BasicModel:
                            domain=pyo.Boolean,
                            initialize=0)
 
-        self.m.e = pyo.Var(self.m.ORDER_NODES,
-                           domain=pyo.Boolean,
-                           initialize=0)
-
         # Extension
         if extended_model:
             self.m.lambd = pyo.Var(self.m.ORDER_NODES,
@@ -367,9 +363,8 @@ class BasicModel:
 
             self.m.r_plus = pyo.Var(self.m.FACTORY_NODES,
                                     self.m.PRODUCTS,
-                                    domain=pyo.NonNegativeReals)
-
-
+                                    domain=pyo.NonNegativeReals,
+                                    initialize=0)
 
         print("Done setting variables!")
 
@@ -1064,8 +1059,6 @@ class BasicModel:
                                 action_in_period = True
                         if not action_in_period:
                             row.append(" ")
-
-
                     table.append(row)
                 print(tabulate(table, headers=["vessel"] + list(self.m.TIME_PERIODS)))
                 print()
