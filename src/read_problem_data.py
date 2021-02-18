@@ -19,8 +19,7 @@ class ProblemData:
         self.inventory_unit_costs_rewards = pd.read_excel(file_path, sheet_name='inventory_cost', index_col=0, skiprows=[0])
         self.transport_unit_costs = pd.read_excel(file_path, sheet_name='transport_cost', index_col=0, skiprows=[0])
         self.transport_times = pd.read_excel(file_path, sheet_name='transport_time', index_col=0, skiprows=[0])
-        self.unloading_times = pd.read_excel(file_path, sheet_name='unloading_time', index_col=0, skiprows=[0])
-        self.loading_times = pd.read_excel(file_path, sheet_name='loading_time', index_col=0, skiprows=[0])
+        self.loading_unloading_times = pd.read_excel(file_path, sheet_name='loading_unloading_time', index_col=0, skiprows=[0])
         self.demands = pd.read_excel(file_path, sheet_name='demand', index_col=0, skiprows=[0])
         self.production_max_capacities = pd.read_excel(file_path, sheet_name='production_max_capacity', index_col=0,
                                                        skiprows=[0])
@@ -66,9 +65,8 @@ class ProblemData:
         assert set(self.get_vessels()) == set(self.vessel_availability.index)
         assert set(self.get_vessels()) == set(self.vessel_capacities.index)
         assert set(self.get_vessels()) == set(self.transport_unit_costs.index)
-        assert set(self.get_vessels()) == set(self.unloading_times.columns)
-        assert set(self.get_vessels()) == set(self.loading_times.columns)
         assert set(self.get_vessels()) == set(self.vessel_initial_loads.columns)
+        assert set(self.get_vessels()) == set(self.loading_unloading_times.columns)
 
         # Factories
         assert set(self.get_factory_nodes()) == set(self.inventory_capacities.index)
@@ -90,8 +88,7 @@ class ProblemData:
         assert set(self.get_nodes()) == set(self.nodes_for_vessels.columns)
         assert set(self.get_nodes()) == set(self.transport_times.index)
         assert set(self.get_nodes()) == set(self.transport_times.columns)
-        assert set(self.get_nodes()) == set(self.unloading_times.index)
-        assert set(self.get_nodes()) == set(self.loading_times.index)
+        assert set(self.get_nodes()) == set(self.loading_unloading_times.index)
 
         # Time periods
         assert set(self.get_time_periods()) == set(self.time_windows_for_orders.columns)
@@ -193,15 +190,10 @@ class ProblemData:
                    for node2 in self.transport_times.columns},
                 **{('d_0', node): 0 for node in self.transport_times.index}}
 
-    def get_unloading_times_dict(self) -> Dict[Tuple[str, str], int]:
-        return {(vessel, node): self.unloading_times.loc[node, vessel]
-                for node in self.unloading_times.index
-                for vessel in self.unloading_times.columns}
-
-    def get_loading_times_dict(self) -> Dict[Tuple[str, str], int]:
-        return {(vessel, node): int(self.loading_times.loc[node, vessel])
-                for node in self.loading_times.index
-                for vessel in self.loading_times.columns}
+    def get_loading_unloading_times_dict(self) -> Dict[Tuple[str, str], int]:
+        return {(vessel, node): int(self.loading_unloading_times.loc[node, vessel])
+                for node in self.loading_unloading_times.index
+                for vessel in self.loading_unloading_times.columns}
 
     def get_demands_dict(self) -> Dict[Tuple[str, str], int]:
         order_node_dict = {(order_node, order_node, product): int(self.demands.loc[order_node, product])
@@ -269,6 +261,7 @@ class ProblemData:
         # Create dict on form (product : product group)
         product_group_dict = {product: self.product_groups.loc[product, 'product_group']
                               for product in self.product_groups.index}
+        # Return dict on form (product_group : [product1, product2, ...]
         return {product_group: [product
                                 for product in self.product_groups.index
                                 if product_group_dict[product] == product_group]

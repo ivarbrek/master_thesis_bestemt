@@ -30,8 +30,7 @@ class BasicModel:
                  inventory_unit_costs: Dict,
                  transport_unit_costs: Dict,
                  transport_times: Dict,
-                 unloading_times: Dict,
-                 loading_times: Dict,
+                 loading_unloading_times: Dict,
                  demands: Dict,
                  production_stops: Dict,
                  production_start_costs: Dict,
@@ -172,7 +171,8 @@ class BasicModel:
 
             self.m.WAIT_EDGES_FOR_VESSEL_TRIP = pyo.Set(dimen=3, initialize=wait_edges_for_vessels_trip)
 
-            self.m.TIME_WINDOW_VIOLATIONS = pyo.Set(initialize=[i for i in range(-max_tw_violation, max_tw_violation+1)])
+            self.m.TIME_WINDOW_VIOLATIONS = pyo.Set(
+                initialize=[i for i in range(-max_tw_violation, max_tw_violation + 1)])
 
         print("Done setting sets!")
 
@@ -222,13 +222,9 @@ class BasicModel:
                                            self.m.NODES,
                                            initialize=transport_times)
 
-        self.m.unloading_times = pyo.Param(self.m.VESSELS,
-                                           self.m.NODES,
-                                           initialize=unloading_times)
-
-        self.m.loading_times = pyo.Param(self.m.VESSELS,
-                                         self.m.NODES,
-                                         initialize=loading_times)
+        self.m.loading_unloading_times = pyo.Param(self.m.VESSELS,
+                                                   self.m.NODES,
+                                                   initialize=loading_unloading_times)
 
         self.m.demands = pyo.Param(self.m.ORDERS_RELATED_TO_NODES_TUP,
                                    self.m.PRODUCTS,
@@ -295,15 +291,10 @@ class BasicModel:
                            domain=pyo.Boolean,
                            initialize=0)
 
-        self.m.y_plus = pyo.Var(self.m.NODES_FOR_VESSELS_TUP,
-                                self.m.TIME_PERIODS,
-                                domain=pyo.Boolean,
-                                initialize=0)
-
-        self.m.y_minus = pyo.Var(self.m.NODES_FOR_VESSELS_TUP,
-                                 self.m.TIME_PERIODS,
-                                 domain=pyo.Boolean,
-                                 initialize=0)
+        self.m.y = pyo.Var(self.m.NODES_FOR_VESSELS_TUP,
+                           self.m.TIME_PERIODS,
+                           domain=pyo.Boolean,
+                           initialize=0)
 
         self.m.z = pyo.Var(self.m.ORDER_NODES_RELEVANT_NODES_FOR_VESSELS_TRIP,
                            self.m.TIME_PERIODS,
@@ -333,7 +324,7 @@ class BasicModel:
                            domain=pyo.Boolean,
                            initialize=0)
 
-        self.m.r = pyo.Var(self.m.FACTORY_NODES,
+        self.m.s = pyo.Var(self.m.FACTORY_NODES,
                            self.m.PRODUCTS,
                            self.m.TIME_PERIODS,
                            domain=pyo.NonNegativeReals,
@@ -361,7 +352,7 @@ class BasicModel:
                                    domain=pyo.Boolean,
                                    initialize=0)
 
-            self.m.r_plus = pyo.Var(self.m.FACTORY_NODES,
+            self.m.s_plus = pyo.Var(self.m.FACTORY_NODES,
                                     self.m.PRODUCTS,
                                     domain=pyo.NonNegativeReals,
                                     initialize=0)
@@ -371,7 +362,7 @@ class BasicModel:
         ################################################################################################################
         # OBJECTIVE ####################################################################################################
         def obj(model):
-            return (sum(model.inventory_unit_costs[i] * model.r[i, p, t]
+            return (sum(model.inventory_unit_costs[i] * model.s[i, p, t]
                         for t in model.TIME_PERIODS
                         for p in model.PRODUCTS
                         for i in model.FACTORY_NODES)
@@ -392,7 +383,7 @@ class BasicModel:
                     + sum(model.time_window_violation_cost[k] * model.lambd[i, k]
                           for i in model.ORDER_NODES
                           for k in model.TIME_WINDOW_VIOLATIONS)
-                    - sum(model.inventory_unit_rewards[i] * model.r_plus[i, p]
+                    - sum(model.inventory_unit_rewards[i] * model.s_plus[i, p]
                           for i in model.FACTORY_NODES
                           for p in model.PRODUCTS))
 
@@ -406,15 +397,39 @@ class BasicModel:
         ################################################################################################################
         # CONSTRAINTS ##################################################################################################
 
-        def constr_max_one_activity(model, v, t):
-            relevant_nodes = {n for (vessel, n) in model.NODES_FOR_VESSELS_TUP if vessel == v}
+        # def constr_max_one_activity(model, v, t):
+        #     relevant_nodes = {n for (vessel, n) in model.NODES_FOR_VESSELS_TUP if vessel == v}
+        #
+        #     return (sum(model.y[v, i, t] +
+        #         # model.y_minus[v, i, t] +
+        #         #         model.y_plus[v, i, t] +
+        #                 sum(model.x[v, i, j, t] for j in relevant_nodes) +
+        #                 model.w[v, i, t]
+        #                 for i in relevant_nodes)
+        #             <= 1)
+        #
+        # self.m.constr_max_one_activity = pyo.Constraint(self.m.VESSELS,
+        #                                                 self.m.TIME_PERIODS,
+        #                                                 rule=constr_max_one_activity)
 
-            return (sum(model.y_minus[v, i, t] +
-                        model.y_plus[v, i, t] +
-                        sum(model.x[v, i, j, t] for j in relevant_nodes) +
-                        model.w[v, i, t]
-                        for i in relevant_nodes)
-                    <= 1)
+        def constr_max_one_activity(model, v, t):
+            if t < model.time_period_for_vessels[v]:  # Skip constraint if vessel has not become available in t
+                return pyo.Constraint.Skip
+            else:
+                return (sum(model.y[v, i, tau]
+                            for v2, i in model.NODES_FOR_VESSELS_TUP if v2 == v
+                            for tau in range(max(0, t - model.loading_unloading_times[v, i] + 1), t + 1))
+                        + sum(model.x[v, i, j, tau]
+                              for v2, i in model.NODES_FOR_VESSELS_TUP if v2 == v
+                              for v3, j in model.NODES_FOR_VESSELS_TUP if v3 == v
+                              for tau in range(max(0, t - model.transport_times[i, j] + 1), t + 1))
+                        + sum(model.x[v, i, i, t]  # TODO: REMOVE
+                              for v2, i in model.NODES_FOR_VESSELS_TUP if v2 == v)
+                        + sum(model.x[v, i, 'd_-1', t]
+                              for v2, i in model.NODES_FOR_VESSELS_TUP if v2 == v)
+                        + sum(model.w[v, i, t]
+                              for v2, i in model.NODES_FOR_VESSELS_TUP if v2 == v)
+                        == 1)
 
         self.m.constr_max_one_activity = pyo.Constraint(self.m.VESSELS,
                                                         self.m.TIME_PERIODS,
@@ -422,11 +437,12 @@ class BasicModel:
 
         def constr_max_m_vessels_loading(model, i, v, t):
             relevant_vessels = {vessel for (j, vessel) in model.VESSELS_FOR_FACTORY_NODES_TUP if j == i and vessel != v}
-            relevant_time_periods = {tau for tau in model.TIME_PERIODS if (t <= tau < t + model.loading_times[v, i])}   # TODO: Sjekk at < og ikke <= er good
-            return (sum(model.y_plus[u, i, tau]
+            relevant_time_periods = {tau for tau in model.TIME_PERIODS if (t <= tau < t + model.loading_unloading_times[
+                v, i])}  # TODO: Sjekk at < og ikke <= er good
+            return (sum(model.y[u, i, tau]
                         for tau in relevant_time_periods
                         for u in relevant_vessels)
-                    <= model.factory_max_vessels_loading[i, t] - model.y_plus[v, i, t])
+                    <= model.factory_max_vessels_loading[i, t] - model.y[v, i, t])
 
         self.m.constr_max_m_vessels_loading = pyo.Constraint(self.m.VESSELS_FOR_FACTORY_NODES_TUP,
                                                              self.m.TIME_PERIODS,
@@ -435,33 +451,20 @@ class BasicModel:
         def constr_delivery_within_time_window(model, i):
             relevant_vessels = {vessel for (vessel, j) in model.ORDER_NODES_FOR_VESSELS_TUP if j == i}
             relevant_time_periods = {t for (j, t) in model.TIME_WINDOWS_FOR_ORDERS_TUP if j == i}
-            return (sum(model.y_minus[v, i, t] for v in relevant_vessels for t in relevant_time_periods) + model.e[i]
+            return (sum(model.y[v, i, t] for v in relevant_vessels for t in relevant_time_periods) + model.e[i]
                     == 1)
 
         self.m.constr_delivery_within_time_window = pyo.Constraint(self.m.ORDER_NODES,
                                                                    rule=constr_delivery_within_time_window)
 
         def constr_sailing_after_loading_unloading(model, v, i, t):
-            unloading_time = pyo.value(model.unloading_times[v, i])
-            loading_time = pyo.value(model.loading_times[v, i])
+            loading_unloading_time = pyo.value(model.loading_unloading_times[v, i])
             relevant_destination_nodes = {j for (vessel, j) in model.NODES_FOR_VESSELS_TUP
                                           if vessel == v}
-
-            if t < unloading_time and t < loading_time:  # Neither unloading_time nor loading_time is valid
+            if t < loading_unloading_time:
                 return Constraint.Feasible
-
-            elif t < unloading_time:  # Only loading_time is valid
-                return (model.y_plus[v, i, (t - loading_time)]
-                        ==
-                        sum(model.x[v, i, j, t] for j in relevant_destination_nodes))
-
-            elif t < loading_time:  # Only unloading_time is valid
-                return (model.y_minus[v, i, (t - unloading_time)]
-                        ==
-                        sum(model.x[v, i, j, t] for j in relevant_destination_nodes))
-
             else:
-                return ((model.y_minus[v, i, (t - unloading_time)] + model.y_plus[v, i, (t - loading_time)])
+                return (model.y[v, i, (t - loading_unloading_time)]
                         ==
                         sum(model.x[v, i, j, t] for j in relevant_destination_nodes))
 
@@ -476,12 +479,13 @@ class BasicModel:
             if t == 0:  # exclude w_t-1
                 return (sum(model.x[v, j, i, (t - model.transport_times[j, i])] for j in relevant_nodes)
                         ==
-                        model.y_minus[v, i, t] + model.y_plus[v, i, t] + model.w[v, i, t] + model.x[v, i, 'd_-1', t])
+                        model.y[v, i, t] + model.w[v, i, t] + model.x[
+                            v, i, 'd_-1', t])
             else:
                 return (sum(model.x[v, j, i, (t - model.transport_times[j, i])] for j in relevant_nodes)
                         + model.w[v, i, (t - 1)]
                         ==
-                        model.y_minus[v, i, t] + model.y_plus[v, i, t] + model.w[v, i, t] + model.x[v, i, 'd_-1', t])
+                        model.y[v, i, t] + model.w[v, i, t] + model.x[v, i, 'd_-1', t])
 
         self.m.constr_wait_load_unload_after_sailing = pyo.Constraint(self.m.NODES_FOR_VESSELS_TUP,
                                                                       self.m.TIME_PERIODS,
@@ -519,14 +523,14 @@ class BasicModel:
                                                                           rule=constr_maximum_vessels_at_end_destination)
 
         def constr_pickup_requires_factory_visit(model, v, i, j, t):
-            return model.z[v, i, j, t] <= model.y_plus[v, i, t]
+            return model.z[v, i, j, t] <= model.y[v, i, t]
 
         self.m.constr_pickup_requires_factory_visit = pyo.Constraint(self.m.ORDER_NODES_FACTORY_NODES_FOR_VESSELS_TRIP,
                                                                      self.m.TIME_PERIODS,
                                                                      rule=constr_pickup_requires_factory_visit)
 
         def constr_delivery_requires_order_visit(model, v, i, t):
-            return model.z[v, i, i, t] == model.y_minus[v, i, t]
+            return model.z[v, i, i, t] == model.y[v, i, t]
 
         self.m.constr_delivery_requires_order_visit = pyo.Constraint(self.m.ORDER_NODES_FOR_VESSELS_TUP,
                                                                      self.m.TIME_PERIODS,
@@ -585,14 +589,14 @@ class BasicModel:
                                                        rule=constr_zero_final_load)
 
         def constr_inventory_below_capacity(model, i, t):
-            return sum(model.r[i, p, t] for p in model.PRODUCTS) <= model.factory_inventory_capacities[i]
+            return sum(model.s[i, p, t] for p in model.PRODUCTS) <= model.factory_inventory_capacities[i]
 
         self.m.constr_inventory_below_capacity = pyo.Constraint(self.m.FACTORY_NODES,
                                                                 self.m.TIME_PERIODS,
                                                                 rule=constr_inventory_below_capacity)
 
         def constr_initial_inventory(model, i, p):
-            return (model.r[i, p, 0] == model.factory_initial_inventories[i, p] +
+            return (model.s[i, p, 0] == model.factory_initial_inventories[i, p] +
                     sum(model.q[l, p, 0] for (ii, l) in model.PRODUCTION_LINES_FOR_FACTORIES_TUP if ii == i) +
                     sum(model.demands[i, j, p] * model.z[v, i, j, 0]
                         for (v, i2, j) in model.ORDER_NODES_RELEVANT_NODES_FOR_VESSELS_TRIP
@@ -605,7 +609,7 @@ class BasicModel:
         def constr_inventory_balance(model, i, p, t):
             if t == 0:
                 return Constraint.Feasible
-            return (model.r[i, p, t] == model.r[i, p, (t - 1)] +
+            return (model.s[i, p, t] == model.s[i, p, (t - 1)] +
                     sum(model.q[l, p, t] for (ii, l) in model.PRODUCTION_LINES_FOR_FACTORIES_TUP if ii == i) +
                     sum(model.demands[i, j, p] * model.z[v, i, j, t]
                         for v, i2, j in model.ORDER_NODES_RELEVANT_NODES_FOR_VESSELS_TRIP
@@ -683,7 +687,7 @@ class BasicModel:
         # Extension
         if extended_model:
             def constr_delivery_no_tw_violation(model, i):
-                return (sum(model.y_minus[v, i, t]
+                return (sum(model.y[v, i, t]
                             for v, j in model.ORDER_NODES_FOR_VESSELS_TUP if i == j
                             for j, t in model.TIME_WINDOWS_FOR_ORDERS_TUP if i == j)
                         ==
@@ -695,7 +699,7 @@ class BasicModel:
 
             def constr_delivery_tw_violation_earlier(model, i, k):
                 if k < 0 and self.m.tw_min[i] + k in model.TIME_PERIODS:
-                    return (sum(model.y_minus[v, i, self.m.tw_min[i] + k]
+                    return (sum(model.y[v, i, self.m.tw_min[i] + k]
                                 for v, j in model.ORDER_NODES_FOR_VESSELS_TUP if i == j)
                             ==
                             model.lambd[i, k])
@@ -708,7 +712,7 @@ class BasicModel:
 
             def constr_delivery_tw_violation_later(model, i, k):
                 if k > 0 and self.m.tw_max[i] + k in model.TIME_PERIODS:
-                    return (sum(model.y_minus[v, i, self.m.tw_max[i] + k]
+                    return (sum(model.y[v, i, self.m.tw_max[i] + k]
                                 for v, j in model.ORDER_NODES_FOR_VESSELS_TUP if i == j)
                             ==
                             model.lambd[i, k])
@@ -743,14 +747,14 @@ class BasicModel:
                                                                    rule=constr_wait_if_visit_sick_farm)
 
             def constr_rewarded_inventory_below_inventory_level(model, i, p):
-                return model.r_plus[i, p] <= model.r[i, p, max(model.TIME_PERIODS)]
+                return model.s_plus[i, p] <= model.s[i, p, max(model.TIME_PERIODS)]
 
             self.m.constr_rewarded_inventory_below_inventory_level = pyo.Constraint(self.m.FACTORY_NODES,
                                                                                     self.m.PRODUCTS,
                                                                                     rule=constr_rewarded_inventory_below_inventory_level)
 
             def constr_rewarded_inventory_below_inventory_target(model, i, p):
-                return model.r_plus[i, p] <= model.inventory_targets[i, p]
+                return model.s_plus[i, p] <= model.inventory_targets[i, p]
 
             self.m.constr_rewarded_inventory_below_inventory_target = pyo.Constraint(self.m.FACTORY_NODES,
                                                                                      self.m.PRODUCTS,
@@ -884,21 +888,15 @@ class BasicModel:
                                 print("Vessel", v, "waits to deliver order", i, "in time period", t)
                 print()
 
-            def print_order_delivery():
-                print("ORDER DELIVERY (y_minus variable)")
+            def print_order_delivery_and_pickup():
+                print("ORDER DELIVERY AND PICKUP (y variable)")
                 for v in self.m.VESSELS:
                     for t in self.m.TIME_PERIODS:
                         for i in self.m.ORDER_NODES:
-                            if pyo.value(self.m.y_minus[v, i, t]) >= 0.5:
+                            if pyo.value(self.m.y[v, i, t]) >= 0.5:
                                 print("Vessel", v, "starts unloading order", i, "in time period", t)
-                print()
-
-            def print_order_pickup():
-                print("ORDER PICKUP (y_plus variable)")
-                for v in self.m.VESSELS:
-                    for t in self.m.TIME_PERIODS:
                         for i in self.m.FACTORY_NODES:
-                            if pyo.value(self.m.y_plus[v, i, t]) >= 0.5:
+                            if pyo.value(self.m.y[v, i, t]) >= 0.5:
                                 print("Vessel", v, "starts loading at factory", i, "in time period", t)
                 print()
 
@@ -922,8 +920,8 @@ class BasicModel:
                 for t in self.m.TIME_PERIODS:
                     for i in self.m.FACTORY_NODES:
                         for p in self.m.PRODUCTS:
-                            if pyo.value(self.m.r[i, p, t]) >= 0.5:
-                                print("Factory", i, "holds", pyo.value(self.m.r[i, p, t]), "tons of product", p,
+                            if pyo.value(self.m.s[i, p, t]) >= 0.5:
+                                print("Factory", i, "holds", pyo.value(self.m.s[i, p, t]), "tons of product", p,
                                       "as inventory in time period", t)
                 print()
 
@@ -990,11 +988,11 @@ class BasicModel:
                     print("Factory", i)
                     for p in self.m.PRODUCTS:
                         if self.extended_model:
-                            print("Rewarded inventory of product ", p, " is ", pyo.value(self.m.r_plus[i, p]),
-                                  ", total final inventory is ", pyo.value(self.m.r[i, p, (max(self.m.TIME_PERIODS))]),
+                            print("Rewarded inventory of product ", p, " is ", pyo.value(self.m.s_plus[i, p]),
+                                  ", total final inventory is ", pyo.value(self.m.s[i, p, (max(self.m.TIME_PERIODS))]),
                                   " and its target is ", pyo.value(self.m.inventory_targets[i, p]), sep="")
                         else:
-                            print("Final inventory for", p, "is", pyo.value(self.m.r[i, p, (max(self.m.TIME_PERIODS))]))
+                            print("Final inventory for", p, "is", pyo.value(self.m.s[i, p, (max(self.m.TIME_PERIODS))]))
                     print()
 
             def print_available_production_lines():
@@ -1008,7 +1006,7 @@ class BasicModel:
                 if self.extended_model:
                     for k in self.m.TIME_WINDOW_VIOLATIONS:
                         orders_with_k_violation = [i for i in self.m.ORDER_NODES if self.m.lambd[i, k]() > 0.5]
-                        s = "" if k <= 0 else "+"
+                        s = " " if k <= 0 else "+"
                         print(s + str(k), "violation:", orders_with_k_violation)
                 else:
                     print("No time window violation, extension is not applied")
@@ -1019,8 +1017,7 @@ class BasicModel:
             # print_factory_production()
             # print_factory_inventory()
             # print_vessel_routing()
-            # print_order_delivery()
-            # print_order_pickup()
+            print_order_delivery_and_pickup()
             # print_factory_pickup()
             # print_waiting()
             # print_vessel_load()
@@ -1044,8 +1041,8 @@ class BasicModel:
                             # Check if node may be visited by vessel
                             if i not in [i2 for v2, i2 in self.m.NODES_FOR_VESSELS_TUP if v2 == v]:
                                 continue
-                            if self.m.y_plus[v, i, t]() > 0.5 or self.m.y_minus[v, i, t]() > 0.5:
-                                row.append(i)  # load
+                            if self.m.y[v, i, t]() > 0.5:
+                                row.append(i)  # load or unload
                                 action_in_period = True
                             if self.m.w[v, i, t]() > 0.5:
                                 row.append('.')  # wait
@@ -1082,14 +1079,10 @@ class BasicModel:
                                 if include_loads:
                                     print("   load: ", curr_load)
                         for i in [j for (vessel, j) in self.m.NODES_FOR_VESSELS_TUP if vessel == v]:
-                            # y_plus variable
-                            if pyo.value(self.m.y_plus[v, i, t]) >= 0.5:
-                                print(t, ": loads in node ", i, sep="")
-                                if include_loads:
-                                    print("   load: ", curr_load)
-                            # y_minus variable
-                            if pyo.value(self.m.y_minus[v, i, t]) >= 0.5:
-                                print(t, ": unloads in node ", i, sep="")
+                            # y variable
+                            if pyo.value(self.m.y[v, i, t]) >= 0.5:  # (self.m.y_plus[v, i, t]) >= 0.5:
+                                activity_str = "loads" if i in self.m.FACTORY_NODES else "unloads"
+                                print(t, ": ", activity_str, " in node ", i, sep="")
                                 if include_loads:
                                     print("   load: ", curr_load)
                         # z variable
@@ -1115,7 +1108,7 @@ class BasicModel:
                                                      ii == i}
                         production = [round(sum(self.m.q[l, p, t]() for l in relevant_production_lines))
                                       for p in sorted(self.m.PRODUCTS)]
-                        inventory = [round(self.m.r[i, p, t]()) for p in sorted(self.m.PRODUCTS)]
+                        inventory = [round(self.m.s[i, p, t]()) for p in sorted(self.m.PRODUCTS)]
                         if sum(production) > 0.5:
                             print(t, ": production: \t", production, sep="")
                         print(t, ": inventory: \t", inventory, sep="")
@@ -1124,8 +1117,8 @@ class BasicModel:
                         #         print(t, ": production of ", round(pyo.value(self.m.q[i, p, t]), 1),
                         #               " tons of product ",
                         #               p, sep="")
-                        #     if pyo.value(self.m.r[i, p, t]) >= 0.5:
-                        #         print(t, ": inventory level is ", round(pyo.value(self.m.r[i, p, t]), 1),
+                        #     if pyo.value(self.m.s[i, p, t]) >= 0.5:
+                        #         print(t, ": inventory level is ", round(pyo.value(self.m.s[i, p, t]), 1),
                         #               " tons of product ", p, sep="")
                         #     relevant_order_nodes = {j for (f, j) in self.m.ORDER_NODES_FOR_FACTORIES_TUP if f == i}
                         #     loaded_onto_vessels = pyo.value(sum(
@@ -1145,16 +1138,17 @@ class BasicModel:
                         row = [p, "prod"]
                         for t in self.m.TIME_PERIODS:
                             if sum(self.m.g[l, p, t]() for l in relevant_production_lines) > 0.5:
-                                row.append(round(sum(self.m.q[l, p, t]() for l in relevant_production_lines))) # + " [" + str(self.m.r[i, p, t]()) + "]")
+                                row.append(round(sum(self.m.q[l, p, t]() for l in
+                                                     relevant_production_lines)))  # + " [" + str(self.m.s[i, p, t]()) + "]")
                             else:
                                 row.append(" ")
                         table.append(row)
                         row = ["\"", "inv"]
                         for t in self.m.TIME_PERIODS:
                             if t == 0:
-                                row.append(round(self.m.r[i, p, 0]()))
-                            elif abs(self.m.r[i, p, t]() - self.m.r[i, p, t-1]()) > 0.5:
-                                row.append(round(self.m.r[i, p, t]()))  # + " [" + str(self.m.r[i, p, t]()) + "]")
+                                row.append(round(self.m.s[i, p, 0]()))
+                            elif abs(self.m.s[i, p, t]() - self.m.s[i, p, t - 1]()) > 0.5:
+                                row.append(round(self.m.s[i, p, t]()))  # + " [" + str(self.m.s[i, p, t]()) + "]")
                             else:
                                 row.append(" ")
                         table.append(row)
@@ -1169,7 +1163,7 @@ class BasicModel:
             print_routes_simple()
 
         def print_objective_function_components():
-            inventory_cost = (sum(self.m.inventory_unit_costs[i] * pyo.value(self.m.r[i, p, t])
+            inventory_cost = (sum(self.m.inventory_unit_costs[i] * pyo.value(self.m.s[i, p, t])
                                   for t in self.m.TIME_PERIODS
                                   for p in self.m.PRODUCTS
                                   for i in self.m.FACTORY_NODES))
@@ -1193,7 +1187,7 @@ class BasicModel:
                 time_window_violation_cost = (sum(self.m.time_window_violation_cost[k] * self.m.lambd[i, k]()
                                                   for i in self.m.ORDER_NODES
                                                   for k in self.m.TIME_WINDOW_VIOLATIONS))
-                final_inventory_reward = (-sum(self.m.inventory_unit_rewards[i] * pyo.value(self.m.r_plus[i, p])
+                final_inventory_reward = (-sum(self.m.inventory_unit_rewards[i] * pyo.value(self.m.s_plus[i, p])
                                                for i in self.m.FACTORY_NODES
                                                for p in self.m.PRODUCTS))
                 sum_obj += time_window_violation_cost + final_inventory_reward
