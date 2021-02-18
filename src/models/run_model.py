@@ -28,24 +28,26 @@ def model_create(problem_data: ProblemData):
                       unloading_times=problem_data.get_unloading_times_dict(),
                       loading_times=problem_data.get_loading_times_dict(),
                       demands=problem_data.get_demands_dict(),
-                      production_unit_costs=problem_data.get_production_unit_costs_dict(),
+                      production_stops=problem_data.get_production_stops_dict(),
+                      production_start_costs=problem_data.get_production_start_costs_dict(),
                       production_min_capacities=problem_data.get_production_min_capacities_dict(),
                       production_max_capacities=problem_data.get_production_max_capacities_dict(),
                       production_lines=problem_data.get_production_lines(),
                       production_lines_for_factories=problem_data.get_production_lines_for_factories_list(),
                       production_line_min_times=problem_data.get_production_line_min_times_dict(),
-                      product_shifting_costs=problem_data.get_product_shifting_costs(),
+                      product_groups=problem_data.get_product_groups_dict(),
                       factory_max_vessels_destination=problem_data.get_factory_max_vessels_destination_dict(),
                       factory_max_vessels_loading=problem_data.get_factory_max_vessels_loading_dict(),
                       inventory_targets=problem_data.get_inventory_targets(),
                       inventory_unit_rewards=problem_data.get_inventory_unit_rewards_dict(),
-                      extended_model=False
+                      external_delivery_penalty=problem_data.get_key_value("external_delivery_penalty"),
+                      extended_model=True
                       )
 
 
-problem_data = ProblemData('../../data/input_data/small_testcase_one_vessel.xlsx')
+# problem_data = ProblemData('../../data/input_data/small_testcase_one_vessel.xlsx')
 # problem_data = ProblemData('../../data/input_data/small_testcase.xlsx')
-# problem_data = ProblemData('../../data/input_data/medium_testcase.xlsx')
+problem_data = ProblemData('../../data/input_data/medium_testcase.xlsx')
 # problem_data = ProblemData('../../data/input_data/large_testcase.xlsx')
 # problem_data = ProblemData('../../data/input_data/larger_testcase.xlsx')
 # problem_data = ProblemData('../../data/input_data/larger_testcase_4vessels.xlsx')

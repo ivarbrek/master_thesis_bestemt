@@ -33,15 +33,17 @@ class BasicModel:
                  unloading_times: Dict,
                  loading_times: Dict,
                  demands: Dict,
-                 production_unit_costs: Dict,
+                 production_stops: Dict,
+                 production_start_costs: Dict,
                  production_min_capacities: Dict,
                  production_max_capacities: Dict,
                  production_lines: List,
                  production_lines_for_factories: List,
                  production_line_min_times: Dict,
-                 product_shifting_costs: Dict,
+                 product_groups: Dict,
                  factory_max_vessels_destination: Dict,
                  factory_max_vessels_loading: Dict,
+                 external_delivery_penalty: int,
 
                  # Extensions
                  orders_for_zones: Dict,
@@ -134,6 +136,13 @@ class BasicModel:
 
         self.m.PRODUCTION_LINES_FOR_FACTORIES_TUP = pyo.Set(dimen=2, initialize=production_lines_for_factories)
 
+        products_within_same_product_group_tup = [(prod1, prod2)
+                                                  for product_group in product_groups.keys()
+                                                  for prod1 in product_groups[product_group]
+                                                  for prod2 in product_groups[product_group]]
+        self.m.PRODUCTS_WITHIN_SAME_PRODUCT_GROUP_TUP = pyo.Set(dimen=2,
+                                                                initialize=products_within_same_product_group_tup)
+
         # Extension
         if extended_model:
             self.m.ZONES = pyo.Set(initialize=orders_for_zones.keys())
@@ -188,9 +197,13 @@ class BasicModel:
                                                      self.m.PRODUCTS,
                                                      initialize=production_max_capacities)
 
-        self.m.production_unit_costs = pyo.Param(self.m.FACTORY_NODES,
-                                                 self.m.PRODUCTS,
-                                                 initialize=production_unit_costs)
+        self.m.production_start_costs = pyo.Param(self.m.FACTORY_NODES,
+                                                  self.m.PRODUCTS,
+                                                  initialize=production_start_costs)
+
+        self.m.production_stops = pyo.Param(self.m.FACTORY_NODES,
+                                            self.m.TIME_PERIODS,
+                                            initialize=production_stops)
 
         self.m.factory_inventory_capacities = pyo.Param(self.m.FACTORY_NODES,
                                                         initialize=factory_inventory_capacities)
@@ -201,9 +214,6 @@ class BasicModel:
 
         self.m.inventory_unit_costs = pyo.Param(self.m.FACTORY_NODES,
                                                 initialize=inventory_unit_costs)
-
-        self.m.inventory_unit_rewards = pyo.Param(self.m.FACTORY_NODES,
-                                                  initialize=inventory_unit_rewards)
 
         self.m.transport_unit_costs = pyo.Param(self.m.VESSELS,
                                                 initialize=transport_unit_costs)
@@ -235,10 +245,6 @@ class BasicModel:
                                                     initialize=vessel_initial_locations,
                                                     within=pyo.Any)
 
-        self.m.product_shifting_costs = pyo.Param(self.m.PRODUCTS,
-                                                  self.m.PRODUCTS,
-                                                  initialize=product_shifting_costs)
-
         self.m.factory_max_vessels_destination = pyo.Param(self.m.FACTORY_NODES,
                                                            initialize=factory_max_vessels_destination)
 
@@ -246,6 +252,7 @@ class BasicModel:
                                                        self.m.TIME_PERIODS,
                                                        initialize=factory_max_vessels_loading)
 
+        self.m.external_delivery_penalty = pyo.Param(initialize=external_delivery_penalty)
 
         # Extension
         if extended_model:
@@ -268,6 +275,9 @@ class BasicModel:
             self.m.inventory_targets = pyo.Param(self.m.FACTORY_NODES,
                                                  self.m.PRODUCTS,
                                                  initialize=inventory_targets)
+
+            self.m.inventory_unit_rewards = pyo.Param(self.m.FACTORY_NODES,
+                                                      initialize=inventory_unit_rewards)
         print("Done setting parameters!")
 
         ################################################################################################################
@@ -329,7 +339,6 @@ class BasicModel:
                            domain=pyo.NonNegativeReals,
                            initialize=0)
 
-
         self.m.a = pyo.Var(self.m.PRODUCTION_LINES,
                            self.m.TIME_PERIODS,
                            domain=pyo.Boolean,
@@ -341,12 +350,9 @@ class BasicModel:
                                domain=pyo.Boolean,
                                initialize=0)
 
-        self.m.gamma = pyo.Var(self.m.PRODUCTION_LINES,
-                               self.m.PRODUCTS,
-                               self.m.PRODUCTS,
-                               self.m.TIME_PERIODS,
-                               domain=pyo.Boolean,
-                               initialize=0)
+        self.m.e = pyo.Var(self.m.ORDER_NODES,
+                           domain=pyo.Boolean,
+                           initialize=0)
 
         self.m.e = pyo.Var(self.m.ORDER_NODES,
                            domain=pyo.Boolean,
@@ -370,26 +376,21 @@ class BasicModel:
         ################################################################################################################
         # OBJECTIVE ####################################################################################################
         def obj(model):
-            return (sum(model.production_unit_costs[i, p] * model.q[l, p, t]
-                        for i in model.FACTORY_NODES
-                        for (ii, l) in model.PRODUCTION_LINES_FOR_FACTORIES_TUP if i == ii
+            return (sum(model.inventory_unit_costs[i] * model.r[i, p, t]
+                        for t in model.TIME_PERIODS
                         for p in model.PRODUCTS
-                        for t in model.TIME_PERIODS)
-                    + sum(model.inventory_unit_costs[i] * model.r[i, p, t]
-                          for t in model.TIME_PERIODS
-                          for p in model.PRODUCTS
-                          for i in model.FACTORY_NODES)
+                        for i in model.FACTORY_NODES)
                     + sum(model.transport_unit_costs[v] * model.transport_times[i, j] * model.x[v, i, j, t]
                           for t in model.TIME_PERIODS
                           for j in model.NODES
                           for i in model.NODES
                           for v in model.VESSELS)
-                    + sum(model.product_shifting_costs[p, q] * model.gamma[l, p, q, t]
-                          for l in model.PRODUCTION_LINES
+                    + sum(model.production_start_costs[i, p] * model.delta[l, p, t]
+                          for i in model.FACTORY_NODES
+                          for (ii, l) in model.PRODUCTION_LINES_FOR_FACTORIES_TUP if i == ii
                           for p in model.PRODUCTS
-                          for q in model.PRODUCTS
                           for t in model.TIME_PERIODS)
-                    + sum(1000000 * model.e[i] for i in model.ORDER_NODES))
+                    + sum(model.external_delivery_penalty * model.e[i] for i in model.ORDER_NODES))
 
         def obj_extended(model):
             return (obj(model)
@@ -581,19 +582,19 @@ class BasicModel:
                                                                         self.m.TIME_PERIODS,
                                                                         rule=constr_load_below_vessel_nprod_capacity)
 
+        def constr_zero_final_load(model, v, p):
+            return model.l[v, p, max(model.TIME_PERIODS)] == 0
+
+        self.m.constr_zero_final_load = pyo.Constraint(self.m.VESSELS,
+                                                       self.m.PRODUCTS,
+                                                       rule=constr_zero_final_load)
+
         def constr_inventory_below_capacity(model, i, t):
             return sum(model.r[i, p, t] for p in model.PRODUCTS) <= model.factory_inventory_capacities[i]
 
         self.m.constr_inventory_below_capacity = pyo.Constraint(self.m.FACTORY_NODES,
                                                                 self.m.TIME_PERIODS,
                                                                 rule=constr_inventory_below_capacity)
-
-        def constr_zero_final_load(model, v, p):  # Added
-            return model.l[v, p, max(model.TIME_PERIODS)] == 0
-
-        self.m.constr_zero_final_load = pyo.Constraint(self.m.VESSELS,
-                                                       self.m.PRODUCTS,
-                                                       rule=constr_zero_final_load)
 
         def constr_initial_inventory(model, i, p):
             return (model.r[i, p, 0] == model.factory_initial_inventories[i, p] +
@@ -620,11 +621,11 @@ class BasicModel:
                                                          self.m.TIME_PERIODS,
                                                          rule=constr_inventory_balance)
 
-        def constr_production_below_max_capacity(model, l, p, t):
+        def constr_production_below_max_capacity(model, i, l, p, t):
             return (model.q[l, p, t]
-                    <= model.production_max_capacities[l, p] * model.g[l, p, t])
+                    <= model.production_stops[i, t] * model.production_max_capacities[l, p] * model.g[l, p, t])
 
-        self.m.constr_production_below_max_capacity = pyo.Constraint(self.m.PRODUCTION_LINES,
+        self.m.constr_production_below_max_capacity = pyo.Constraint(self.m.PRODUCTION_LINES_FOR_FACTORIES_TUP,
                                                                      self.m.PRODUCTS,
                                                                      self.m.TIME_PERIODS,
                                                                      rule=constr_production_below_max_capacity)
@@ -636,13 +637,6 @@ class BasicModel:
                                                                      self.m.PRODUCTS,
                                                                      self.m.TIME_PERIODS,
                                                                      rule=constr_production_above_min_capacity)
-
-        def constr_one_product_per_production_line(model, ll, t):
-            return sum(model.g[ll, p, t] for p in model.PRODUCTS) <= 1
-
-        self.m.constr_one_product_per_production_line = pyo.Constraint(self.m.PRODUCTION_LINES,
-                                                                       self.m.TIME_PERIODS,
-                                                                       rule=constr_one_product_per_production_line)
 
         def constr_activate_delta(model, l, p, t):
             if t == 0:
@@ -673,42 +667,23 @@ class BasicModel:
                                                                          self.m.TIME_PERIODS,
                                                                          rule=constr_produce_minimum_number_of_periods)
 
-        def constr_production_line_availability(model, l, t):  # NB! <= in overleaf!
-            return model.a[l, t] == 1 - sum(model.g[l, p, t] for p in model.PRODUCTS)
+        def constr_production_line_availability(model, l, t):
+            return model.a[l, t] + sum(model.g[l, p, t] for p in model.PRODUCTS) == 1
 
         self.m.constr_production_line_availability = pyo.Constraint(self.m.PRODUCTION_LINES,
                                                                     self.m.TIME_PERIODS,
                                                                     rule=constr_production_line_availability)
 
-        def constr_production_start_or_shift(model, l, q, t):
+        def constr_production_shift(model, l, p, t):
             if t == 0:
                 return Constraint.Feasible
-            return (model.delta[l, q, t]
-                    <=
-                    model.a[l, t - 1] + sum(model.gamma[l, p, q, t] for p in model.PRODUCTS if q != p))
+            relevant_products = {q for (qq, q) in model.PRODUCTS_WITHIN_SAME_PRODUCT_GROUP_TUP if qq == p}
+            return model.g[l, p, (t - 1)] <= model.a[l, t] + sum(model.g[l, q, t] for q in relevant_products)
 
-        self.m.constr_production_start_or_shift = pyo.Constraint(self.m.PRODUCTION_LINES,
-                                                                 self.m.PRODUCTS,
-                                                                 self.m.TIME_PERIODS,
-                                                                 rule=constr_production_start_or_shift)
-
-        def constr_activate_product_shift(model, l, p, t):
-            if t == 0:
-                return Constraint.Feasible
-            return sum(model.gamma[l, p, q, t] for q in model.PRODUCTS) <= model.g[l, p, t - 1]
-
-        self.m.constr_activate_product_shift = pyo.Constraint(self.m.PRODUCTION_LINES,
-                                                              self.m.PRODUCTS,
-                                                              self.m.TIME_PERIODS,
-                                                              rule=constr_activate_product_shift)
-
-        def constr_restrict_product_shift(model, l, q, t):
-            return sum(model.gamma[l, p, q, t] for p in model.PRODUCTS) <= model.delta[l, q, t]
-
-        self.m.constr_restrict_product_shift = pyo.Constraint(self.m.PRODUCTION_LINES,
-                                                              self.m.PRODUCTS,
-                                                              self.m.TIME_PERIODS,
-                                                              rule=constr_restrict_product_shift)
+        self.m.constr_production_shift = pyo.Constraint(self.m.PRODUCTION_LINES,
+                                                        self.m.PRODUCTS,
+                                                        self.m.TIME_PERIODS,
+                                                        rule=constr_production_shift)
 
         # Extension
         if extended_model:
@@ -783,25 +758,103 @@ class BasicModel:
                 return model.r_plus[i, p] <= model.inventory_targets[i, p]
 
             self.m.constr_rewarded_inventory_below_inventory_target = pyo.Constraint(self.m.FACTORY_NODES,
-                                                                                 self.m.PRODUCTS,
-                                                                                 rule=constr_rewarded_inventory_below_inventory_target)
-
-        def constr(model, i):
-            return (sum(model.y_minus[v, i, t]
-                        for v, i2 in model.ORDER_NODES_FOR_VESSELS_TUP if i == i2
-                        for t in model.TIME_PERIODS)
-                    <= 1)
-
-        # self.m.constr = pyo.Constraint(self.m.ORDER_NODES,
-        #                                rule=constr)
-
-        # def constr2(model):
-        #     return model.x['v_1', 'f_1', 'd_-1', 17] == 1
-        #
-        # self.m.constr2 = pyo.Constraint(rule=constr2)
+                                                                                     self.m.PRODUCTS,
+                                                                                     rule=constr_rewarded_inventory_below_inventory_target)
 
         print("Done setting constraints!")
 
+        # UNUSED CONSTRAINTS
+
+        # def constr_one_product_per_production_line(model, ll, t):
+        #     return sum(model.g[ll, p, t] for p in model.PRODUCTS) <= 1
+        #
+        # self.m.constr_one_product_per_production_line = pyo.Constraint(self.m.PRODUCTION_LINES,
+        #                                                                self.m.TIME_PERIODS,
+        #                                                                rule=constr_one_product_per_production_line)
+
+        # def constr_production_start_or_shift(model, l, q, t):
+        #     if t == 0:
+        #         return Constraint.Feasible
+        #     return (model.delta[l, q, t]
+        #             <=
+        #             model.a[l, t - 1] + sum(model.gamma[l, p, q, t] for p in model.PRODUCTS if q != p))
+        #
+        # self.m.constr_production_start_or_shift = pyo.Constraint(self.m.PRODUCTION_LINES,
+        #                                                          self.m.PRODUCTS,
+        #                                                          self.m.TIME_PERIODS,
+        #                                                          rule=constr_production_start_or_shift)
+        #
+        # def constr_activate_product_shift(model, l, p, t):
+        #     if t == 0:
+        #         return Constraint.Feasible
+        #     return sum(model.gamma[l, p, q, t] for q in model.PRODUCTS) <= model.g[l, p, t - 1]
+        #
+        # self.m.constr_activate_product_shift = pyo.Constraint(self.m.PRODUCTION_LINES,
+        #                                                       self.m.PRODUCTS,
+        #                                                       self.m.TIME_PERIODS,
+        #                                                       rule=constr_activate_product_shift)
+
+        # def constr_restrict_product_shift(model, l, q, t):
+        #     return sum(model.gamma[l, p, q, t] for p in model.PRODUCTS) <= model.delta[l, q, t]
+        #
+        # self.m.constr_restrict_product_shift = pyo.Constraint(self.m.PRODUCTION_LINES,
+        #                                                       self.m.PRODUCTS,
+        #                                                       self.m.TIME_PERIODS,
+        #                                                       rule=constr_restrict_product_shift)
+
+        # def constr_max_one_delivery(model, i):
+        #     return (sum(model.y_minus[v, i, t]
+        #                 for v, j in model.ORDER_NODES_FOR_VESSELS_TUP if j == i
+        #                 for t in model.TIME_PERIODS)
+        #             <= 1)
+        #
+        # self.m.constr_max_one_delivery = pyo.Constraint(self.m.ORDER_NODES,
+        #                                                 rule=constr_max_one_delivery)
+
+        # self.m.b = pyo.Var(self.m.ORDER_NODES_FOR_VESSELS_TUP,
+        #                    self.m.TIME_PERIODS,
+        #                    domain=pyo.Boolean,
+        #                    initialize=0)
+        #
+        # def constr_precedence_yellow(model, v, i, t):
+        #     return (sum(model.y_minus[v, j, t] for zone, j in model.ORDERS_FOR_ZONES_TUP if zone == 'yellow')
+        #             <=
+        #             1 - model.b[v, i, t])
+        #
+        # self.m.constr_precedence_yellow = pyo.Constraint(self.m.GREEN_NODES_FOR_VESSEL_TUP,
+        #                                                  self.m.TIME_PERIODS,
+        #                                                  rule=constr_precedence_yellow)
+        #
+        # def constr_precedence_red(model, v, i, t):
+        #     return (sum(model.y_minus[v, j, t] for zone, j in model.ORDERS_FOR_ZONES_TUP if zone == 'red')
+        #             <=
+        #             1 - model.b[v, i, t])
+        #
+        # self.m.constr_precedence_red = pyo.Constraint(self.m.GREEN_AND_YELLOW_NODES_FOR_VESSEL_TUP,
+        #                                               self.m.TIME_PERIODS,
+        #                                               rule=constr_precedence_red)
+        #
+        # def constr_precedence_allow_visit(model, v, i, t):
+        #     return model.y_minus[v, i, t] <= model.b[v, i, t]
+        #
+        # self.m.constr_precedence_allow_visit = pyo.Constraint(self.m.ORDER_NODES_FOR_VESSELS_TUP,
+        #                                                       self.m.TIME_PERIODS,
+        #                                                       rule=constr_precedence_allow_visit)
+        #
+        # def constr_precedence_visit_after_wait(model, v, i, t):
+        #     if t == 0:
+        #         return Constraint.Skip
+        #     else:
+        #         return (model.b[v, i, t]
+        #                 <=
+        #                 sum(model.y_plus[v, j, t] for v2, j in model.FACTORY_NODES_FOR_VESSELS_TUP if v2 == v) +
+        #                 # sum(model.x[v, 'W', j, t] for v2, j in model.NODES_FOR_VESSELS_TUP if v2 == v) +
+        #                 model.b[v, i, t-1])
+        #
+        #
+        # self.m.constr_precedence_visit_after_wait = pyo.Constraint(self.m.ORDER_NODES_FOR_VESSELS_TUP,
+        #                                                            self.m.TIME_PERIODS,
+        #                                                            rule=constr_precedence_visit_after_wait)
 
     def solve(self, verbose: bool = True, time_limit: int = None) -> None:
         print("Solver running...")
@@ -899,7 +952,7 @@ class BasicModel:
                                       "in time period", t)
                 print()
 
-            def print_orders_not_delivered():  # TODO: Remove when done with testing
+            def print_orders_not_delivered():
                 all_delivered = True
                 print("ORDERS NOT DELIVERED (e variable)")
                 for i in self.m.ORDER_NODES:
@@ -919,8 +972,9 @@ class BasicModel:
                         for t in self.m.TIME_PERIODS:
                             for p in self.m.PRODUCTS:
                                 if pyo.value(self.m.delta[l, p, t]) >= 0.5:
-                                    print(t, ": production of product", p, "is started and",
-                                          pyo.value(self.m.q[l, p, t]), "is produced")
+                                    print(t, ": production of product ", p, " is started, imposing a cost of ",
+                                          pyo.value(self.m.production_start_costs[i, p]), ", and ",
+                                          pyo.value(self.m.q[l, p, t]), " is produced", sep="")
                         print()
 
             def print_production_happens():
@@ -981,8 +1035,6 @@ class BasicModel:
             print_final_inventory()
             # print_available_production_lines()
             print_time_window_violations()
-
-
 
         def print_result_eventwise():
 
@@ -1068,7 +1120,8 @@ class BasicModel:
                     for t in self.m.TIME_PERIODS:
                         relevant_production_lines = {l for (ii, l) in self.m.PRODUCTION_LINES_FOR_FACTORIES_TUP if
                                                      ii == i}
-                        production = [round(sum(self.m.q[l, p, t]() for l in relevant_production_lines)) for p in sorted(self.m.PRODUCTS)]
+                        production = [round(sum(self.m.q[l, p, t]() for l in relevant_production_lines))
+                                      for p in sorted(self.m.PRODUCTS)]
                         inventory = [round(self.m.r[i, p, t]()) for p in sorted(self.m.PRODUCTS)]
                         if sum(production) > 0.5:
                             print(t, ": production: \t", production, sep="")
@@ -1088,19 +1141,6 @@ class BasicModel:
                         #     if loaded_onto_vessels >= 0.5:
                         #         print(t, ": ", round(loaded_onto_vessels, 1), " tons of product ", p,
                         #               " is loaded onto vessels ", sep="")
-                    print()
-
-            def print_product_shifting():
-                for i in self.m.FACTORY_NODES:
-                    relevant_production_lines = {l for (ii, l) in self.m.PRODUCTION_LINES_FOR_FACTORIES_TUP if ii == i}
-                    print("PRODUCTION SHIFTS AT FACTORY", i, "(with set of production lines", relevant_production_lines, ")")
-                    for t in self.m.TIME_PERIODS:
-                        for l in relevant_production_lines:
-                            for p in self.m.PRODUCTS:
-                                for q in self.m.PRODUCTS:
-                                    if pyo.value(self.m.gamma[l, p, q, t]) >= 0.5:
-                                        print(t, ": production shifts from ", p, " to ", q, " imposing cost of ",
-                                              self.m.product_shifting_costs[p, q], " at production line ", l, sep="")
                     print()
 
             def print_production_simple():
@@ -1125,23 +1165,17 @@ class BasicModel:
                             else:
                                 row.append(" ")
                         table.append(row)
-                        table.append(["____"]*(len(list(self.m.TIME_PERIODS))+2))
+                        table.append(["____"] * (len(list(self.m.TIME_PERIODS)) + 2))
                     print(tabulate(table, headers=["product", "prod/inv"] + list(self.m.TIME_PERIODS)))
                     print()
 
             print_routing(include_loads=False)
             # print_vessel_load()
             # print_production_and_inventory()
-            print_product_shifting()
             print_production_simple()
             print_routes_simple()
 
         def print_objective_function_components():
-            production_cost = (sum(self.m.production_unit_costs[i, p] * pyo.value(self.m.q[l, p, t])
-                                   for t in self.m.TIME_PERIODS
-                                   for p in self.m.PRODUCTS
-                                   for i in self.m.FACTORY_NODES
-                                   for (ii, l) in self.m.PRODUCTION_LINES_FOR_FACTORIES_TUP if ii == i))
             inventory_cost = (sum(self.m.inventory_unit_costs[i] * pyo.value(self.m.r[i, p, t])
                                   for t in self.m.TIME_PERIODS
                                   for p in self.m.PRODUCTS
@@ -1152,30 +1186,30 @@ class BasicModel:
                     for j in self.m.NODES
                     for i in self.m.NODES
                     for v in self.m.VESSELS))
-            product_shifting_cost = (sum(self.m.product_shifting_costs[p, q] * pyo.value(self.m.gamma[l, p, q, t])
-                                         for l in self.m.PRODUCTION_LINES
-                                         for p in self.m.PRODUCTS
-                                         for q in self.m.PRODUCTS
-                                         for t in self.m.TIME_PERIODS))
-            unmet_order_cost = (sum(1000000 * pyo.value(self.m.e[i])
-                                      for i in self.m.ORDER_NODES))
 
-            sum_obj = production_cost + inventory_cost + transport_cost + product_shifting_cost + unmet_order_cost
+            production_start_cost = (sum(self.m.production_start_costs[i, p] * pyo.value(self.m.delta[l, p, t])
+                                         for i in self.m.FACTORY_NODES
+                                         for (ii, l) in self.m.PRODUCTION_LINES_FOR_FACTORIES_TUP if i == ii
+                                         for p in self.m.PRODUCTS
+                                         for t in self.m.TIME_PERIODS))
+            unmet_order_cost = (sum(self.m.external_delivery_penalty * pyo.value(self.m.e[i])
+                                    for i in self.m.ORDER_NODES))
+
+            sum_obj = inventory_cost + transport_cost + unmet_order_cost + production_start_cost
             if self.extended_model:
                 time_window_violation_cost = (sum(self.m.time_window_violation_cost[k] * self.m.lambd[i, k]()
                                                   for i in self.m.ORDER_NODES
                                                   for k in self.m.TIME_WINDOW_VIOLATIONS))
                 final_inventory_reward = (-sum(self.m.inventory_unit_rewards[i] * pyo.value(self.m.r_plus[i, p])
-                                          for i in self.m.FACTORY_NODES
-                                          for p in self.m.PRODUCTS))
+                                               for i in self.m.FACTORY_NODES
+                                               for p in self.m.PRODUCTS))
                 sum_obj += time_window_violation_cost + final_inventory_reward
                 print("Time window violation cost:", round(time_window_violation_cost, 2))
                 print("Final inventory reward (negative cost):", round(final_inventory_reward, 2))
 
-            print("Production cost:", round(production_cost, 2))
             print("Inventory cost:", round(inventory_cost, 2))
             print("Transport cost:", round(transport_cost, 2))
-            print("Product shifting cost:", round(product_shifting_cost, 2))
+            print("Production start cost:", round(production_start_cost, 2))
             print("Unmet order cost:", round(unmet_order_cost, 2))
 
             print("Sum of above cost components:", round(sum_obj, 15))
