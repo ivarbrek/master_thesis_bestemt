@@ -453,7 +453,7 @@ class BasicModel:
                                           if i2 == i
                                           and j != 'd_-1']
             if t < loading_unloading_time:
-                return Constraint.Feasible
+                return 0 == sum(model.x[v, i, j, t] for j in relevant_destination_nodes)
             else:
                 return (model.y[v, i, (t - loading_unloading_time)]
                         ==
@@ -472,12 +472,12 @@ class BasicModel:
             if t == 0:  # exclude w_t-1
                 return (sum(model.x[v, j, i, (t - model.transport_times[j, i])] for j in relevant_nodes)
                         ==
-                        model.y[v, i, t] + model.w[v, i, t] + model.x[v, i, 'd_-1', t]) + x_to_dummy_end
+                        model.y[v, i, t] + model.w[v, i, t] + x_to_dummy_end)
             else:
                 return (sum(model.x[v, j, i, (t - model.transport_times[j, i])] for j in relevant_nodes)
                         + model.w[v, i, (t - 1)]
                         ==
-                        model.y[v, i, t] + model.w[v, i, t] + model.x[v, i, 'd_-1', t]) + x_to_dummy_end
+                        model.y[v, i, t] + model.w[v, i, t] + x_to_dummy_end)
 
         self.m.constr_wait_load_unload_after_sailing = pyo.Constraint(self.m.NODES_FOR_VESSELS_TUP,
                                                                       self.m.TIME_PERIODS,
@@ -791,12 +791,11 @@ class BasicModel:
                 print("ORDER DELIVERY AND PICKUP (y variable)")
                 for v in self.m.VESSELS:
                     for t in self.m.TIME_PERIODS:
-                        for i in self.m.ORDER_NODES:
-                            if pyo.value(self.m.y[v, i, t]) >= 0.5:
-                                print("Vessel", v, "starts unloading order", i, "in time period", t)
-                        for i in self.m.FACTORY_NODES:
-                            if pyo.value(self.m.y[v, i, t]) >= 0.5:
-                                print("Vessel", v, "starts loading at factory", i, "in time period", t)
+                        for (vv, i) in self.m.NODES_FOR_VESSELS_TUP:
+                            if v == vv:
+                                activity_str = "loading" if i in self.m.FACTORY_NODES else "unloading"
+                                if pyo.value(self.m.y[v, i, t]) >= 0.5:
+                                    print(t, ": vessel ", v, " starts ", activity_str, " in node ", i, sep="")
                 print()
 
             def print_factory_production():

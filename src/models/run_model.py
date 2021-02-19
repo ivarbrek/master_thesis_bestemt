@@ -2,7 +2,7 @@ from src.models.basic_model import BasicModel
 from src.read_problem_data import ProblemData
 
 
-def model_create(problem_data: ProblemData):
+def model_create(problem_data: ProblemData, extensions=False):
     return BasicModel(nodes=problem_data.get_nodes(),
                       factory_nodes=problem_data.get_factory_nodes(),
                       order_nodes=problem_data.get_order_nodes(),
@@ -41,17 +41,19 @@ def model_create(problem_data: ProblemData):
                       inventory_targets=problem_data.get_inventory_targets(),
                       inventory_unit_rewards=problem_data.get_inventory_unit_rewards_dict(),
                       external_delivery_penalty=problem_data.get_key_value("external_delivery_penalty"),
-                      extended_model=True
+                      extended_model=extensions
                       )
 
 
-problem_data = ProblemData('../../data/input_data/small_testcase_one_vessel.xlsx')
+# problem_data = ProblemData('../../data/input_data/small_testcase_one_vessel.xlsx')
 # problem_data = ProblemData('../../data/input_data/small_testcase.xlsx')
-# problem_data = ProblemData('../../data/input_data/medium_testcase.xlsx')
+problem_data = ProblemData('../../data/input_data/medium_testcase.xlsx')
 # problem_data = ProblemData('../../data/input_data/large_testcase.xlsx')
 # problem_data = ProblemData('../../data/input_data/larger_testcase.xlsx')
 # problem_data = ProblemData('../../data/input_data/larger_testcase_4vessels.xlsx')
 
-model = model_create(problem_data)
+extensions = False
+problem_data.soft_tw = extensions
+model = model_create(problem_data, extensions)
 model.solve(time_limit=30)
 model.print_result()

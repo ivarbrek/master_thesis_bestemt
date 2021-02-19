@@ -5,7 +5,9 @@ from collections import defaultdict
 
 class ProblemData:
 
-    def __init__(self, file_path: str) -> None:
+    def __init__(self, file_path: str, soft_tw=False) -> None:
+        self.soft_tw = soft_tw
+
         self.vessel_capacities = pd.read_excel(file_path, sheet_name='vessel_capacity', index_col=0, skiprows=[0])
         self.inventory_capacities = pd.read_excel(file_path, sheet_name='inventory_capacity', index_col=0, skiprows=[0])
         self.time_windows_for_orders = pd.read_excel(file_path, sheet_name='time_windows_for_order', index_col=0,
@@ -307,7 +309,7 @@ class ProblemData:
                           for v in self.get_vessels()}
         return {v: dummy_start_arc[v] + dummy_end_arcs[v] + all_other_arcs[v] for v in self.get_vessels()}
 
-    def _has_tw_conflict(self, v, i, j, soft_tw=False):
+    def _has_tw_conflict(self, v, i, j):
         # i or j is a factory node
         if i in self.get_factory_nodes() or j in self.get_factory_nodes():
             return False
@@ -318,9 +320,9 @@ class ProblemData:
             return False
 
         else:
-            extra_violation = self.get_max_time_window_violation() if soft_tw else 0
+            extra_violation = self.get_max_time_window_violation() if self.soft_tw else 0
             return (self.get_time_window_start(i)
-                    + self.get_unloading_times_dict()[v, i]
+                    + self.get_loading_unloading_times_dict()[v, i]
                     + self.get_transport_times_dict()[i, j]
                     + extra_violation
                     >
