@@ -25,7 +25,6 @@ class BasicModel:
                  time_windows_for_orders: Dict,
                  vessel_ton_capacities: Dict,
                  vessel_nprod_capacities: Dict,
-                 vessel_initial_loads: Dict,
                  factory_inventory_capacities: Dict,
                  factory_initial_inventories: Dict,
                  inventory_unit_costs: Dict,
@@ -191,10 +190,6 @@ class BasicModel:
         self.m.vessel_nprod_capacities = pyo.Param(self.m.VESSELS,
                                                    initialize=vessel_nprod_capacities)
 
-        self.m.vessel_initial_loads = pyo.Param(self.m.VESSELS,
-                                                self.m.PRODUCTS,
-                                                initialize=vessel_initial_loads)
-
         self.m.production_min_capacities = pyo.Param(self.m.PRODUCTION_LINES,
                                                      self.m.PRODUCTS,
                                                      initialize=production_min_capacities)
@@ -308,7 +303,8 @@ class BasicModel:
         self.m.l = pyo.Var(self.m.VESSELS,
                            self.m.PRODUCTS,
                            self.m.TIME_PERIODS,
-                           domain=pyo.NonNegativeReals)
+                           domain=pyo.NonNegativeReals,
+                           initialize=0)
 
         self.m.h = pyo.Var(self.m.VESSELS,
                            self.m.PRODUCTS,
@@ -395,7 +391,7 @@ class BasicModel:
         else:
             self.m.objective = pyo.Objective(rule=obj, sense=pyo.minimize)
 
-        print("Done setting objective")
+        print("Done setting objective!")
 
         ################################################################################################################
         # CONSTRAINTS ##################################################################################################
@@ -529,7 +525,7 @@ class BasicModel:
                                                                      rule=constr_delivery_requires_order_visit)
 
         def constr_vessel_initial_load(model, v, p):
-            return (model.l[v, p, 0] == model.vessel_initial_loads[v, p] -
+            return (model.l[v, p, 0] ==
                     sum(model.demands[i, j, p] * model.z[v, i, j, 0]
                         for (v2, i, j) in model.ORDER_NODES_RELEVANT_NODES_FOR_VESSELS_TRIP
                         if v2 == v))
@@ -978,7 +974,7 @@ class BasicModel:
                                     print("   load: ", curr_load)
                         for i in [j for (vessel, j) in self.m.NODES_FOR_VESSELS_TUP if vessel == v]:
                             # y variable
-                            if pyo.value(self.m.y[v, i, t]) >= 0.5:  # (self.m.y_plus[v, i, t]) >= 0.5:
+                            if pyo.value(self.m.y[v, i, t]) >= 0.5:
                                 activity_str = "loads" if i in self.m.FACTORY_NODES else "unloads"
                                 print(t, ": ", activity_str, " in node ", i, sep="")
                                 if include_loads:

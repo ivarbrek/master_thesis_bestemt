@@ -20,7 +20,6 @@ def model_create(problem_data: ProblemData, extensions=False):
                       min_wait_if_sick=problem_data.get_min_wait_if_sick(),
                       vessel_ton_capacities=problem_data.get_vessel_ton_capacities_dict(),
                       vessel_nprod_capacities=problem_data.get_vessel_nprod_capacities_dict(),
-                      vessel_initial_loads=problem_data.get_vessel_initial_loads_dict(),
                       factory_inventory_capacities=problem_data.get_inventory_capacities_dict(),
                       factory_initial_inventories=problem_data.get_initial_inventories_dict(),
                       inventory_unit_costs=problem_data.get_inventory_unit_costs_dict(),
@@ -47,12 +46,12 @@ def model_create(problem_data: ProblemData, extensions=False):
 
 # problem_data = ProblemData('../../data/input_data/small_testcase_one_vessel.xlsx')
 # problem_data = ProblemData('../../data/input_data/small_testcase.xlsx')
-problem_data = ProblemData('../../data/input_data/medium_testcase.xlsx')
-# problem_data = ProblemData('../../data/input_data/large_testcase.xlsx')
+# problem_data = ProblemData('../../data/input_data/medium_testcase.xlsx')
+problem_data = ProblemData('../../data/input_data/large_testcase.xlsx')
 # problem_data = ProblemData('../../data/input_data/larger_testcase.xlsx')
 # problem_data = ProblemData('../../data/input_data/larger_testcase_4vessels.xlsx')
 
-extensions = False
+extensions = True
 problem_data.soft_tw = extensions
 model = model_create(problem_data, extensions)
 model.solve(time_limit=30)

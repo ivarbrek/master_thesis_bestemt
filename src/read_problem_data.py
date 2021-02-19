@@ -14,8 +14,6 @@ class ProblemData:
                                                      skiprows=[0])
         self.vessel_availability = pd.read_excel(file_path, sheet_name='vessel_availability', index_col=0,
                                                  skiprows=[0])
-        self.vessel_initial_loads = pd.read_excel(file_path, sheet_name='initial_vessel_load', index_col=0,
-                                                  skiprows=[0])
         self.nodes_for_vessels = pd.read_excel(file_path, sheet_name='nodes_for_vessel', index_col=0, skiprows=[0])
         self.initial_inventories = pd.read_excel(file_path, sheet_name='initial_inventory', index_col=0, skiprows=[0])
         self.inventory_unit_costs_rewards = pd.read_excel(file_path, sheet_name='inventory_cost', index_col=0, skiprows=[0])
@@ -47,7 +45,6 @@ class ProblemData:
     def _validate_set_consistency(self) -> None:
         # Products
         assert set(self.get_products()) == set(self.initial_inventories.columns)
-        assert set(self.get_products()) == set(self.vessel_initial_loads.index)
         assert set(self.get_products()) == set(self.demands.columns)
         assert set(self.get_products()) == set(self.production_max_capacities.index)
         assert set(self.get_products()) == set(self.production_min_capacities.index)
@@ -67,7 +64,6 @@ class ProblemData:
         assert set(self.get_vessels()) == set(self.vessel_availability.index)
         assert set(self.get_vessels()) == set(self.vessel_capacities.index)
         assert set(self.get_vessels()) == set(self.transport_unit_costs.index)
-        assert set(self.get_vessels()) == set(self.vessel_initial_loads.columns)
         assert set(self.get_vessels()) == set(self.loading_unloading_times.columns)
 
         # Factories
@@ -162,11 +158,6 @@ class ProblemData:
         return {vessel: [node for node in self.nodes_for_vessels.columns
                          if self.nodes_for_vessels.loc[vessel, node] == 1]
                 for vessel in self.nodes_for_vessels.index}
-
-    def get_vessel_initial_loads_dict(self) -> Dict[Tuple[str, str], int]:
-        return {(vessel, product): self.vessel_initial_loads.loc[product, vessel]
-                for product in self.vessel_initial_loads.index
-                for vessel in self.vessel_initial_loads.columns}
 
     def get_products(self) -> List[str]:
         return list(self.initial_inventories.columns)
@@ -313,19 +304,17 @@ class ProblemData:
         # i or j is a factory node
         if i in self.get_factory_nodes() or j in self.get_factory_nodes():
             return False
-
         # i or j's time window ends before vessel becomes available
         elif (self.get_time_window_end(j) < self.get_time_periods_for_vessels_dict()[v]
-                or self.get_time_window_end(i) < self.get_time_periods_for_vessels_dict()[v]):
-            return False
-
+              or self.get_time_window_end(i) < self.get_time_periods_for_vessels_dict()[v]):
+            return True
         else:
-            extra_violation = self.get_max_time_window_violation() if self.soft_tw else 0
+            extra_violation = 2 * self.get_max_time_window_violation() if self.soft_tw else 0
             return (self.get_time_window_start(i)
                     + self.get_loading_unloading_times_dict()[v, i]
                     + self.get_transport_times_dict()[i, j]
-                    + extra_violation
                     >
-                    self.get_time_window_end(j))
+                    self.get_time_window_end(j)
+                    + extra_violation)
 
 
