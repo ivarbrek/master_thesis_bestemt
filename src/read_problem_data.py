@@ -9,17 +9,21 @@ class ProblemData:
         self.soft_tw = soft_tw
 
         self.vessel_capacities_df = pd.read_excel(file_path, sheet_name='vessel_capacity', index_col=0, skiprows=[0])
-        self.inventory_capacities_df = pd.read_excel(file_path, sheet_name='inventory_capacity', index_col=0, skiprows=[0])
+        self.inventory_capacities_df = pd.read_excel(file_path, sheet_name='inventory_capacity', index_col=0,
+                                                     skiprows=[0])
         self.time_windows_for_orders_df = pd.read_excel(file_path, sheet_name='time_windows_for_order', index_col=0,
                                                         skiprows=[0])
         self.vessel_availability_df = pd.read_excel(file_path, sheet_name='vessel_availability', index_col=0,
                                                     skiprows=[0])
         self.nodes_for_vessels_df = pd.read_excel(file_path, sheet_name='nodes_for_vessel', index_col=0, skiprows=[0])
-        self.initial_inventories_df = pd.read_excel(file_path, sheet_name='initial_inventory', index_col=0, skiprows=[0])
-        self.inventory_unit_costs_rewards_df = pd.read_excel(file_path, sheet_name='inventory_cost', index_col=0, skiprows=[0])
+        self.initial_inventories_df = pd.read_excel(file_path, sheet_name='initial_inventory', index_col=0,
+                                                    skiprows=[0])
+        self.inventory_unit_costs_rewards_df = pd.read_excel(file_path, sheet_name='inventory_cost', index_col=0,
+                                                             skiprows=[0])
         self.transport_unit_costs_df = pd.read_excel(file_path, sheet_name='transport_cost', index_col=0, skiprows=[0])
         self.transport_times_df = pd.read_excel(file_path, sheet_name='transport_time', index_col=0, skiprows=[0])
-        self.loading_unloading_times_df = pd.read_excel(file_path, sheet_name='loading_unloading_time', index_col=0, skiprows=[0])
+        self.loading_unloading_times_df = pd.read_excel(file_path, sheet_name='loading_unloading_time', index_col=0,
+                                                        skiprows=[0])
         self.demands_df = pd.read_excel(file_path, sheet_name='demand', index_col=0, skiprows=[0])
         self.production_max_capacities_df = pd.read_excel(file_path, sheet_name='production_max_capacity', index_col=0,
                                                           skiprows=[0])
@@ -31,12 +35,15 @@ class ProblemData:
                                                           index_col=0, skiprows=[0])
         self.product_groups_df = pd.read_excel(file_path, sheet_name='product_group', index_col=0, skiprows=[0])
         self.key_values_df = pd.read_excel(file_path, sheet_name='key_values', index_col=0, skiprows=[0])
-        self.factory_max_vessels_loading_df = pd.read_excel(file_path, sheet_name='factory_max_vessel_loading', index_col=0, skiprows=[0])
-        self.factory_max_vessel_destination_df = pd.read_excel(file_path, sheet_name='factory_max_vessel_destination', index_col=0, skiprows=[0])
+        self.factory_max_vessels_loading_df = pd.read_excel(file_path, sheet_name='factory_max_vessel_loading',
+                                                            index_col=0, skiprows=[0])
+        self.factory_max_vessel_destination_df = pd.read_excel(file_path, sheet_name='factory_max_vessel_destination',
+                                                               index_col=0, skiprows=[0])
         self.order_zones_df = pd.read_excel(file_path, sheet_name='order_zones', index_col=0, skiprows=[0])
         self.inventory_targets_df = pd.read_excel(file_path, sheet_name='inventory_target', index_col=0, skiprows=[0])
         self.production_stop_df = pd.read_excel(file_path, sheet_name='production_stop', index_col=0, skiprows=[0])
-        self.production_start_costs_df = pd.read_excel(file_path, sheet_name='production_start_cost', index_col=0, skiprows=[0])
+        self.production_start_costs_df = pd.read_excel(file_path, sheet_name='production_start_cost', index_col=0,
+                                                       skiprows=[0])
 
         # Validate sets
         self._validate_set_consistency()
@@ -52,9 +59,11 @@ class ProblemData:
         self.products = self.get_products()
         self.vessels = self.get_vessels()
         self.time_periods = self.get_time_periods()
-        self.time_periods_for_vessels = self.get_time_periods_for_vessels_dict()
+        self.start_times_for_vessels = self.get_start_times_for_vessels_dict()
         self.vessel_initial_locations = self.get_vessel_first_location()
         self.time_windows_for_orders = self.get_time_windows_for_orders_dict()
+        self.tw_start = {i: self.get_time_window_start(i) for i in self.order_nodes}
+        self.tw_end = {i: self.get_time_window_end(i) for i in self.order_nodes}
         self.max_tw_violation = self.get_max_time_window_violation()
         self.tw_violation_unit_cost = self.get_tw_violation_cost()
         self.min_wait_if_sick = self.get_min_wait_if_sick()
@@ -80,7 +89,6 @@ class ProblemData:
         self.inventory_targets = self.get_inventory_targets()
         self.inventory_unit_rewards = self.get_inventory_unit_rewards_dict()
         self.external_delivery_penalty = self.get_key_value("external_delivery_penalty")
-
 
     def _validate_set_consistency(self) -> None:
         # Products
@@ -181,7 +189,7 @@ class ProblemData:
     def get_time_window_end(self, order_node):
         return max(t for (i, t), val in self.get_time_windows_for_orders_dict().items() if i == order_node and val == 1)
 
-    def get_time_periods_for_vessels_dict(self) -> Dict[str, int]:
+    def get_start_times_for_vessels_dict(self) -> Dict[str, int]:
         return {vessel: int(self.vessel_availability_df.loc[vessel, 'time_period'])
                 for vessel in self.vessel_availability_df.index}
 
@@ -345,8 +353,8 @@ class ProblemData:
         if i in self.get_factory_nodes() or j in self.get_factory_nodes():
             return False
         # i or j's time window ends before vessel becomes available
-        elif (self.get_time_window_end(j) < self.get_time_periods_for_vessels_dict()[v]
-              or self.get_time_window_end(i) < self.get_time_periods_for_vessels_dict()[v]):
+        elif (self.get_time_window_end(j) < self.get_start_times_for_vessels_dict()[v]
+              or self.get_time_window_end(i) < self.get_start_times_for_vessels_dict()[v]):
             return True
         else:
             extra_violation = 2 * self.get_max_time_window_violation() if self.soft_tw else 0

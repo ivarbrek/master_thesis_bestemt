@@ -10,6 +10,7 @@ from src.read_problem_data import ProblemData
 # TODO: Have not made any difference between different start/end time periods (so for now, not possible to have different time period lengths)
 # TODO: Check code marked with TODO
 
+
 class BasicModel:
     def __init__(self,
                  prbl: ProblemData,
@@ -197,8 +198,8 @@ class BasicModel:
                                                      self.m.PRODUCTS,
                                                      initialize=prbl.production_line_min_times)
 
-        self.m.time_period_for_vessels = pyo.Param(self.m.VESSELS,
-                                                   initialize=prbl.time_periods_for_vessels)
+        self.m.start_time_for_vessels = pyo.Param(self.m.VESSELS,
+                                                  initialize=prbl.start_times_for_vessels)
 
         self.m.vessel_initial_locations = pyo.Param(self.m.VESSELS,
                                                     initialize=prbl.vessel_initial_locations,
@@ -369,7 +370,7 @@ class BasicModel:
         #             <= 1)
 
         def constr_max_one_activity(model, v, t):
-            if t < model.time_period_for_vessels[v]:  # Skip constraint if vessel has not become available in t
+            if t < model.start_time_for_vessels[v]:  # Skip constraint if vessel has not become available in t
                 return pyo.Constraint.Skip
             else:
                 return (sum(model.y[v, i, tau]
@@ -442,7 +443,7 @@ class BasicModel:
                                                                       rule=constr_wait_load_unload_after_sailing)
 
         def constr_start_route(model, v):
-            return model.x[v, 'd_0', model.vessel_initial_locations[v], model.time_period_for_vessels[v]] == 1
+            return model.x[v, 'd_0', model.vessel_initial_locations[v], model.start_time_for_vessels[v]] == 1
 
         self.m.constr_start_route = pyo.Constraint(self.m.VESSELS, rule=constr_start_route)
 
