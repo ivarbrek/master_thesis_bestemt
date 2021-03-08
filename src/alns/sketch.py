@@ -112,8 +112,6 @@ class Solution:
         pass
 
     def check_production_feasibility(self, factory_node_id: str) -> bool:
-        # What to find:
-
         # Find the voyages originating from a factory node; tuple(index in route, latest loading start time)
         voyage_start_idxs: Dict[str, List[Tuple[int, int]]] = self.get_voyage_start_idxs_for_vessels(factory_node_id)
 
@@ -173,16 +171,19 @@ class Solution:
                                                                                    latest_loading_times[k])])]
             while (np.sum(activity_requirement_cum[k], axis=0) - np.sum(activity_requirement_cum[k - 1], axis=0)
                    > production_time_periods):
-                for p in range(np.shape(production_requirement_cum)[1]):  # TODO: Do this in a better way (more efficient, and prioritize the most beneficial p)
+                for p in range(np.shape(production_requirement_cum)[
+                                   1]):  # TODO: Do this in a better way (more efficient, and prioritize the most beneficial p)
                     if activity_requirement_cum[k][p] > 0:
                         activity_requirement_cum[k - 1][p] += 1  # Pushing production activities to occur earlier
                     break
 
         # If pushing production activities earlier results in too much production taking place before the first loading,
         # then the production schedule is infeasible
-        first_production_time_periods = [len(production_lines) * sum([self.prbl.production_stops[factory_node_id, t]
-                                                                      for t in range(latest_loading_times[0] + 1)])]
-        if first_production_time_periods < np.sum(activity_requirement_cum[0], axis=0):
+
+        # TODO: List or int?
+        first_production_time_periods = len(production_lines) * sum([self.prbl.production_stops[factory_node_id, t]
+                                                                     for t in range(latest_loading_times[0] + 1)])
+        if first_production_time_periods < np.sum(activity_requirement_cum[0], axis=None):
             return False
 
         return True
