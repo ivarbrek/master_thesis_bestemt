@@ -48,7 +48,7 @@ class ProblemData:
         # Validate sets
         self._validate_set_consistency()
         self._validate_feasible_problem()
-        
+
         # Attributes
         self.nodes = self.get_nodes()
         self.factory_nodes = self.get_factory_nodes()
@@ -66,7 +66,8 @@ class ProblemData:
         self.tw_end = {i: self.get_time_window_end(i) for i in self.order_nodes}
         self.max_tw_violation = self.get_max_time_window_violation()
         self.tw_violation_unit_cost = self.get_tw_violation_cost()
-        self.min_wait_if_sick = self.get_min_wait_if_sick()
+        self.min_wait_if_sick = self.get_min_wait_if_sick_dict()
+        self.min_wait_if_sick_abs = self.get_min_wait_if_sick()
         self.vessel_ton_capacities = self.get_vessel_ton_capacities_dict()
         self.vessel_nprod_capacities = self.get_vessel_nprod_capacities_dict()
         self.factory_inventory_capacities = self.get_inventory_capacities_dict()
@@ -88,7 +89,8 @@ class ProblemData:
         self.factory_max_vessels_loading = self.get_factory_max_vessels_loading_dict()
         self.inventory_targets = self.get_inventory_targets()
         self.inventory_unit_rewards = self.get_inventory_unit_rewards_dict()
-        self.external_delivery_penalty = self.get_key_value("external_delivery_penalty")
+        # self.external_delivery_penalty = self.get_key_value("external_delivery_penalty")  # depreciated
+        self.external_delivery_penalties = self.get_external_delivery_penalties_dict()
 
     def _validate_set_consistency(self) -> None:
         # Products
@@ -150,7 +152,8 @@ class ProblemData:
         return list(self.vessel_capacities_df.index)
 
     def get_vessel_ton_capacities_dict(self) -> Dict[str, int]:
-        return {vessel: self.vessel_capacities_df.loc[vessel, 'capacity [t]'] for vessel in self.vessel_capacities_df.index}
+        return {vessel: self.vessel_capacities_df.loc[vessel, 'capacity [t]'] for vessel in
+                self.vessel_capacities_df.index}
 
     def get_vessel_nprod_capacities_dict(self) -> Dict[str, int]:
         return {vessel: self.vessel_capacities_df.loc[vessel, 'capacity [nProd]'] for vessel in
@@ -289,7 +292,10 @@ class ProblemData:
     def get_key_value(self, key):
         return self.key_values_df.loc[key, 'value']
 
-    def get_min_wait_if_sick(self) -> Dict:
+    def get_min_wait_if_sick(self) -> int:
+        return self.get_key_value("min_wait_if_sick")
+
+    def get_min_wait_if_sick_dict(self) -> Dict:
         orders_for_zones = self.get_zone_orders_dict()
         transport_times = self.get_transport_times_dict()
         min_wait = int(self.get_key_value('min_wait_if_sick'))
@@ -328,6 +334,11 @@ class ProblemData:
                 for time_period in self.factory_max_vessels_loading_df.index
                 for factory in self.factory_max_vessels_loading_df.columns}
 
+    def get_external_delivery_penalties_dict(self) -> Dict[str, int]:
+        return {order: (int(self.get_key_value("external_delivery_unit_penalty")) *
+                        sum(self.demands_df.loc[order, product] for product in self.demands_df.columns))
+                for order in self.order_nodes}
+
     def get_factory_max_vessels_destination_dict(self) -> Dict[str, int]:
         return {factory: int(self.factory_max_vessel_destination_df.loc[factory])
                 for factory in self.factory_max_vessel_destination_df.index}
@@ -364,5 +375,3 @@ class ProblemData:
                     >
                     self.get_time_window_end(j)
                     + extra_violation)
-
-

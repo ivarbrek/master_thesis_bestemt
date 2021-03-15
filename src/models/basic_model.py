@@ -212,7 +212,8 @@ class BasicModel:
                                                        self.m.TIME_PERIODS,
                                                        initialize=prbl.factory_max_vessels_loading)
 
-        self.m.external_delivery_penalty = pyo.Param(initialize=prbl.external_delivery_penalty)
+        self.m.external_delivery_penalties = pyo.Param(self.m.ORDER_NODES,
+                                                     initialize=prbl.external_delivery_penalties)
 
         # Extension
         if extended_model:
@@ -338,7 +339,7 @@ class BasicModel:
                           for (ii, l) in model.PRODUCTION_LINES_FOR_FACTORIES_TUP if i == ii
                           for p in model.PRODUCTS
                           for t in model.TIME_PERIODS)
-                    + sum(model.external_delivery_penalty * model.e[i] for i in model.ORDER_NODES))
+                    + sum(model.external_delivery_penalties[i] * model.e[i] for i in model.ORDER_NODES))
 
         def obj_extended(model):
             return (obj(model)
@@ -1035,7 +1036,7 @@ class BasicModel:
                                          for (ii, l) in self.m.PRODUCTION_LINES_FOR_FACTORIES_TUP if i == ii
                                          for p in self.m.PRODUCTS
                                          for t in self.m.TIME_PERIODS))
-            unmet_order_cost = (sum(self.m.external_delivery_penalty * pyo.value(self.m.e[i])
+            unmet_order_cost = (sum(self.m.external_delivery_penalties[i] * pyo.value(self.m.e[i])
                                     for i in self.m.ORDER_NODES))
 
             sum_obj = inventory_cost + transport_cost + unmet_order_cost + production_start_cost
