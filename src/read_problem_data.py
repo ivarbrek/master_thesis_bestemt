@@ -55,7 +55,6 @@ class ProblemData:
         self.order_nodes = self.get_order_nodes()
         self.orders_for_zones = self.get_zone_orders_dict()
         self.nodes_for_vessels = self.get_nodes_for_vessels_dict()
-        self.arcs_for_vessels = self.get_arcs_for_vessel_dict()
         self.products = self.get_products()
         self.vessels = self.get_vessels()
         self.time_periods = self.get_time_periods()
@@ -348,7 +347,8 @@ class ProblemData:
                 for product in self.inventory_targets_df.index
                 for factory in self.inventory_targets_df.columns}
 
-    def get_arcs_for_vessel_dict(self) -> Dict[str, List[Tuple[str, str]]]:
+    @property
+    def arcs_for_vessels(self) -> Dict[str, List[Tuple[str, str]]]:
         dummy_start_arc = {v: [('d_0', i)] for v, i in self.get_vessel_first_location().items()}
         dummy_end_arcs = {v: [(i, 'd_-1') for i in self.get_factory_nodes(v)] for v in self.get_vessels()}
         all_other_arcs = {v: [(i, j)
