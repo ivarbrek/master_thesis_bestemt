@@ -1,9 +1,10 @@
 from typing import List, Dict, Tuple
-from src.read_problem_data import ProblemData
 import math
 import numpy as np
 import bisect
 import copy
+from src.read_problem_data import ProblemData
+from src.util.print import bcolors
 int_inf = 9999
 
 
@@ -12,19 +13,21 @@ class Node:
     tw_start: int = -1
     tw_end: int = math.inf
     demand: List[int] = []
+    zone: str = "na"
 
     def __init__(self, name, is_factory=False):
         self.id: str = name
         self.is_factory: bool = is_factory
 
     def __repr__(self):
-        return f"{self.id}: ({self.tw_start}, {self.tw_end}), {self.demand}"
+        return f"{self.id}: ({self.tw_start}, {self.tw_end}), {self.demand}, (zone {self.zone})"
 
 
 class InternalProblemData(ProblemData):
 
-    def __init__(self, file_path: str) -> None:
+    def __init__(self, file_path: str, precedence: bool = False) -> None:
         super().__init__(file_path)
+        self.precedence = precedence
         self._init_nodes()
         self._init_quay_capacities()
 
@@ -44,6 +47,10 @@ class InternalProblemData(ProblemData):
             node.tw_end = self.tw_end[i]
             node.demand = [self.demands[i, i, p] for p in self.products]
             self.order_nodes[i] = node
+        if self.precedence:
+            for zone in self.orders_for_zones.keys():
+                for order_node in self.orders_for_zones[zone]:
+                    self.order_nodes[order_node].zone = zone
         self.nodes: Dict[str, Node] = {**self.factory_nodes, **self.order_nodes}
 
     def _init_quay_capacities(self) -> None:
@@ -62,8 +69,10 @@ class InternalProblemData(ProblemData):
 
 class Solution:
 
-    def __init__(self, prbl: InternalProblemData) -> None:
+    def __init__(self, prbl: InternalProblemData, debug: bool = False) -> None:
         self.prbl = prbl
+        self.debug = debug
+
         self.routes: Dict[str, List[str]] = {v: [self.prbl.vessel_initial_locations[v]] for v in self.prbl.vessels}
         self.e: Dict[str, List[int]] = {v: [max(1, self.prbl.start_times_for_vessels[v])] for v in self.prbl.vessels}
         self.l: Dict[str, List[int]] = {v: [len(self.prbl.time_periods)] for v in self.prbl.vessels}
@@ -77,7 +86,6 @@ class Solution:
         self.temp_factory_visits: Dict[str, List[str]] = copy.deepcopy(self.factory_visits)
         self.temp_factory_visits_route_index: Dict[str, List[int]] = copy.deepcopy(self.factory_visits_route_index)
 
-        # self._init_factory_visits_e_and_l()
         self.verbose = True
 
     def temp_to_solution(self):
@@ -99,19 +107,25 @@ class Solution:
         # [x] check that the vessel load capacity is not violated
         # [x] check that the vessel's max n.o. products is not violated
         # [x] check that the time windows of visited nodes are not violated
-        # [/] check that the route does, or has time to end the route in a factory (with destination capacity)
-        # [ ] check that precedence/wait constraints are not violated
-        # [ ] check max #vessels simultaneously at factory
-        # [ ] check factory destination max #vessels
-        # [ ] check production capacity (PPFC)
+        # [x] check that the route does, or has time to, end the route in a factory (with destination capacity)
+        # [x] check that precedence/wait constraints are not violated
+        # [x] check max #vessels simultaneously at factory
+        # [x] check factory destination max #vessels
+        # [x] check production capacity (PPFC)
         node = self.prbl.nodes[insert_node]
         all_checks = [self.check_load_feasibility(node, vessel, idx),
                       self.check_no_products_feasibility(node, vessel, idx),
-                      self.check_time_feasibility(insert_node, vessel, idx)]
+                      self.check_time_feasibility(insert_node, vessel, idx),
+                      self.check_final_factory_destination_feasibility(vessel, idx),
+                      self.check_production_feasibility(insert_node, vessel, idx)
+                      ]
+
         checks_names = ['vessel_load',
                         'vessel_no_products',
-                        'time']
-        if not all_checks:
+                        'time',
+                        'factory_destination',
+                        'production']
+        if not all(all_checks):
             print("Failed:", [name for name, check in zip(checks_names, all_checks) if not check])
         return all(all_checks)
 
@@ -142,6 +156,12 @@ class Solution:
         prev_transport_time = self.prbl.transport_times[prev_node_id, node.id] if prev_node_id else 0
         prev_loading_unloading_time = self.prbl.loading_unloading_times[vessel, prev_node_id] if prev_node_id else 0
         earliest = max(node.tw_start, prev_e + prev_loading_unloading_time + prev_transport_time)
+
+        # If the precedence extension is included, earliest visiting time must also incorporate minimum waiting time
+        if self.prbl.precedence and prev_node_id and (
+                (self.prbl.nodes[prev_node_id].zone, self.prbl.nodes[node.id].zone) in
+                [("red", "green"), ("red", "yellow"), ("yellow", "green")]):
+            earliest = max(earliest, prev_e + prev_loading_unloading_time + self.prbl.min_wait_if_sick_abs)
         return earliest
 
     def get_latest(self, idx: int, vessel: str) -> int:
@@ -161,8 +181,14 @@ class Solution:
 
         # if the last node is not a factory, make sure there is enough time to reach a factory destination
         if idx == len(route) - 1 and not node.is_factory:
-            time_to_factory = min(self.prbl.transport_times[node.id, f] for f in self.prbl.factory_nodes)  # TODO: If capacity
+            time_to_factory = min(self.prbl.transport_times[node.id, f] for f in self.prbl.factory_nodes)
             latest = min(latest, len(self.prbl.time_periods) - time_to_factory - loading_unloading_time - 1)
+
+        # If the precedence extension is included, latest visiting time must also incorporate minimum waiting time
+        if self.prbl.precedence and next_node_id is not None and (
+                (node.zone, self.prbl.nodes[next_node_id].zone) in
+                [("red", "green"), ("red", "yellow"), ("yellow", "green")]):
+            latest = min(latest, next_l - loading_unloading_time - self.prbl.min_wait_if_sick_abs)
         return latest
 
     def get_factory_earliest(self, factory: str, idx: int,
@@ -170,10 +196,6 @@ class Solution:
         """
         :param factory:
         :param idx: The index of the visit in self.factory_visits
-        :param insert_vessel: The vessel to be inserted at idx (optional)
-        :param insert_e: The earliest visit time for the inserted node, based on route constraints (optional)
-        :param route_idx: The inserted factory's route index (optional)
-        :param prev_e: The earliest time for the factory's previous visit, based on factory constraints (optional)
         :param prev_departure_times: The previous visits' earliest departure times
         :return: The earliest visit time based on factory constraints
                  (route constraints are assumed to be already calculated)
@@ -220,10 +242,6 @@ class Solution:
         """
         :param factory:
         :param idx: The index of the visit in self.factory_visits
-        :param insert_vessel: The vessel to be inserted at idx (optional)
-        :param insert_l: The latest visit time for the inserted node, based on route constraints (optional)
-        :param route_idx: The inserted factory's route index (optional)
-        :param next_l: The latest time for the factory's next visit, based on factory constraints (optional)
         :param next_arrival_times: the succeeding visits' latest arrival times
         :return: The latest visit time based on factory constraints
         """
@@ -433,16 +451,37 @@ class Solution:
 
         return True
 
-    # def check_time_feasibility2(self, insert_node: Node, vessel: str, idx: int) -> bool:
-    #     route = self.routes[vessel]
-    #     prev_node_id = route[idx - 1]
-    #     next_node_id = route[idx + 1]
-    #     time_between = (self.prbl.loading_unloading_times[prev_node_id]
-    #                     + self.prbl.transport_times[prev_node_id, insert_node.id]
-    #                     + self.prbl.loading_unloading_times[insert_node.id]
-    #                     + self.prbl.transport_times[insert_node.id, next_node_id])
-    #     return self.e[vessel][idx - 1] + time_between - 1 <= self.l[vessel][idx + 1]
-    #     # Lianes and Noreng is strange here
+    def check_final_factory_destination_feasibility(self, vessel: str, idx: int):
+        # Check assumes that the insertion is already present in temp variables
+        node_id = self.temp_routes[vessel][idx]
+        node = self.prbl.nodes[node_id]
+
+        if node.is_factory:
+            return (len([v for v in self.prbl.vessels if self.temp_routes[v][-1] == node_id])
+                    <= self.prbl.factory_max_vessels_destination[node_id])
+        else:  # destination factories are unchanged or 'removed'
+            return True
+
+    # def check_final_factory_destination_feasibility(self, insert_node_id: str = None, vessel: str = None,
+    #                                                 idx: int = None) -> bool:
+    #     # insert_node_id, vessel and idx given: check feasibility for terminating this vessel's route in given factory
+    #
+    #     if insert_node_id and vessel and idx:
+    #         insert_node = self.prbl.nodes[insert_node_id]
+    #         if not insert_node.is_factory:  # no changes to destination factory
+    #             return True
+    #         if ((len([v for v in self.prbl.vessels if self.routes[v][-1] == insert_node_id]) +
+    #              (1 if insert_node_id != (self.routes[vessel][-1]) else 0))  # plus 1 if dest factory is changed
+    #                 > self.prbl.factory_max_vessels_destination[insert_node_id]):
+    #             return False
+    #
+    #     # else: check feasibility for all current route destinations
+    #     else:
+    #         for f_id in self.prbl.factory_nodes:
+    #             if (len([v for v in self.prbl.vessels if self.routes[v][-1] == f_id])
+    #                     > self.prbl.factory_max_vessels_destination[f_id]):
+    #                 return False
+    #     return True
 
     def check_load_feasibility(self, insert_node: Node, vessel: str, idx: int) -> bool:
         route = self.routes[vessel]
@@ -462,12 +501,198 @@ class Solution:
         combined_demanded_products = np.logical_or(voyage_demanded_products, insert_node_demanded_products)
         return sum(combined_demanded_products) <= self.prbl.vessel_nprod_capacities[vessel]
 
-    def get_insertion_utility(self, node: Node, route: str, idx: int) -> float:
-        # calculate the change in objective value if node is inserted
-        pass
+    def get_insertion_utility(self, node: Node, vessel: str, idx: int) -> float:  # High utility -> good insertion
+        net_sail_change = (self.prbl.transport_times[self.routes[vessel][idx - 1],
+                                                     node.id])
+        if idx < len(self.routes[vessel]) - 1:  # node to be inserted is not at end of route
+            net_sail_change += (self.prbl.transport_times[node.id,
+                                                          self.routes[vessel][
+                                                              idx]]  # cost to next node, currently at idx
+                                - self.prbl.transport_times[self.routes[vessel][idx - 1],
+                                                            self.routes[vessel][idx]])
+        delivery_gain = self.prbl.external_delivery_penalties[node.id] if not node.is_factory else 0
+
+        return delivery_gain - net_sail_change * self.prbl.transport_unit_costs[vessel]
+
+    def get_voyage_start_idxs_for_factory(self, factory_node_id: str) -> Dict[str, List[Tuple[int, int]]]:
+        # Returns: {vessel: (factory visit index in route, latest loading start time)} for the factory given as input
+        # if vessel visits input factory for loading
+
+        voyage_start_idxs_for_vessels: Dict[str, List[Tuple[int, int]]] = {}
+        for v in self.prbl.vessels:
+            voyage_start_idxs_for_vessels[v] = []
+            route = self.routes[v]
+
+            # Adding index and latest loading time for vessels loading at input factory
+            for i in range(len(route)):  # note that the last node may also be included here
+                if self.prbl.nodes[route[i]].is_factory and self.prbl.nodes[route[i]].id == factory_node_id:
+                    voyage_start_idxs_for_vessels[v].append(
+                        tuple((i, self.temp_l[v][i])))
+
+            # Vessel does not load at input factory -> vessel is skipped
+            if len(voyage_start_idxs_for_vessels[v]) == 0:
+                voyage_start_idxs_for_vessels.pop(v, None)
+        return voyage_start_idxs_for_vessels
+
+    def check_production_feasibility(self, insert_node_id: str = None, vessel: str = None, idx: int = None) -> bool:
+        # If checking whether an insertion gives a feasible solution: give parameters insertion_node_id, vessel, idx
+        # If validating an existing solution: skip parameters
+        if idx < 0 and vessel is not None and insert_node_id is not None:
+            idx = len(self.routes[vessel]) + idx + 1
+
+        # Finding which factories to check
+        if insert_node_id is None:  # check all factories
+            factories_to_check = self.prbl.factory_nodes.keys()  # validate solution
+        else:
+            factories_to_check = []
+            for f in self.prbl.factory_nodes.keys():
+                if self.get_voyage_start_factory(vessel=vessel, idx=idx) == f:
+                    factories_to_check.append(f)
+                elif self.is_factory_latest_changed_in_temp(f):
+                    factories_to_check.append(f)
+
+        # Feasibility is checked for relevant factories
+        for factory_node_id in factories_to_check:
+            # voyage_start_idxs on the form {vessel: (index in route, temp latest factory loading time)}
+            # for vessels visiting factory with id factory_node_id
+            voyage_start_idxs: Dict[str, List[Tuple[int, int]]] = self.get_voyage_start_idxs_for_factory(
+                factory_node_id)
+
+            # If we insert a _factory_ in the middle of a route we must add it to the list voyage_start_idx
+            if ((insert_node_id and vessel and idx)
+                    and insert_node_id == factory_node_id
+                    and idx < len(self.routes[vessel])):  # Factory visited to load orders
+                # Vessel exists in dict, as it already has another visit to the factory
+                if vessel in voyage_start_idxs.keys():
+                    voyage_start_idxs[vessel].append((idx, self.get_latest(idx, vessel)))  # TODO: get latest temp - check
+                    sorted(voyage_start_idxs[vessel], key=lambda x: x[0])  # sort according to first elem, visit index
+                # The inserted visit is the vessel's only visit to the relevant factory
+                else:
+                    voyage_start_idxs[vessel] = [(idx, self.get_latest(idx, vessel))]
+            # If we insert an _order_ in the route, we find the start index of the relevant voyage
+            insertion_voyage_start_idx = None
+            if (insert_node_id is not None
+                    and not self.prbl.nodes[insert_node_id].is_factory
+                    and self.get_voyage_start_factory(vessel, idx) == factory_node_id):
+                insertion_voyage_start_idx = self.get_voyage_start_end_idx(vessel, idx)[0]
+
+            # Collect quantity to be delivered for each voyage
+            products_for_voyage: List[List[int]] = []
+            latest_loading_times: List[int] = []
+
+            for v in voyage_start_idxs.keys():
+                for i in range(len(voyage_start_idxs[v])):  # for each voyage whose loading factory is investigated
+                    stop_index = self.get_voyage_end_idx(vessel=v, start_idx=voyage_start_idxs[v][i][0])
+                    add_rows = [self.prbl.nodes[node_id].demand
+                                for node_id in self.routes[v][voyage_start_idxs[v][i][0] + 1:stop_index]]
+                    if i == insertion_voyage_start_idx and vessel == v:
+                        add_rows.append(self.prbl.nodes[insert_node_id].demand)
+
+                    # Only add the row if demand was found for the route
+                    # Matrix products_for_voyage - rows: voyages (index i), columns: products
+                    # List latest_loading_times - latest loading time (index i)
+                    if len(add_rows) > 0:
+                        prod_sums = []
+                        for p in range(len(self.prbl.products)):
+                            prod_sums.append(sum(row[p] for row in add_rows))
+                        products_for_voyage.append(prod_sums)
+                        latest_loading_times.append(voyage_start_idxs[v][i][1])
+                        # latest_loading_times.append(voyage_start_idxs[v][i][1]
+                        #                             if voyage_start_idxs[v][i][1] is not math.inf
+                        #                             else max(self.prbl.time_periods))
+                        # TODO: can probably change to: latest_loading_times.append(voyage_start_idxs[v][i][1])
+                        #  when this value refers to the temp value  - check
+
+            # Order rows in matrix products_for_voyage by corresponding latest_loading_times asc
+            products_for_voyage = [sublist for _, sublist in sorted(zip(latest_loading_times, products_for_voyage),
+                                                                    key=lambda pair: pair[0])]
+            latest_loading_times.sort()
+
+            # Sum rows whose latest delivery time is equal (these are treated as one production order in the PP)
+            def indices_with_same_value(lis, value):
+                return [j for j, x in enumerate(lis) if x == value]
+            same_delivery_times = [indices_with_same_value(latest_loading_times, value)
+                                   for value in set(latest_loading_times)]
+
+            # Looping backwards in order not to mess up the indices when popping
+            for i in range(len(same_delivery_times) - 1, -1, -1):
+                if len(same_delivery_times[i]) > 1:  # there are rows whose loading time is equal
+                    products_for_voyage[i] = [sum(row[p]
+                                                  for row in products_for_voyage[
+                                                             same_delivery_times[i][0]:same_delivery_times[i][-1]])
+                                              for p in range(len(self.prbl.products))]
+                    for j in range(1, len(same_delivery_times[i])):
+                        products_for_voyage.pop(j)
+                        latest_loading_times.pop(j)
+            # prod_sums is now a list of products for orders summed for voyages with same latest starting time
+
+            # Make cumulative representation
+            production_requirement_cum = np.cumsum(products_for_voyage, axis=0)
+
+            # Find the minimum number of activities that must be undertaken before a given loading event
+            activity_requirement_cum = np.copy(production_requirement_cum)
+            production_lines = [l for (i, l) in
+                                filter(lambda x: x[0] == factory_node_id, self.prbl.production_lines_for_factories)]
+
+            for p in range(len(self.prbl.products)):  # for all columns in the matrix
+                initial_inventory = self.prbl.factory_initial_inventories[(factory_node_id, self.prbl.products[p])]
+                production_capacity_max = max(
+                    [self.prbl.production_max_capacities[l, self.prbl.products[p]] for l in production_lines])
+                for k in range(np.shape(production_requirement_cum)[0]):
+                    activity_requirement_cum[k][p] = max(
+                        [0,
+                         np.ceil((production_requirement_cum[k, p] - initial_inventory) / production_capacity_max)])
+
+            for k in range(len(activity_requirement_cum) - 1, 0, -1):
+                production_time_periods = len(production_lines) * sum(
+                    [self.prbl.production_stops[factory_node_id, t]
+                     for t in range(latest_loading_times[k - 1],
+                                    latest_loading_times[k])])
+                for i in range(max(np.sum(activity_requirement_cum[k], axis=0) -
+                                   np.sum(activity_requirement_cum[k - 1], axis=0) -
+                                   production_time_periods,
+                                   0)):  # number of activities in this interval exceeding production_time_periods
+                    for p in range(np.shape(production_requirement_cum)[1]):
+                        if activity_requirement_cum[k][p] > 0:
+                            activity_requirement_cum[k - 1][
+                                p] += 1  # pushing production activities to occur earlier
+                            break
+
+            # If pushing production activities earlier results in too much production taking place
+            # before the first loading, then the production schedule is infeasible
+            if len(latest_loading_times) > 0:  # if there are orders to be delivered at all
+                latest = latest_loading_times[0]
+                first_production_time_periods = len(production_lines) * sum(
+                    [self.prbl.production_stops[factory_node_id, t]
+                     for t in range(latest + 1)])
+                if first_production_time_periods < np.sum(activity_requirement_cum[0], axis=None):
+                    return False
+
+            # Checking for inventory feasibility
+            for k in range(np.shape(activity_requirement_cum)[0]):  # for all rows in the array
+                production_capacity_min = min(
+                    [self.prbl.production_min_capacities[l, p] for l in production_lines for p in
+                     self.prbl.products])
+                inventory = (np.sum(activity_requirement_cum[k], axis=0) * production_capacity_min +
+                             np.sum(
+                                 [self.prbl.factory_initial_inventories[factory_node_id, p] for p in
+                                  self.prbl.products]))
+                if k > 0:  # subtract previous loadings
+                    inventory = inventory - np.sum(products_for_voyage[:k])
+                if inventory > self.prbl.factory_inventory_capacities[factory_node_id]:
+                    return False
+        return True
+
+    def is_factory_latest_changed_in_temp(self, factory_node_id: str) -> bool:
+        for vessel in self.prbl.vessels:
+            route = self.routes[vessel]
+            for i in range(len(route)):
+                if route[i] == factory_node_id and self.l[vessel][i] != self.temp_l[vessel][i]:
+                    return True
+        return False
 
     def get_voyage_start_end_idx(self, vessel: str, idx: int) -> Tuple[int, int]:
-        route = self.temp_routes[vessel]
+        route = self.temp_routes[vessel]  # TODO: Check that temp here doesn't mess up for check_production_feasibility
         voyage_start_idx = -1
         voyage_end_idx = math.inf
         for i in range(idx - 1, -1, -1):
@@ -482,6 +707,20 @@ class Solution:
         voyage_end_idx = min(voyage_end_idx, len(route))
         assert voyage_start_idx != -1, "Illegal voyage, no initial factory"
         return voyage_start_idx, voyage_end_idx
+
+    def get_voyage_end_idx(self, vessel: str, start_idx: int) -> int:
+        route = self.routes[vessel]
+        for i in range(start_idx + 1, len(route)):
+            if self.prbl.nodes[route[i]].is_factory:
+                return i
+        return len(route)
+
+    def get_voyage_start_factory(self, vessel: str, idx: int) -> str:
+        route = self.routes[vessel]
+        for i in range(idx - 1, 0, -1):
+            if self.prbl.nodes[route[i]].is_factory:
+                return self.routes[vessel][i]
+        return self.routes[vessel][0]
 
     def _init_factory_visits(self) -> Dict[str, List[str]]:
         vessel_starting_times = list(self.prbl.start_times_for_vessels.items())
@@ -543,6 +782,8 @@ class Solution:
             for i, (node, e, l) in enumerate(zip(self.routes[vessel], self.e[vessel], self.l[vessel])):
                 if (vessel, i) in highlight:
                     s += f'{bcolors.OKGREEN}{node} ({e},{l}){bcolors.RESET_ALL}, '
+                elif i == len(self.routes[vessel]) - 1 and self.prbl.nodes[node].is_factory:
+                    s += f'{bcolors.GREY}{node} ({e},{l}){bcolors.RESET_ALL}'
                 else:
                     s += f'{node} ({e},{l}), '
             print(f'{vessel}: {s}')
@@ -562,39 +803,34 @@ class Solution:
                     s += f'{vessel} ({self.e[vessel][route_idx]},{self.l[vessel][route_idx]}), '
             print(f'{factory}: {s}')
 
+    def check_insertion_feasibility_insert_and_print(self, insert_node_id: str, vessel: str, idx: int):
+        insert_node = self.prbl.nodes[insert_node_id]
+        print(
+            f"{bcolors.BOLD}Checking for insertion of node {insert_node_id} at index {idx} at route of vessel {vessel}{bcolors.ENDC}")
+        print("Utility of insertion:", self.get_insertion_utility(self.prbl.nodes[insert_node_id], vessel, idx))
+        feasibility = self.check_insertion_feasibility(insert_node_id, vessel, idx)
+        if not feasibility and self.debug:
+            print(f"{bcolors.FAIL}Infeasible insertion - node not inserted{bcolors.ENDC}")
+            print("> Final factory destination feasibility:",
+                  self.check_final_factory_destination_feasibility(vessel, idx))
+            print("> Production feasibility:",
+                  sol.check_production_feasibility(insert_node_id=insert_node_id, vessel=vessel, idx=idx))
+            print("> Load feasibility:", self.check_load_feasibility(insert_node, vessel, idx))
+            print("> Number of products feasibility:", self.check_no_products_feasibility(insert_node, vessel, idx))
+            print("> Time feasibility:", self.check_time_feasibility(insert_node_id, vessel, idx))
+            self.solution_to_temp()
+        else:
+            print(f"{bcolors.OKGREEN}Insertion is feasible - inserting node{bcolors.ENDC}")
+            self.temp_to_solution()
+            print(vessel, self.routes[vessel])
+            print(list(zip(self.e[vessel], self.l[vessel])))
+        print()
+        return feasibility
 
-class bcolors:
-    HEADER = '\033[95m'
-    OKBLUE = '\033[94m'
-    OKCYAN = '\033[96m'
-    OKGREEN = '\033[92m'
-    GREY = '\033[37m'
-    WARNING = '\033[93m'
-    FAIL = '\033[91m'
-    ENDC = '\033[0m'
-    BOLD = '\033[1m'
-    UNDERLINE = '\033[4m'
-    DIM = '\033[2m'
-    BRIGHT = '\033[1m'
-    RESET_ALL = '\033[0m'
 
 # TESTING
-# problem = InternalProblemData('../../data/input_data/small_testcase_one_vessel.xlsx')
-# problem = InternalProblemData('../../data/input_data/medium_testcase.xlsx')
-problem = InternalProblemData('../../data/input_data/large_testcase.xlsx')
-# for node in problem.nodes.values():
-#     print(node)
+problem = InternalProblemData('../../data/input_data/large_testcase.xlsx', precedence=False)
 sol = Solution(problem)
-
-
-# insertions = [('o_1', 'v_1', 1),  # medium testcase
-#               ('o_4', 'v_1', 2),
-#               ('f_1', 'v_1', 2),
-#               ('o_2', 'v_2', 1),
-#               ('f_2', 'v_2', 2),
-#               # ('o_6', 'v_3', 1),
-#               # ('f_1', 'v_3', 1),
-#               ('f_2', 'v_3', 1)]
 
 insertions = [  # large testcase
     ('o_1', 'v_1', 1),
@@ -613,17 +849,46 @@ insertions = [  # large testcase
 
 for node, vessel, idx in insertions:
     print(f'Inserting {node} into {vessel} at {idx}.')
-    if node == 'o_1':
-        a = 1
     if sol.check_insertion_feasibility(node, vessel, idx):
         sol.temp_to_solution()
     else:
         sol.solution_to_temp()
-    # print(sol.factory_visits)
-    # print(sol.factory_visits_route_index)
     sol.print_routes(highlight=[(vessel, idx)])
     print()
     sol.print_factory_visits(highlight=[(vessel, idx)])
     print("\n\n")
 
 
+
+
+# SMALL TESTCASE ONE VESSEL
+# vessel='v_1'
+# sol.check_insertion_feasibility_insert_and_print(insert_node_id='o_1', vessel=vessel, idx=1)
+# sol.check_insertion_feasibility_insert_and_print(insert_node_id='o_2', vessel=vessel, idx=1)
+# sol.check_insertion_feasibility_insert_and_print(insert_node_id='o_3', vessel=vessel, idx=1)
+# sol.check_insertion_feasibility_insert_and_print(insert_node_id='f_1', vessel=vessel, idx=len(sol.routes[vessel]))
+
+# MEDIUM TESTCASE
+# vessel = 'v_1'
+# print(f"INITIAL ROUTE, VESSEL {vessel}: {sol.routes[vessel]}")
+# sol.check_insertion_feasibility_insert_and_print(insert_node_id='o_5', vessel=vessel, idx=1)
+# sol.check_insertion_feasibility_insert_and_print(insert_node_id='o_4', vessel=vessel, idx=1)
+# sol.check_insertion_feasibility_insert_and_print(insert_node_id='f_2', vessel=vessel, idx=len(sol.routes[vessel]))
+# vessel = 'v_2'
+# print(f"INITIAL ROUTE, VESSEL {vessel}: {sol.routes[vessel]}")
+# sol.check_insertion_feasibility_insert_and_print(insert_node_id='o_3', vessel=vessel, idx=1)
+# sol.check_insertion_feasibility_insert_and_print(insert_node_id='o_1', vessel=vessel, idx=1)
+# sol.check_insertion_feasibility_insert_and_print(insert_node_id='o_6', vessel=vessel, idx=1)
+# sol.check_insertion_feasibility_insert_and_print(insert_node_id='f_2', vessel=vessel, idx=len(sol.routes[vessel]))
+
+# LARGE TESTCASE
+# vessel = 'v_1'
+# sol.check_insertion_feasibility_insert_and_print('o_6', vessel, 1)
+# sol.check_insertion_feasibility_insert_and_print('o_4', vessel, 1)
+# sol.check_insertion_feasibility_insert_and_print('f_1', vessel, len(sol.routes[vessel]))
+# vessel = 'v_2'
+# sol.check_insertion_feasibility_insert_and_print('o_9', vessel, 1)
+# sol.check_insertion_feasibility_insert_and_print('o_11', vessel, 1)
+# sol.check_insertion_feasibility_insert_and_print('f_2', vessel, len(sol.routes[vessel]))
+# sol.check_insertion_feasibility_insert_and_print('o_3', vessel, 1)
+# sol.check_insertion_feasibility_insert_and_print('o_5', vessel, 1)
