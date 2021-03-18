@@ -24,7 +24,7 @@ class Node:
         return f"{self.id}: ({self.tw_start}, {self.tw_end}), {self.demand}, (zone {self.zone})"
 
 
-class InternalProblemData(ProblemData):
+class ProblemDataExtended(ProblemData):
 
     def __init__(self, file_path: str, precedence: bool = False) -> None:
         super().__init__(file_path)
@@ -70,7 +70,7 @@ class InternalProblemData(ProblemData):
 
 class Solution:
 
-    def __init__(self, prbl: InternalProblemData, debug: bool = False) -> None:
+    def __init__(self, prbl: ProblemDataExtended, debug: bool = False) -> None:
         self.prbl = prbl
         self.debug = debug
 
@@ -89,14 +89,17 @@ class Solution:
 
         self.verbose = True
 
-    def temp_to_solution(self):
+    def __repr__(self) -> str:
+        return (f"Routes: {self.routes}")
+
+    def insert_last_checked(self):
         self.routes = copy.deepcopy(self.temp_routes)
         self.e = copy.deepcopy(self.temp_e)
         self.l = copy.deepcopy(self.temp_l.copy())
         self.factory_visits = copy.deepcopy(self.temp_factory_visits.copy())
         self.factory_visits_route_index = copy.deepcopy(self.temp_factory_visits_route_index.copy())
 
-    def solution_to_temp(self):
+    def clear_last_checked(self):
         self.temp_routes = copy.deepcopy(self.routes)
         self.temp_e = copy.deepcopy(self.e)
         self.temp_l = copy.deepcopy(self.l)
@@ -112,6 +115,7 @@ class Solution:
         # [x] check max #vessels simultaneously at factory
         # [x] check factory destination max #vessels
         # [x] check production capacity (PPFC)
+        # TODO: Do checks sequentially, stop if one fails
         feasible = True
         node = self.prbl.nodes[insert_node]
         idx = len(self.routes[vessel]) if idx > len(self.routes[vessel]) else idx
@@ -125,8 +129,9 @@ class Solution:
                               'vessel_no_products',
                               'time']
         if not all(first_round_checks):
-            print("Failed:", [name for name, check in zip(first_checks_names, first_round_checks) if not check])
             feasible = False
+            if self.verbose:
+                print("Failed:", [name for name, check in zip(first_checks_names, first_round_checks) if not check])
 
         # Second round checks assume node is inserted in temp, which is done in check_time_feasibility
         if feasible:
@@ -135,8 +140,9 @@ class Solution:
             second_checks_names = ['factory_destination',
                                    'production']
             if not all(second_round_checks):
-                print("Failed:", [name for name, check in zip(second_checks_names, second_round_checks) if not check])
                 feasible = False
+                if self.verbose:
+                    print("Failed:", [name for name, check in zip(second_checks_names, second_round_checks) if not check])
         return feasible
 
     def propagate_e_and_l_from_insertion(self, idx: int, vessel: str) -> None:
@@ -424,7 +430,8 @@ class Solution:
         l = self.get_latest(idx, vessel)
 
         if l < e:  # not enough time space for insertion
-            print(f"Check failed at: check_time_feasibility for {vessel}: ({e}, {l})")
+            if self.verbose:
+                print(f"Check failed at: check_time_feasibility for {vessel}: ({e}, {l})")
             return False
 
         self.temp_e[vessel][idx] = e
@@ -765,6 +772,10 @@ class Solution:
         i = bisect.bisect_left(ordered_list, max_threshold)
         return ordered_list[:i]
 
+    def get_orders_not_served(self) -> List[str]:
+        served_orders = set(o for v in self.prbl.vessels for o in self.routes[v])
+        return list(set(self.prbl.order_nodes) - served_orders)
+
     def print_routes(self, highlight: List[Tuple[str, int]] = None):
         highlight = [] if not highlight else highlight
         for vessel, route in self.routes.items():
@@ -808,10 +819,10 @@ class Solution:
             print("> Load feasibility:", self.check_load_feasibility(insert_node, vessel, idx))
             print("> Number of products feasibility:", self.check_no_products_feasibility(insert_node, vessel, idx))
             print("> Time feasibility:", self.check_time_feasibility(insert_node_id, vessel, idx))
-            self.solution_to_temp()
+            self.clear_last_checked()
         else:
             print(f"{bcolors.OKGREEN}Insertion is feasible - inserting node{bcolors.ENDC}")
-            self.temp_to_solution()
+            self.insert_last_checked()
             print(vessel, self.routes[vessel])
             print(list(zip(self.e[vessel], self.l[vessel])))
         print()
@@ -819,34 +830,34 @@ class Solution:
 
 
 # TESTING
-problem = InternalProblemData('../../data/input_data/large_testcase.xlsx', precedence=False)
-sol = Solution(problem)
-
-insertions = [  # large testcase
-    ('o_1', 'v_1', 1),
-    ('f_1', 'v_1', 2),
-    ('o_4', 'v_1', 2),
-    ('o_2', 'v_1', 3),
-    ('f_1', 'v_2', 1),
-    ('o_1', 'v_2', 2),
-    ('f_1', 'v_2', 3),
-    ('o_9', 'v_3', 1),
-    ('f_1', 'v_3', 2),
-    ('o_6', 'v_3', 2),
-    ('o_7', 'v_3', 2),
-    ('o_8', 'v_3', 2),
-]
-
-for node, vessel, idx in insertions:
-    print(f'Inserting {node} into {vessel} at {idx}.')
-    if sol.check_insertion_feasibility(node, vessel, idx):
-        sol.temp_to_solution()
-    else:
-        sol.solution_to_temp()
-    sol.print_routes(highlight=[(vessel, idx)])
-    print()
-    sol.print_factory_visits(highlight=[(vessel, idx)])
-    print("\n\n")
+# problem = ProblemDataExtended('../../data/input_data/large_testcase.xlsx', precedence=False)
+# sol = Solution(problem)
+#
+# insertions = [  # large testcase
+#     ('o_1', 'v_1', 1),
+#     ('f_1', 'v_1', 2),
+#     ('o_4', 'v_1', 2),
+#     ('o_2', 'v_1', 3),
+#     ('f_1', 'v_2', 1),
+#     ('o_1', 'v_2', 2),
+#     ('f_1', 'v_2', 3),
+#     ('o_9', 'v_3', 1),
+#     ('f_1', 'v_3', 2),
+#     ('o_6', 'v_3', 2),
+#     ('o_7', 'v_3', 2),
+#     ('o_8', 'v_3', 2),
+# ]
+#
+# for node, vessel, idx in insertions:
+#     print(f'Inserting {node} into {vessel} at {idx}.')
+#     if sol.check_insertion_feasibility(node, vessel, idx):
+#         sol.insert_last_checked()
+#     else:
+#         sol.clear_last_checked()
+#     sol.print_routes(highlight=[(vessel, idx)])
+#     print()
+#     sol.print_factory_visits(highlight=[(vessel, idx)])
+#     print("\n\n")
 
 # SMALL TESTCASE ONE VESSEL
 # vessel='v_1'

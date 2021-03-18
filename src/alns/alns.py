@@ -1,14 +1,24 @@
 import copy
 import random
 from typing import Dict, List, Tuple, Union
-from src.alns.sketch import Solution, InternalProblemData
+from src.alns.solution import Solution, ProblemDataExtended
 import numpy as np
 
 
-def get_orders_not_served(sol: Solution) -> List[str]:
-    served_orders = set(o for v in sol.prbl.vessels
-                        for o in sol.routes[v])
-    return list(set(sol.prbl.order_nodes) - served_orders)
+# What to do on ALNS:
+#
+# General
+# [ ] Construct initial solution
+# [ ] Update solution (e and l) after removal.
+# [ ] Check that solution is feasible after removal (vessel load and n.o. products, production constraints)
+# [ ] Calculate and update scores and weights
+#
+# Operators
+# [/] Greedy insertion
+# [ ] Regret insertion
+# [/] Random removal
+# [ ] Worst removal (objective, longest wait?)
+# [ ] Related removal (distance, time window, shaw)
 
 
 class Alns:
@@ -20,9 +30,10 @@ class Alns:
     destroy_op_weight: Dict[str, float]
     repair_op_weight: Dict[str, float]
     insertion_candidates: List[str]  # orders not inserted in current_sol
-    weight_min_threshold: int
+    weight_min_threshold: float
 
-    def __init__(self, init_sol: Solution, destroy_op: List[str], repair_op: List[str], weight_min_threshold: int) -> None:
+    def __init__(self, init_sol: Solution, destroy_op: List[str], repair_op: List[str],
+                 weight_min_threshold: float) -> None:
         self.current_sol = init_sol
         self.best_sol = self.current_sol
 
@@ -34,7 +45,7 @@ class Alns:
         self.repair_op_score = {op: 0 for op in repair_op}
 
         self.it_seg_count = 0  # Iterations done in one segment - can maybe do this in run_alns_iteration?
-        self.insertion_candidates = get_orders_not_served(self.current_sol)
+        self.insertion_candidates = self.current_sol.get_orders_not_served()
 
     def __repr__(self):
         return (
@@ -76,6 +87,7 @@ class Alns:
         return candidate_sol, insertion_candidates
 
     def destroy(self, destroy_op: str, sol: Solution) -> Union[Solution, None]:
+        # TODO: Update solution e and l for each route visits and for factory visits
         # Run function based on operator "ID"
         if destroy_op == "d_random":
             return self.destroy_random(sol)
@@ -106,7 +118,7 @@ class Alns:
     def repair_greedy(self, sol: Solution) -> Tuple[Solution, List[str]]:
         insertion_gain = []
         insertion: List[Tuple[str, int, str]] = []
-        insertion_cand = get_orders_not_served(sol)
+        insertion_cand = sol.get_orders_not_served()
         for o in insertion_cand:
             for v in sol.prbl.vessels:
                 for idx in range(1, len(sol.routes[v]) + 1):
@@ -122,11 +134,13 @@ class Alns:
         placed = 0
         while len(insertion) > 0 and placed < remove_num:
             if sol.check_insertion_feasibility(
-                    insert_node=sol.prbl.nodes[insertion[0][0]],
+                    insert_node=insertion[0][0],
                     idx=insertion[0][1], vessel=insertion[0][2]):
-                sol.insert_node(node_id=insertion[0][0], idx=insertion[0][1], vessel=insertion[0][2])
+                sol.insert_last_checked()
                 insertion_cand.remove(insertion[0][0])
                 placed += 1
+            else:
+                sol.clear_last_checked()
             insertion.pop(0)
             insertion_gain.pop(0)
         return sol, insertion_cand
@@ -179,18 +193,38 @@ if __name__ == '__main__':
     repair_op = ['r_greedy']  # , 'r_regret']  # TBD
     max_iter_alns = 100
     max_iter_seg = 10
-    remove_num = 1
+    remove_num = 4
     weight_min_threshold = 0.2
 
     # Construct an initial solution  # TODO: do this in a better way!
-    prbl = InternalProblemData('../../data/input_data/medium_testcase.xlsx', precedence=True)
+    prbl = ProblemDataExtended('../../data/input_data/large_testcase.xlsx', precedence=True)
     init_sol = Solution(prbl)
-    init_sol.insert_node(node_id='o_5', vessel='v_1', idx=1)
-    init_sol.insert_node(node_id='f_2', vessel='v_1', idx=len(init_sol.routes['v_1']))
-    init_sol.insert_node(node_id='o_3', vessel='v_2', idx=1)
-    init_sol.insert_node(node_id='f_2', vessel='v_2', idx=len(init_sol.routes['v_2']))
+    init_sol.verbose = False
+    initial_insertions = [
+            ('o_1', 'v_1', 1),
+            ('f_1', 'v_1', 2),
+            ('o_4', 'v_1', 2),
+            ('o_2', 'v_1', 3),
+            ('f_1', 'v_2', 1),
+            ('o_1', 'v_2', 2),
+            ('f_1', 'v_2', 3),
+            ('o_9', 'v_3', 1),
+            ('f_1', 'v_3', 2),
+            ('o_6', 'v_3', 2),
+            ('o_7', 'v_3', 2),
+            ('o_8', 'v_3', 2),
+    ]
 
-    alns = Alns(init_sol=init_sol, destroy_op=destroy_op, repair_op=repair_op, weight_min_threshold=weight_min_threshold)
+    for node, vessel, idx in initial_insertions:
+        if init_sol.check_insertion_feasibility(node, vessel, idx):
+            init_sol.insert_last_checked()
+        else:
+            init_sol.clear_last_checked()
+
+    print()
+    print("ALNS starting")
+    alns = Alns(init_sol=init_sol, destroy_op=destroy_op, repair_op=repair_op,
+                weight_min_threshold=weight_min_threshold)
     print(alns)
     print(alns.choose_operators())
     # alns.repair("repair_greedy")
@@ -199,8 +233,8 @@ if __name__ == '__main__':
     # alns.repair("repair_greedy")
 
     # for iteration = 1 to I\^ALNS do
-    # for i in range(max_iter_alns):
-    #    alns.run_alns_iteration()
+    for i in range(max_iter_alns):
+       alns.run_alns_iteration()
 
     print()
     print(alns)
