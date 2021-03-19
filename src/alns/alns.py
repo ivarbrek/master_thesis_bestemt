@@ -1,6 +1,6 @@
 import copy
 import random
-from typing import Dict, List, Tuple, Union
+from typing import Dict, List, Tuple, Union, Callable
 from src.alns.solution import Solution, ProblemDataExtended
 import numpy as np
 
@@ -10,7 +10,7 @@ import numpy as np
 # General
 # [ ] Construct initial solution
 # [ ] Update solution (e and l) after removal.
-# [ ] Check that solution is feasible after removal (vessel load and n.o. products, production constraints)
+# DROP THIS: Check that solution is feasible after removal (vessel load and n.o. products, production constraints)
 # [ ] Calculate and update scores and weights
 #
 # Operators
@@ -29,11 +29,18 @@ class Alns:
     repair_op_score: Dict[str, float]  # key is repair operator "ID"; value is score, updated for each segment
     destroy_op_weight: Dict[str, float]
     repair_op_weight: Dict[str, float]
-    insertion_candidates: List[str]  # orders not inserted in current_sol
+    unrouted_orders: List[str]  # orders not inserted in current_sol
     weight_min_threshold: float
 
     def __init__(self, init_sol: Solution, destroy_op: List[str], repair_op: List[str],
                  weight_min_threshold: float) -> None:
+        # ALNS  parameters
+        self.max_iter_alns = 100
+        self.max_iter_seg = 10
+        self.remove_num = 3
+        self.weight_min_threshold = 0.2
+
+        # Solutions
         self.current_sol = init_sol
         self.best_sol = self.current_sol
 
@@ -44,8 +51,11 @@ class Alns:
         self.destroy_op_score = {op: 0 for op in destroy_op}
         self.repair_op_score = {op: 0 for op in repair_op}
 
+        #
         self.it_seg_count = 0  # Iterations done in one segment - can maybe do this in run_alns_iteration?
-        self.insertion_candidates = self.current_sol.get_orders_not_served()
+        self.unrouted_orders = self.current_sol.get_orders_not_served()
+
+        self.verbose = True
 
     def __repr__(self):
         return (
@@ -53,7 +63,7 @@ class Alns:
             f"{self.best_sol} \n"
             f"Current solution: \n"
             f"{self.current_sol} \n"
-            f"Insertion candidates (orders not served): {self.insertion_candidates} \n"
+            f"Insertion candidates (orders not served): {self.unrouted_orders}\n"
             f"Destroy operators {[k for k in self.destroy_op_weight.keys()]}, "
             f"and repair operators {[k for k in self.repair_op_weight.keys()]} \n")
 
@@ -81,13 +91,12 @@ class Alns:
     def generate_new_solution(self, destroy_op: str, repair_op: str) -> Tuple[Solution, List[str]]:
         # Generate new feasible solution x' based on given operators
         # Return x'
-        candidate_sol = copy.deepcopy(self.current_sol)
+        candidate_sol = self.current_sol.copy()
         candidate_sol = self.destroy(destroy_op, candidate_sol)
-        candidate_sol, insertion_candidates = self.repair(repair_op, candidate_sol)
-        return candidate_sol, insertion_candidates
+        candidate_sol, unrouted_orders = self.repair(repair_op, candidate_sol)
+        return candidate_sol, unrouted_orders
 
     def destroy(self, destroy_op: str, sol: Solution) -> Union[Solution, None]:
-        # TODO: Update solution e and l for each route visits and for factory visits
         # Run function based on operator "ID"
         if destroy_op == "d_random":
             return self.destroy_random(sol)
@@ -96,16 +105,17 @@ class Alns:
             return None
 
     def destroy_random(self, sol: Solution) -> Solution:
-        served_orders = set(sol.prbl.order_nodes) - set(self.insertion_candidates)  # sol is equal to current_solution
-        orders_to_remove = set()
-        while len(orders_to_remove) < remove_num:
-            orders_to_remove.add(random.randint(0, len(served_orders) - 1))
+        served_orders = [(v, o) for v in sol.prbl.vessels
+                         for o in sol.routes[v] if not sol.prbl.nodes[o].is_factory]
+        random.shuffle(served_orders)
+        removals = 0
+        while removals < remove_num and served_orders:
+            vessel, order = served_orders.pop()
+            remove_index = sol.routes[vessel].index(order)
+            sol.remove_node(vessel, remove_index)
+            removals += 1
 
-        for v in sol.prbl.vessels:
-            for i in range(len(sol.routes[v])):
-                node = sol.routes[v][i]
-                if node in orders_to_remove:
-                    sol.routes[v].remove(node)
+        sol.recompute_solution_variables()
         return sol
 
     def repair(self, repair_op: str, sol: Solution) -> Union[None, Tuple[Solution, List[str]]]:
@@ -116,34 +126,37 @@ class Alns:
             return None
 
     def repair_greedy(self, sol: Solution) -> Tuple[Solution, List[str]]:
-        insertion_gain = []
-        insertion: List[Tuple[str, int, str]] = []
         insertion_cand = sol.get_orders_not_served()
-        for o in insertion_cand:
-            for v in sol.prbl.vessels:
-                for idx in range(1, len(sol.routes[v]) + 1):
-                    insertion_gain.append(sol.get_insertion_utility(node=sol.prbl.nodes[o],
-                                                                    idx=idx, vessel=v))
-                    insertion.append((o, idx, v))
+        insertions = [(node_id, vessel, idx, sol.get_insertion_utility(sol.prbl.nodes[node_id], vessel, idx))
+                      for node_id in insertion_cand
+                      for vessel in sol.prbl.vessels
+                      for idx in range(1, len(sol.routes[vessel]) + 1)]
+        insertions.sort(key=lambda tup: tup[3])  # sort by gain
 
-        # Sort candidates according to gain
-        insertion = [ins for _, ins in sorted(zip(insertion_gain, insertion),
-                                              key=lambda pair: pair[0], reverse=True)]  # desc order
-        insertion_gain.sort(reverse=True)
+        unrouted_orders = []
 
-        placed = 0
-        while len(insertion) > 0 and placed < remove_num:
-            if sol.check_insertion_feasibility(
-                    insert_node=insertion[0][0],
-                    idx=insertion[0][1], vessel=insertion[0][2]):
+        while len(insertion_cand) > 0:  # try all possible insertions
+            insert_node, vessel, idx, _ = insertions[-1]
+            if sol.check_insertion_feasibility(insert_node, vessel, idx):
                 sol.insert_last_checked()
-                insertion_cand.remove(insertion[0][0])
-                placed += 1
+                insertion_cand.remove(insert_node)
+                # recalculate profit gain and omit other insertions of node_id
+                insertions = [(node, vessel, idx, sol.get_insertion_utility(sol.prbl.nodes[insert_node], vessel, idx))
+                              for node, vessel, idx, utility in insertions if node != insert_node]
+                insertions.sort(key=lambda item: item[3])  # sort by gain
+
+                if self.verbose:
+                    sol.print_routes(highlight=[(vessel, idx)])
+                    print()
             else:
                 sol.clear_last_checked()
-            insertion.pop(0)
-            insertion_gain.pop(0)
-        return sol, insertion_cand
+                insertions.pop()
+
+                # Remove node_id from insertion candidate list if no insertions left for this node_id
+                if len([item for item in insertions if item[0] == insert_node]) == 0:
+                    insertion_cand.remove(insert_node)
+                    unrouted_orders.append(insert_node)
+        return sol, unrouted_orders
 
     def accept_solution(self, sol: Solution) -> bool:
         """
@@ -161,13 +174,13 @@ class Alns:
 
         # Generate a candidate solution x′ from the current solution x using the chosen destroy and repair heuristics
         candidate_sol: Solution
-        insertion_candidates: List[str]
-        candidate_sol, insertion_candidates = self.generate_new_solution(destroy_op=d_op, repair_op=r_op)
+        unrouted_orders: List[str]
+        candidate_sol, unrouted_orders = self.generate_new_solution(destroy_op=d_op, repair_op=r_op)
 
         # if x′ is accepted by a simulated annealing–based acceptance criterion then set x = x′
         if self.accept_solution(candidate_sol):
             self.current_sol = candidate_sol
-            self.insertion_candidates = insertion_candidates
+            self.unrouted_orders = unrouted_orders
 
         # Update scores πd of the destroy and repair heuristics - dependent on how good the solution is
         self.update_scores(destroy_op=d_op, repair_op=r_op)
@@ -193,7 +206,7 @@ if __name__ == '__main__':
     repair_op = ['r_greedy']  # , 'r_regret']  # TBD
     max_iter_alns = 100
     max_iter_seg = 10
-    remove_num = 4
+    remove_num = 3
     weight_min_threshold = 0.2
 
     # Construct an initial solution  # TODO: do this in a better way!
@@ -205,11 +218,10 @@ if __name__ == '__main__':
             ('f_1', 'v_1', 2),
             ('o_4', 'v_1', 2),
             ('o_2', 'v_1', 3),
-            ('f_1', 'v_2', 1),
             ('o_1', 'v_2', 2),
-            ('f_1', 'v_2', 3),
+            ('f_2', 'v_2', 3),
             ('o_9', 'v_3', 1),
-            ('f_1', 'v_3', 2),
+            ('f_2', 'v_3', 2),
             ('o_6', 'v_3', 2),
             ('o_7', 'v_3', 2),
             ('o_8', 'v_3', 2),
@@ -234,7 +246,9 @@ if __name__ == '__main__':
 
     # for iteration = 1 to I\^ALNS do
     for i in range(max_iter_alns):
-       alns.run_alns_iteration()
+        print("New iteration")
+        alns.run_alns_iteration()
+        print()
 
     print()
     print(alns)
