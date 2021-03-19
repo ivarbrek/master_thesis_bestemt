@@ -92,19 +92,40 @@ class Solution:
     def __repr__(self) -> str:
         return (f"Routes: {self.routes}")
 
+    def copy(self) -> Solution:
+        solution_copy = Solution(self.prbl)  # problem data is static
+
+        solution_copy.routes = copy.deepcopy(self.routes)
+        solution_copy.e = copy.deepcopy(self.e)
+        solution_copy.l = copy.deepcopy(self.l)
+        solution_copy.factory_visits = copy.deepcopy(self.factory_visits)
+        solution_copy.factory_visits_route_index = copy.deepcopy(self.factory_visits_route_index)
+
+        solution_copy.temp_routes = copy.deepcopy(self.temp_routes)
+        solution_copy.temp_e = copy.deepcopy(self.temp_e)
+        solution_copy.temp_l = copy.deepcopy(self.temp_l)
+        solution_copy.temp_factory_visits = copy.deepcopy(self.temp_factory_visits)
+        solution_copy.temp_factory_visits_route_index = copy.deepcopy(self.temp_factory_visits_route_index)
+
+        solution_copy.verbose = self.verbose
+        return solution_copy
+
     def insert_last_checked(self):
-        self.routes = copy.deepcopy(self.temp_routes)
-        self.e = copy.deepcopy(self.temp_e)
-        self.l = copy.deepcopy(self.temp_l.copy())
-        self.factory_visits = copy.deepcopy(self.temp_factory_visits.copy())
-        self.factory_visits_route_index = copy.deepcopy(self.temp_factory_visits_route_index.copy())
+        self.routes = {vessel: route[:] for vessel, route in self.temp_routes.items()}
+        self.e = {vessel: e[:] for vessel, e in self.temp_e.items()}
+        self.l = {vessel: l[:] for vessel, l in self.temp_l.items()}
+        self.factory_visits = {factory: visits[:] for factory, visits in self.temp_factory_visits.items()}
+        self.factory_visits_route_index = {factory: visit_route_idxs[:]
+                                           for factory, visit_route_idxs in
+                                           self.temp_factory_visits_route_index.items()}
 
     def clear_last_checked(self):
-        self.temp_routes = copy.deepcopy(self.routes)
-        self.temp_e = copy.deepcopy(self.e)
-        self.temp_l = copy.deepcopy(self.l)
-        self.temp_factory_visits = copy.deepcopy(self.factory_visits)
-        self.temp_factory_visits_route_index = copy.deepcopy(self.factory_visits_route_index)
+        self.temp_routes = {vessel: route[:] for vessel, route in self.routes.items()}
+        self.temp_e = {vessel: e[:] for vessel, e in self.e.items()}
+        self.temp_l = {vessel: l[:] for vessel, l in self.l.items()}
+        self.temp_factory_visits = {factory: visits[:] for factory, visits in self.factory_visits.items()}
+        self.temp_factory_visits_route_index = {factory: visit_route_idxs[:]
+                                                for factory, visit_route_idxs in self.factory_visits_route_index.items()}
 
     def check_insertion_feasibility(self, insert_node: str, vessel: str, idx: int) -> bool:
         # [x] check that the vessel load capacity is not violated
