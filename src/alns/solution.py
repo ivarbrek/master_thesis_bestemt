@@ -533,6 +533,24 @@ class Solution:
 
         return delivery_gain - net_sail_change * self.prbl.transport_unit_costs[vessel]
 
+    def get_solution_cost(self) -> int:
+        transport_cost = 0
+        unmet_orders = list(self.prbl.order_nodes.keys())
+
+        for vessel in self.prbl.vessels:
+            route = self.routes[vessel]
+            for i in range(1, len(route)):
+                transport_cost += self.prbl.transport_times[route[i - 1], route[i]] * self.prbl.transport_unit_costs[
+                    vessel]
+                if not self.prbl.nodes[route[i]].is_factory:
+                    unmet_orders.remove(route[i])
+
+        unmet_order_cost = 0
+        for order_node in unmet_orders:
+            unmet_order_cost += self.prbl.external_delivery_penalties[order_node]
+
+        return transport_cost + unmet_order_cost
+
     def get_temp_voyage_start_idxs_for_factory(self, factory_node_id: str) -> Dict[str, List[Tuple[int, int]]]:
         """
         :param factory_node_id:
