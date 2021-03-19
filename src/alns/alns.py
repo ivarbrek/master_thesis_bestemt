@@ -76,6 +76,8 @@ class Alns:
             f"and repair operators {[k for k in self.repair_op_weight.keys()]} \n")
 
     def update_scores(self, destroy_op: str, repair_op: str, update_type: int) -> None:
+        if update_type == -1:
+            return
         if not 0 <= update_type < len(self.score_params):
             print("Update type does not exist. Scores not updated.")
             return
@@ -87,13 +89,15 @@ class Alns:
         # Update weights based on scores, "blank" scores and operator segment usage
         # w = (1-r)w + r*(pi/theta)
         for op in self.destroy_op_weight.keys():
-            self.destroy_op_weight[op] = ((1-self.reaction_param) * self.destroy_op_weight[op] +
-                                          self.reaction_param * self.destroy_op_score[op] / self.destroy_op_segment_usage[op])
+            self.destroy_op_weight[op] = ((1 - self.reaction_param) * self.destroy_op_weight[op] +
+                                          self.reaction_param * self.destroy_op_score[op] /
+                                          self.destroy_op_segment_usage[op])
             self.destroy_op_score[op] = 0
             self.destroy_op_segment_usage[op] = 0
         for op in self.repair_op_weight.keys():
-            self.repair_op_weight[op] = ((1-self.reaction_param) * self.repair_op_weight[op] +
-                                         self.reaction_param * self.repair_op_score[op] / self.repair_op_segment_usage[op])
+            self.repair_op_weight[op] = ((1 - self.reaction_param) * self.repair_op_weight[op] +
+                                         self.reaction_param * self.repair_op_score[op] / self.repair_op_segment_usage[
+                                             op])
             self.repair_op_score[op] = 0
             self.repair_op_segment_usage[op] = 0
         self.it_seg_count = 0
@@ -196,13 +200,12 @@ class Alns:
             self.temperature = self.temperature * self.cooling_rate
             return True, 1
         else:
-
-            prob = pow(math.e, -((sol_cost-self.current_sol_cost)/self.temperature))
+            prob = pow(math.e, -((sol_cost - self.current_sol_cost) / self.temperature))
             accept = np.random.choice(
-                np.array([True, False]), p=(np.array([prob, (1-prob)]))
+                np.array([True, False]), p=(np.array([prob, (1 - prob)]))
             )
             self.temperature = self.temperature * self.cooling_rate
-            return accept, -1+3*accept
+            return accept, -1 + 3 * accept
 
     def run_alns_iteration(self) -> None:
         # Choose a destroy heuristic and a repair heuristic based on adaptive weights wdm
@@ -255,18 +258,18 @@ if __name__ == '__main__':
     init_sol = Solution(prbl)
     init_sol.verbose = False
     initial_insertions = [
-            ('o_1', 'v_1', 1),
-            ('f_1', 'v_1', 2),
-            ('o_4', 'v_1', 2),
-            ('o_2', 'v_1', 3),
-            ('f_1', 'v_2', 1),
-            ('o_1', 'v_2', 2),
-            ('f_1', 'v_2', 3),
-            ('o_9', 'v_3', 1),
-            ('f_1', 'v_3', 2),
-            ('o_6', 'v_3', 2),
-            ('o_7', 'v_3', 2),
-            ('o_8', 'v_3', 2),
+        ('o_1', 'v_1', 1),
+        ('f_1', 'v_1', 2),
+        ('o_4', 'v_1', 2),
+        ('o_2', 'v_1', 3),
+        ('f_1', 'v_2', 1),
+        ('o_1', 'v_2', 2),
+        ('f_1', 'v_2', 3),
+        ('o_9', 'v_3', 1),
+        ('f_1', 'v_3', 2),
+        ('o_6', 'v_3', 2),
+        ('o_7', 'v_3', 2),
+        ('o_8', 'v_3', 2),
     ]
 
     for node, vessel, idx in initial_insertions:
@@ -276,16 +279,16 @@ if __name__ == '__main__':
             init_sol.clear_last_checked()
 
     print()
-    print("ALNS starting")
-    alns = Alns(init_sol=init_sol, destroy_op=destroy_op, repair_op=repair_op, weight_min_threshold=weight_min_threshold,
+    print("ALNS starting...")
+    alns = Alns(init_sol=init_sol, destroy_op=destroy_op, repair_op=repair_op,
+                weight_min_threshold=weight_min_threshold,
                 reaction_param=reaction_param, score_params=score_params,
                 init_temperature=init_temperature, cooling_rate=cooling_rate)
     print(alns)
-    # print(alns.choose_operators())
 
-    # for iteration = 1 to I\^ALNS do
     for i in range(max_iter_alns):
-       alns.run_alns_iteration()
+        alns.run_alns_iteration()
 
     print()
+    print("ALNS terminating...")
     print(alns)
