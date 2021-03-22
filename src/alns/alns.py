@@ -1,21 +1,24 @@
 import copy
+import math
 import random
 from typing import Dict, List, Tuple, Union, Callable
 from src.alns.solution import Solution, ProblemDataExtended
 import numpy as np
 
+int_inf = 9999
 
 # What to do on ALNS:
 #
 # General
-# [ ] Construct initial solution
-# [ ] Update solution (e and l) after removal.
+# [x] Construct initial solution
+# [x] Update solution (e and l) after removal.
+# [x] Calculate and update scores and weights
 # DROP THIS: Check that solution is feasible after removal (vessel load and n.o. products, production constraints)
-# [ ] Calculate and update scores and weights
+# [x] Calculate and update scores and weights
 #
 # Operators
 # [/] Greedy insertion
-# [ ] Regret insertion
+# [/] Regret insertion
 # [/] Random removal
 # [ ] Worst removal (objective, longest wait?)
 # [ ] Related removal (distance, time window, shaw)
@@ -24,16 +27,30 @@ import numpy as np
 class Alns:
     it_seg_count: int
     best_sol: Solution
+    best_sol_cost: int
     current_sol: Solution
+    current_sol_cost: int
     destroy_op_score: Dict[str, float]  # key is destroy operator "ID"; value is a score, updated for each segment
     repair_op_score: Dict[str, float]  # key is repair operator "ID"; value is score, updated for each segment
     destroy_op_weight: Dict[str, float]
     repair_op_weight: Dict[str, float]
-    unrouted_orders: List[str]  # orders not inserted in current_sol
+    destroy_op_segment_usage: Dict[str, int]
+    repair_op_segment_usage: Dict[str, int]
+    unrouted_orders: List[str] = []  # orders not inserted in current_sol
+    reaction_param: float
+    score_params: Dict[int, int]
     weight_min_threshold: float
+    temperature: float
+    cooling_rate: float
 
-    def __init__(self, init_sol: Solution, destroy_op: List[str], repair_op: List[str],
-                 weight_min_threshold: float) -> None:
+    def __init__(self, problem_data: ProblemDataExtended,
+                 destroy_op: List[str],
+                 repair_op: List[str],
+                 weight_min_threshold: float,
+                 reaction_param: float,
+                 score_params: List[int],
+                 start_temperature_controlparam: float,
+                 cooling_rate: float) -> None:
         # ALNS  parameters
         self.max_iter_alns = 100
         self.max_iter_seg = 10
@@ -42,7 +59,10 @@ class Alns:
 
         # Solutions
         self.current_sol = init_sol
+        self.current_sol = self.construct_initial_solution(problem_data)
+        self.current_sol_cost = self.current_sol.get_solution_cost()
         self.best_sol = self.current_sol
+        self.best_sol_cost = self.current_sol_cost
 
         # Operator weights, scores and usage
         self.weight_min_threshold = weight_min_threshold
@@ -50,30 +70,85 @@ class Alns:
         self.repair_op_weight = {op: self.weight_min_threshold for op in repair_op}
         self.destroy_op_score = {op: 0 for op in destroy_op}
         self.repair_op_score = {op: 0 for op in repair_op}
+        self.destroy_op_segment_usage = {op: 0 for op in destroy_op}
+        self.repair_op_segment_usage = {op: 0 for op in repair_op}
+        self.reaction_param = reaction_param
+        self.score_params = {i: score_params[i] for i in range(len(score_params))}
 
-        #
+        self.cooling_rate = cooling_rate
+        self.temperature = -(self.best_sol_cost * start_temperature_controlparam) / math.log2(0.5)
+
         self.it_seg_count = 0  # Iterations done in one segment - can maybe do this in run_alns_iteration?
-        self.unrouted_orders = self.current_sol.get_orders_not_served()
+        self.insertion_candidates = self.current_sol.get_orders_not_served()
 
         self.verbose = True
 
     def __repr__(self):
         return (
-            f"Best solution: \n"
+            f"Best solution with routing cost {self.best_sol_cost}: \n"
             f"{self.best_sol} \n"
-            f"Current solution: \n"
+            f"Current solution with routing cost {self.current_sol_cost}: \n"
             f"{self.current_sol} \n"
-            f"Insertion candidates (orders not served): {self.unrouted_orders}\n"
-            f"Destroy operators {[k for k in self.destroy_op_weight.keys()]}, "
-            f"and repair operators {[k for k in self.repair_op_weight.keys()]} \n")
+            f"Insertion candidates (orders not served): {self.insertion_candidates} \n"
+            f"Destroy operators {[(k, v) for k, v in self.destroy_op_weight.items()]}, "
+            f"with usage {[(k, v) for k, v in self.destroy_op_segment_usage.items()]}, \n"
+            f"and repair operators {[(k, v) for k, v in self.repair_op_weight.items()]}, "
+            f"with usage {[(k, v) for k, v in self.repair_op_segment_usage.items()]} \n")
 
-    def update_scores(self, destroy_op: str, repair_op: str) -> None:
-        # TODO
+    def construct_initial_solution(self, problem_data: ProblemDataExtended) -> Solution:
+        sol: Solution = Solution(problem_data)
+        sol.verbose = False
+        unrouted_orders = list(sol.prbl.order_nodes.keys())
+        unrouted_order_cost = [sol.prbl.external_delivery_penalties[o] for o in unrouted_orders]
+        unrouted_orders = [o for _, o in sorted(zip(unrouted_order_cost, unrouted_orders),
+                                                key=lambda pair: pair[0], reverse=True)]  # desc according to cost
+
+        for o in unrouted_orders:
+            insertion_gain = []
+            insertion: List[Tuple[int, str]] = []
+            for v in sol.prbl.vessels:
+                for idx in range(1, len(sol.routes[v]) + 1):
+                    insertion_gain.append(sol.get_insertion_utility(node=sol.prbl.nodes[o],
+                                                                    idx=idx, vessel=v))
+                    insertion.append((idx, v))
+            insertion = [ins for _, ins in sorted(zip(insertion_gain, insertion),
+                                                  key=lambda pair: pair[0], reverse=True)]
+            feasible = False
+            while not feasible and len(insertion) > 0:
+                feasible = sol.check_insertion_feasibility(insert_node=o, idx=insertion[0][0], vessel=insertion[0][1])
+                if feasible:
+                    sol.insert_last_checked()
+                else:
+                    sol.clear_last_checked()
+                insertion.pop(0)
+        return sol
+
+    def update_scores(self, destroy_op: str, repair_op: str, update_type: int) -> None:
+        if update_type == -1:
+            return
+        if not 0 <= update_type < len(self.score_params):
+            print("Update type does not exist. Scores not updated.")
+            return
+        self.destroy_op_score[destroy_op] += self.score_params[update_type]
+        self.repair_op_score[repair_op] += self.score_params[update_type]
         return
 
     def update_weights(self) -> None:
-        # Update weights based on scores, "blank" scores
+        # Update weights based on scores, "blank" scores and operator segment usage
         # w = (1-r)w + r*(pi/theta)
+        for op in self.destroy_op_weight.keys():
+            self.destroy_op_weight[op] = ((1 - self.reaction_param) * self.destroy_op_weight[op] +
+                                          self.reaction_param * self.destroy_op_score[op] /
+                                          self.destroy_op_segment_usage[op])
+            self.destroy_op_score[op] = 0
+            self.destroy_op_segment_usage[op] = 0
+        for op in self.repair_op_weight.keys():
+            self.repair_op_weight[op] = ((1 - self.reaction_param) * self.repair_op_weight[op] +
+                                         self.reaction_param * self.repair_op_score[op] / self.repair_op_segment_usage[
+                                             op])
+            self.repair_op_score[op] = 0
+            self.repair_op_segment_usage[op] = 0
+        self.it_seg_count = 0
         return
 
     def choose_operators(self) -> Tuple[str, str]:
@@ -82,10 +157,14 @@ class Alns:
         destroy_op: str = np.random.choice(
             np.array([op for op in destroy_operators[0]]),
             p=(np.array([w for w in destroy_operators[1]]) / np.array(sum(destroy_operators[1]))))
+        self.destroy_op_segment_usage[destroy_op] += 1
+
         repair_operators = list(zip(*self.repair_op_weight.items()))
         repair_op: str = np.random.choice(
             np.array([op for op in repair_operators[0]]),
             p=(np.array([w for w in repair_operators[1]]) / np.array(sum(repair_operators[1]))))
+        self.repair_op_segment_usage[repair_op] += 1
+
         return destroy_op, repair_op
 
     def generate_new_solution(self, destroy_op: str, repair_op: str) -> Tuple[Solution, List[str]]:
@@ -93,8 +172,8 @@ class Alns:
         # Return x'
         candidate_sol = self.current_sol.copy()
         candidate_sol = self.destroy(destroy_op, candidate_sol)
-        candidate_sol, unrouted_orders = self.repair(repair_op, candidate_sol)
-        return candidate_sol, unrouted_orders
+        candidate_sol, insertion_candidates = self.repair(repair_op, candidate_sol)
+        return candidate_sol, insertion_candidates
 
     def destroy(self, destroy_op: str, sol: Solution) -> Union[Solution, None]:
         # Run function based on operator "ID"
@@ -121,6 +200,8 @@ class Alns:
     def repair(self, repair_op: str, sol: Solution) -> Union[None, Tuple[Solution, List[str]]]:
         if repair_op == "r_greedy":
             return self.repair_greedy(sol)
+        elif repair_op == "r_2regret":
+            return self.repair_2regret(sol)
         else:
             print("Repair operator does not exist")
             return None
@@ -153,19 +234,86 @@ class Alns:
                 insertions.pop()
 
                 # Remove node_id from insertion candidate list if no insertions left for this node_id
-                if len([item for item in insertions if item[0] == insert_node]) == 0:
+                if len([insert for insert in insertions if insert[0] == insert_node]) == 0:
                     insertion_cand.remove(insert_node)
                     unrouted_orders.append(insert_node)
         return sol, unrouted_orders
 
-    def accept_solution(self, sol: Solution) -> bool:
+    def repair_2regret(self, sol: Solution) -> Tuple[Solution, List[str]]:
+        for i in range(remove_num):  # TODO: Find out how to do this (q^{ALNS} stuff)
+            insertion_cand = sol.get_orders_not_served()
+            insertion_gain: List[float] = []
+            insertion: List[Tuple[int, str]] = []  # tuple (idx, vessel)
+            insertion_regrets: List[float] = []
+            repair_candidates: List[Tuple[str, int, str]] = []
+
+            for o in insertion_cand:
+                # Get all insertion utilities
+                for v in sol.prbl.vessels:
+                    for idx in range(1, len(sol.routes[v]) + 1):
+                        insertion_gain.append(sol.get_insertion_utility(node=sol.prbl.nodes[o], vessel=v, idx=idx))
+                        insertion.append((idx, v))
+
+                insertion = [ins for _, ins in sorted(zip(insertion_gain, insertion),
+                                                      key=lambda pair: pair[0], reverse=True)]  # order desc
+                insertion_gain.sort(reverse=True)
+
+                insertion_regret = 0
+                num_feasible = 0
+                best_insertion: Tuple[str, int, str]
+                while num_feasible < 2 and len(insertion) > 0:
+                    feasible = sol.check_insertion_feasibility(insert_node=o, idx=insertion[0][0],
+                                                               vessel=insertion[0][1])
+                    if feasible:
+                        if num_feasible == 0:
+                            insertion_regret += insertion_gain[0]
+                            best_insertion = (o, insertion[0][0], insertion[0][1])
+                        elif num_feasible == 1:
+                            insertion_regret -= insertion_gain[0]
+                        num_feasible += 1
+
+                    sol.clear_last_checked()
+                    insertion.pop(0)
+                    insertion_gain.pop(0)
+
+                if num_feasible == 1:  # Only one feasible solution found
+                    insertion_regret -= -int_inf
+
+                if num_feasible >= 1 and best_insertion:  # at least one feasible solution found
+                    repair_candidates.append(best_insertion)
+                    insertion_regrets.append(insertion_regret)
+
+            if len(repair_candidates) == 0:
+                return sol, sol.get_orders_not_served()
+
+            highest_regret_insertion = repair_candidates[insertion_regrets.index(max(insertion_regrets))]
+            sol.check_insertion_feasibility(insert_node=highest_regret_insertion[0],
+                                            idx=highest_regret_insertion[1],
+                                            vessel=highest_regret_insertion[2])
+            sol.insert_last_checked()
+
+        return sol, sol.get_orders_not_served()
+
+    def accept_solution(self, sol: Solution) -> Tuple[bool, int]:
         """
-        :param sol: solution to be compared with self.best_sol
-        :return: True if self.best_sol should be accepted to sol, else False
+        :param sol: solution to be compared with self.current_sol
+        :return: True if sol should be accepted to self.current_sol, else False
         """
-        # Simulated annealing criterion
-        # TODO
-        return True
+        sol_cost = sol.get_solution_cost()
+        if sol_cost < self.best_sol_cost:
+            self.temperature = self.temperature * self.cooling_rate
+            return True, 0
+        elif sol_cost < self.current_sol_cost:
+            self.temperature = self.temperature * self.cooling_rate
+            return True, 1
+        else:
+            # Simulated annealing criterion
+            prob = pow(math.e, -((sol_cost - self.current_sol_cost) / self.temperature))
+            accept = np.random.choice(
+                np.array([True, False]), p=(np.array([prob, (1 - prob)]))
+            )
+            self.temperature = self.temperature * self.cooling_rate
+            return accept, -1 + 3 * accept
 
     def run_alns_iteration(self) -> None:
         # Choose a destroy heuristic and a repair heuristic based on adaptive weights wdm
@@ -174,81 +322,64 @@ class Alns:
 
         # Generate a candidate solution x′ from the current solution x using the chosen destroy and repair heuristics
         candidate_sol: Solution
-        unrouted_orders: List[str]
-        candidate_sol, unrouted_orders = self.generate_new_solution(destroy_op=d_op, repair_op=r_op)
+        insertion_candidates: List[str]
+        candidate_sol, insertion_candidates = self.generate_new_solution(destroy_op=d_op, repair_op=r_op)
 
         # if x′ is accepted by a simulated annealing–based acceptance criterion then set x = x′
-        if self.accept_solution(candidate_sol):
+        accept_solution, update_type = self.accept_solution(candidate_sol)
+        if accept_solution:
             self.current_sol = candidate_sol
-            self.unrouted_orders = unrouted_orders
+            self.current_sol_cost = candidate_sol.get_solution_cost()
+            self.insertion_candidates = insertion_candidates
 
         # Update scores πd of the destroy and repair heuristics - dependent on how good the solution is
-        self.update_scores(destroy_op=d_op, repair_op=r_op)
+        self.update_scores(destroy_op=d_op, repair_op=r_op, update_type=update_type)
 
         # if IS iterations has passed since last weight update then
         # Update the weight wdm+1 for method d for the next segment m + 1 based on
         # the scores πd obtained for each method in segment m
         if self.it_seg_count == max_iter_seg:
             self.update_weights()
-            self.it_seg_count = 0
-        else:
-            self.it_seg_count += 1
 
         # if f(x) > f(x∗) then
         # set x∗ =x
-        if True:  # f(x) > f(x*) criterion  # TODO
+        if update_type == 0:  # type 0 means global best solution is found
             self.best_sol = self.current_sol
+            self.best_sol_cost = self.current_sol_cost
         return
 
 
 if __name__ == '__main__':
     destroy_op = ['d_random']  # 'd_related', 'd_worst', 'd_random']  # TBD
-    repair_op = ['r_greedy']  # , 'r_regret']  # TBD
+    repair_op = ['r_greedy', 'r_2regret']  # , 'r_regret']  # TBD
     max_iter_alns = 100
-    max_iter_seg = 10
-    remove_num = 3
+    max_iter_seg = 1
+    remove_num = 4
     weight_min_threshold = 0.2
+    reaction_param = 0.5
+    score_params = [5, 3, 1]  # corresponding to sigma_1, sigma_2, sigma_3 in R&P and L&N
+    start_temperature_controlparam = 0.05  # solution 5% worse than best solution is accepted with 50% probability
+    cooling_rate = 0.98
 
-    # Construct an initial solution  # TODO: do this in a better way!
     prbl = ProblemDataExtended('../../data/input_data/large_testcase.xlsx', precedence=True)
-    init_sol = Solution(prbl)
-    init_sol.verbose = False
-    initial_insertions = [
-            ('o_1', 'v_1', 1),
-            ('f_1', 'v_1', 2),
-            ('o_4', 'v_1', 2),
-            ('o_2', 'v_1', 3),
-            ('o_1', 'v_2', 2),
-            ('f_2', 'v_2', 3),
-            ('o_9', 'v_3', 1),
-            ('f_2', 'v_3', 2),
-            ('o_6', 'v_3', 2),
-            ('o_7', 'v_3', 2),
-            ('o_8', 'v_3', 2),
-    ]
-
-    for node, vessel, idx in initial_insertions:
-        if init_sol.check_insertion_feasibility(node, vessel, idx):
-            init_sol.insert_last_checked()
-        else:
-            init_sol.clear_last_checked()
 
     print()
-    print("ALNS starting")
-    alns = Alns(init_sol=init_sol, destroy_op=destroy_op, repair_op=repair_op,
-                weight_min_threshold=weight_min_threshold)
+    print("ALNS starting...")
+    alns = Alns(problem_data=prbl,
+                destroy_op=destroy_op,
+                repair_op=repair_op,
+                weight_min_threshold=weight_min_threshold,
+                reaction_param=reaction_param,
+                score_params=score_params,
+                start_temperature_controlparam=start_temperature_controlparam,
+                cooling_rate=cooling_rate)
     print(alns)
-    print(alns.choose_operators())
-    # alns.repair("repair_greedy")
-    # alns.repair("repair_greedy")
-    # alns.repair("repair_greedy")
-    # alns.repair("repair_greedy")
 
-    # for iteration = 1 to I\^ALNS do
     for i in range(max_iter_alns):
-        print("New iteration")
+        if i % 50 == 0 and i > 0:
+            print("> Iteration", i)
         alns.run_alns_iteration()
-        print()
 
     print()
+    print("...ALNS terminating")
     print(alns)

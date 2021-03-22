@@ -478,27 +478,6 @@ class Solution:
         else:  # destination factories are unchanged or 'removed'
             return True
 
-    # def check_final_factory_destination_feasibility(self, insert_node_id: str = None, vessel: str = None,
-    #                                                 idx: int = None) -> bool:
-    #     # insert_node_id, vessel and idx given: check feasibility for terminating this vessel's route in given factory
-    #
-    #     if insert_node_id and vessel and idx:
-    #         insert_node = self.prbl.nodes[insert_node_id]
-    #         if not insert_node.is_factory:  # no changes to destination factory
-    #             return True
-    #         if ((len([v for v in self.prbl.vessels if self.routes[v][-1] == insert_node_id]) +
-    #              (1 if insert_node_id != (self.routes[vessel][-1]) else 0))  # plus 1 if dest factory is changed
-    #                 > self.prbl.factory_max_vessels_destination[insert_node_id]):
-    #             return False
-    #
-    #     # else: check feasibility for all current route destinations
-    #     else:
-    #         for f_id in self.prbl.factory_nodes:
-    #             if (len([v for v in self.prbl.vessels if self.routes[v][-1] == f_id])
-    #                     > self.prbl.factory_max_vessels_destination[f_id]):
-    #                 return False
-    #     return True
-
     def check_load_feasibility(self, insert_node: Node, vessel: str, idx: int) -> bool:
         route = self.routes[vessel]
         voyage_start, voyage_end = self.get_voyage_start_end_idx(vessel, idx)
@@ -683,6 +662,25 @@ class Solution:
                 vessel_prev_factory_idx[vessel] = route_idx
                 factory_visits_route_idx[factory].append(route_idx)
         return factory_visits_route_idx
+
+    def get_solution_cost(self) -> int:
+        transport_cost = 0
+        unmet_orders = list(self.prbl.order_nodes.keys())
+
+        for vessel in self.prbl.vessels:
+            route = self.routes[vessel]
+            for i in range(1, len(route)):
+                transport_cost += self.prbl.transport_times[route[i - 1], route[i]] * self.prbl.transport_unit_costs[
+                    vessel]
+                if not self.prbl.nodes[route[i]].is_factory:
+                    unmet_orders.remove(route[i])
+
+        unmet_order_cost = 0
+        for order_node in unmet_orders:
+            unmet_order_cost += self.prbl.external_delivery_penalties[order_node]
+
+        return transport_cost + unmet_order_cost
+
 
     def get_insertion_utility(self, node: Node, vessel: str, idx: int) -> float:  # High utility -> good insertion
         net_sail_change = (self.prbl.transport_times[self.routes[vessel][idx - 1],
