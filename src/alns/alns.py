@@ -1,4 +1,3 @@
-import bisect
 import copy
 import math
 import random
@@ -6,6 +5,7 @@ from typing import Dict, List, Tuple, Union
 from src.alns.solution import Solution, ProblemDataExtended
 import numpy as np
 
+int_inf = 9999
 
 # What to do on ALNS:
 #
@@ -42,10 +42,15 @@ class Alns:
     temperature: float
     cooling_rate: float
 
-    def __init__(self, destroy_op: List[str], repair_op: List[str], weight_min_threshold: float,
-                 reaction_param: float, score_params: List[int], start_temperature_controlparam: float,
+    def __init__(self, problem_data: ProblemDataExtended,
+                 destroy_op: List[str],
+                 repair_op: List[str],
+                 weight_min_threshold: float,
+                 reaction_param: float,
+                 score_params: List[int],
+                 start_temperature_controlparam: float,
                  cooling_rate: float) -> None:
-        self.current_sol = self.construct_initial_solution()
+        self.current_sol = self.construct_initial_solution(problem_data)
         self.current_sol_cost = self.current_sol.get_solution_cost()
         self.best_sol = self.current_sol
         self.best_sol_cost = self.current_sol_cost
@@ -79,8 +84,8 @@ class Alns:
             f"and repair operators {[(k, v) for k, v in self.repair_op_weight.items()]}, "
             f"with usage {[(k, v) for k, v in self.repair_op_segment_usage.items()]} \n")
 
-    def construct_initial_solution(self) -> Solution:
-        sol: Solution = Solution(prbl)
+    def construct_initial_solution(self, problem_data: ProblemDataExtended) -> Solution:
+        sol: Solution = Solution(problem_data)
         sol.verbose = False
         unrouted_orders = list(sol.prbl.order_nodes.keys())
         unrouted_order_cost = [sol.prbl.external_delivery_penalties[o] for o in unrouted_orders]
@@ -233,6 +238,7 @@ class Alns:
             repair_candidates: List[Tuple[str, int, str]] = []
 
             for o in insertion_cand:
+                # Get all insertion utilities
                 for v in sol.prbl.vessels:
                     for idx in range(1, len(sol.routes[v]) + 1):
                         insertion_gain.append(sol.get_insertion_utility(node=sol.prbl.nodes[o], vessel=v, idx=idx))
@@ -260,7 +266,10 @@ class Alns:
                     insertion.pop(0)
                     insertion_gain.pop(0)
 
-                if num_feasible >= 1:  # at least one feasible solution found
+                if num_feasible == 1:  # Only one feasible solution found
+                    insertion_regret -= -int_inf
+
+                if num_feasible >= 1 and best_insertion:  # at least one feasible solution found
                     repair_candidates.append(best_insertion)
                     insertion_regrets.append(insertion_regret)
 
@@ -280,7 +289,6 @@ class Alns:
         :param sol: solution to be compared with self.current_sol
         :return: True if sol should be accepted to self.current_sol, else False
         """
-        # Simulated annealing criterion
         sol_cost = sol.get_solution_cost()
         if sol_cost < self.best_sol_cost:
             self.temperature = self.temperature * self.cooling_rate
@@ -289,6 +297,7 @@ class Alns:
             self.temperature = self.temperature * self.cooling_rate
             return True, 1
         else:
+            # Simulated annealing criterion
             prob = pow(math.e, -((sol_cost - self.current_sol_cost) / self.temperature))
             accept = np.random.choice(
                 np.array([True, False]), p=(np.array([prob, (1 - prob)]))
@@ -346,10 +355,14 @@ if __name__ == '__main__':
 
     print()
     print("ALNS starting...")
-    alns = Alns(destroy_op=destroy_op, repair_op=repair_op,
+    alns = Alns(problem_data=prbl,
+                destroy_op=destroy_op,
+                repair_op=repair_op,
                 weight_min_threshold=weight_min_threshold,
-                reaction_param=reaction_param, score_params=score_params,
-                start_temperature_controlparam=start_temperature_controlparam, cooling_rate=cooling_rate)
+                reaction_param=reaction_param,
+                score_params=score_params,
+                start_temperature_controlparam=start_temperature_controlparam,
+                cooling_rate=cooling_rate)
     print(alns)
 
     for i in range(max_iter_alns):
