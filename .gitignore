@@ -126,18 +126,9 @@ dmypy.json
 
 # IDE
 .idea/
-src/testing.py
-data/input_data/large_testcase.xlsx
-data/input_data/larger_testcase.xlsx
-data/input_data/larger_testcase_4vessels.xlsx
-data/input_data/medium_testcase.xlsx
-data/input_data/small_testcase.xlsx
-data/input_data/small_testcase_one_vessel.xlsx
-data/input_data/large_testcase.xlsx
-data/input_data/larger_testcase.xlsx
-data/input_data/larger_testcase_4vessels.xlsx
-data/input_data/medium_testcase.xlsx
-data/input_data/small_testcase.xlsx
-data/input_data/small_testcase_one_vessel.xlsx
-data/input_data/large_testcase.xlsx
-*.xlsx
+
+# data files
+/data
+
+# iOS .DS_store
+.DS_store

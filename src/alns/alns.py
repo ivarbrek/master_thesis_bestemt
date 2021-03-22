@@ -58,7 +58,6 @@ class Alns:
         self.weight_min_threshold = 0.2
 
         # Solutions
-        self.current_sol = init_sol
         self.current_sol = self.construct_initial_solution(problem_data)
         self.current_sol_cost = self.current_sol.get_solution_cost()
         self.best_sol = self.current_sol
@@ -115,7 +114,8 @@ class Alns:
                                                   key=lambda pair: pair[0], reverse=True)]
             feasible = False
             while not feasible and len(insertion) > 0:
-                feasible = sol.check_insertion_feasibility(insert_node=o, idx=insertion[0][0], vessel=insertion[0][1])
+                idx, vessel = insertion[0]
+                feasible = sol.check_insertion_feasibility(o, vessel, idx)
                 if feasible:
                     sol.insert_last_checked()
                 else:
@@ -164,7 +164,7 @@ class Alns:
             np.array([op for op in repair_operators[0]]),
             p=(np.array([w for w in repair_operators[1]]) / np.array(sum(repair_operators[1]))))
         self.repair_op_segment_usage[repair_op] += 1
-
+        print(destroy_op, repair_op)
         return destroy_op, repair_op
 
     def generate_new_solution(self, destroy_op: str, repair_op: str) -> Tuple[Solution, List[str]]:
@@ -262,8 +262,8 @@ class Alns:
                 num_feasible = 0
                 best_insertion: Tuple[str, int, str]
                 while num_feasible < 2 and len(insertion) > 0:
-                    feasible = sol.check_insertion_feasibility(insert_node=o, idx=insertion[0][0],
-                                                               vessel=insertion[0][1])
+                    idx, vessel = insertion[0]
+                    feasible = sol.check_insertion_feasibility(o, vessel, idx)
                     if feasible:
                         if num_feasible == 0:
                             insertion_regret += insertion_gain[0]
@@ -287,7 +287,7 @@ class Alns:
                 return sol, sol.get_orders_not_served()
 
             highest_regret_insertion = repair_candidates[insertion_regrets.index(max(insertion_regrets))]
-            sol.check_insertion_feasibility(insert_node=highest_regret_insertion[0],
+            sol.check_insertion_feasibility(node_id=highest_regret_insertion[0],
                                             idx=highest_regret_insertion[1],
                                             vessel=highest_regret_insertion[2])
             sol.insert_last_checked()
@@ -376,9 +376,11 @@ if __name__ == '__main__':
     print(alns)
 
     for i in range(max_iter_alns):
-        if i % 50 == 0 and i > 0:
-            print("> Iteration", i)
+        print("Iteration", i)
+        # if i % 50 == 0 and i > 0:
+        #     print("> Iteration", i)
         alns.run_alns_iteration()
+        print()
 
     print()
     print("...ALNS terminating")

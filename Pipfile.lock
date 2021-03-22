@@ -1,7 +1,7 @@
 {
     "_meta": {
         "hash": {
-            "sha256": "ee29376655ac29abd5acdc662c1d1270af068ba15a73f73cfca6d491c02f7d1c"
+            "sha256": "618cf32fa95da98c3d5c4b12f191ae718bb5b327d7758102a845b96f947f6e19"
         },
         "pipfile-spec": 6,
         "requires": {
@@ -16,30 +16,6 @@
         ]
     },
     "default": {
-        "asgiref": {
-            "hashes": [
-                "sha256:5ee950735509d04eb673bd7f7120f8fa1c9e2df495394992c73234d526907e17",
-                "sha256:7162a3cb30ab0609f1a4c95938fd73e8604f63bdba516a7f7d64b83ff09478f0"
-            ],
-            "markers": "python_version >= '3.5'",
-            "version": "==3.3.1"
-        },
-        "django": {
-            "hashes": [
-                "sha256:32ce792ee9b6a0cbbec340123e229ac9f765dff8c2a4ae9247a14b2ba3a365a7",
-                "sha256:baf099db36ad31f970775d0be5587cc58a6256a6771a44eb795b554d45f211b8"
-            ],
-            "markers": "python_version >= '3.6'",
-            "version": "==3.1.7"
-        },
-        "django-emoji": {
-            "hashes": [
-                "sha256:9eb1c9c417a0cf1a2a6aba42a580937282970b347ef49ec42409f07396e64227",
-                "sha256:c6e4d4eef45c834aa9205190cda6a2b7cbd72f44e3af2dcc5fc097943e738327"
-            ],
-            "index": "pypi",
-            "version": "==2.2.2"
-        },
         "et-xmlfile": {
             "hashes": [
                 "sha256:614d9722d572f6246302c4491846d2c393c199cfa4edc9af593437691683335b"
@@ -180,14 +156,6 @@
             ],
             "markers": "python_version >= '2.7' and python_version not in '3.0, 3.1, 3.2, 3.3'",
             "version": "==1.15.0"
-        },
-        "sqlparse": {
-            "hashes": [
-                "sha256:017cde379adbd6a1f15a61873f43e8274179378e95ef3fede90b5aa64d304ed0",
-                "sha256:0f91fd2e829c44362cbcfab3e9ae12e22badaa8a29ad5ff599f9ec109f0454e8"
-            ],
-            "markers": "python_version >= '3.5'",
-            "version": "==0.4.1"
         },
         "tabulate": {
             "hashes": [
