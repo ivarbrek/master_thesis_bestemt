@@ -3,6 +3,7 @@ import random
 from typing import Dict, List, Tuple, Union, Callable
 from src.alns.solution import Solution, ProblemDataExtended
 import numpy as np
+from src.util.plot import plot_alns_history
 
 int_inf = 9999
 
@@ -401,7 +402,7 @@ if __name__ == '__main__':
     start_temperature_controlparam = 0.05  # solution 5% worse than best solution is accepted with 50% probability
     cooling_rate = 0.98
 
-    prbl = ProblemDataExtended('../../data/input_data/large_testcase.xlsx', precedence=True)
+    prbl = ProblemDataExtended('../../data/input_data/larger_testcase.xlsx', precedence=False)
 
     print()
     print("ALNS starting...")
@@ -415,13 +416,18 @@ if __name__ == '__main__':
                 cooling_rate=cooling_rate)
     print(alns)
 
+    alns.verbose = False
+
+    solution_costs = []
     for i in range(max_iter_alns):
         print("Iteration", i)
         # if i % 50 == 0 and i > 0:
         #     print("> Iteration", i)
         alns.run_alns_iteration()
+        solution_costs.append((i, alns.current_sol_cost))
         print()
 
     print()
     print("...ALNS terminating")
     print(alns)
+    plot_alns_history(solution_costs)
