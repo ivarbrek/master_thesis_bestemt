@@ -690,6 +690,8 @@ class Solution:
                                                               idx]]  # cost to next node, currently at idx
                                 - self.prbl.transport_times[self.routes[vessel][idx - 1],
                                                             self.routes[vessel][idx]])
+        elif not node.is_factory:
+            net_sail_change *= 2
         delivery_gain = self.prbl.external_delivery_penalties[node.id] if not node.is_factory else 0
 
         return delivery_gain - net_sail_change * self.prbl.transport_unit_costs[vessel]
