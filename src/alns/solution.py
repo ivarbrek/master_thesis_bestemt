@@ -71,7 +71,7 @@ class ProblemDataExtended(ProblemData):
 
 class Solution:
 
-    def __init__(self, prbl: ProblemDataExtended, debug: bool = False) -> None:
+    def __init__(self, prbl: ProblemDataExtended, verbose: bool = False, debug: bool = False) -> None:
         self.prbl = prbl
         self.debug = debug
 
@@ -88,10 +88,10 @@ class Solution:
         self.temp_factory_visits: Dict[str, List[str]] = copy.deepcopy(self.factory_visits)
         self.temp_factory_visits_route_index: Dict[str, List[int]] = copy.deepcopy(self.factory_visits_route_index)
 
-        self.verbose = True
+        self.verbose = verbose
 
     def __repr__(self) -> str:
-        return (f"Routes: {self.routes}")
+        return f"Routes: {self.routes}"
 
     def copy(self) -> Solution:
         solution_copy = Solution(self.prbl)  # problem data is static
