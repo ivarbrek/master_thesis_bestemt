@@ -1,4 +1,3 @@
-import copy
 import math
 import random
 from typing import Dict, List, Tuple, Union, Callable
@@ -6,6 +5,7 @@ from src.alns.solution import Solution, ProblemDataExtended
 import numpy as np
 
 int_inf = 9999
+
 
 # What to do on ALNS:
 #
@@ -20,7 +20,7 @@ int_inf = 9999
 # [/] Greedy insertion
 # [/] Regret insertion
 # [/] Random removal
-# [ ] Worst removal (objective, longest wait?)
+# [/] Worst removal (objective, longest wait?)
 # [ ] Related removal (distance, time window, shaw)
 
 
@@ -55,7 +55,7 @@ class Alns:
         self.max_iter_alns = 100
         self.max_iter_seg = 10
         self.remove_num = 3
-        self.weight_min_threshold = 0.2
+        #self.weight_min_threshold = 0.2
 
         # Solutions
         self.current_sol = self.construct_initial_solution(problem_data)
@@ -89,10 +89,8 @@ class Alns:
             f"Current solution with routing cost {self.current_sol_cost}: \n"
             f"{self.current_sol} \n"
             f"Insertion candidates (orders not served): {self.insertion_candidates} \n"
-            f"Destroy operators {[(k, v) for k, v in self.destroy_op_weight.items()]}, "
-            f"with usage {[(k, v) for k, v in self.destroy_op_segment_usage.items()]}, \n"
-            f"and repair operators {[(k, v) for k, v in self.repair_op_weight.items()]}, "
-            f"with usage {[(k, v) for k, v in self.repair_op_segment_usage.items()]} \n")
+            f"Destroy operators {[(k, round(v, 2)) for k, v in self.destroy_op_weight.items()]} \n"
+            f"and repair operators {[(k, round(v, 2)) for k, v in self.repair_op_weight.items()]} \n")
 
     def construct_initial_solution(self, problem_data: ProblemDataExtended) -> Solution:
         sol: Solution = Solution(problem_data)
@@ -124,6 +122,7 @@ class Alns:
         return sol
 
     def update_scores(self, destroy_op: str, repair_op: str, update_type: int) -> None:
+        self.it_seg_count += 1
         if update_type == -1:
             return
         if not 0 <= update_type < len(self.score_params):
@@ -136,19 +135,28 @@ class Alns:
     def update_weights(self) -> None:
         # Update weights based on scores, "blank" scores and operator segment usage
         # w = (1-r)w + r*(pi/theta)
+
+        # Destroy
         for op in self.destroy_op_weight.keys():
-            self.destroy_op_weight[op] = ((1 - self.reaction_param) * self.destroy_op_weight[op] +
-                                          self.reaction_param * self.destroy_op_score[op] /
-                                          self.destroy_op_segment_usage[op])
+            if self.destroy_op_segment_usage[op] > 0:
+                self.destroy_op_weight[op] = max(((1 - self.reaction_param) * self.destroy_op_weight[op] +
+                                                  self.reaction_param * self.destroy_op_score[op] /
+                                                  self.destroy_op_segment_usage[op]), self.weight_min_threshold)
             self.destroy_op_score[op] = 0
             self.destroy_op_segment_usage[op] = 0
+
+        # Repair
         for op in self.repair_op_weight.keys():
-            self.repair_op_weight[op] = ((1 - self.reaction_param) * self.repair_op_weight[op] +
-                                         self.reaction_param * self.repair_op_score[op] / self.repair_op_segment_usage[
-                                             op])
+            if self.repair_op_segment_usage[op] > 0:
+                self.repair_op_weight[op] = max(((1 - self.reaction_param) * self.repair_op_weight[op] +
+                                                 self.reaction_param * self.repair_op_score[op] /
+                                                 self.repair_op_segment_usage[
+                                                     op]), self.weight_min_threshold)
             self.repair_op_score[op] = 0
             self.repair_op_segment_usage[op] = 0
+
         self.it_seg_count = 0
+
         return
 
     def choose_operators(self) -> Tuple[str, str]:
@@ -179,6 +187,8 @@ class Alns:
         # Run function based on operator "ID"
         if destroy_op == "d_random":
             return self.destroy_random(sol)
+        elif destroy_op == "d_worst":
+            return self.destroy_worst(sol)
         else:
             print("Destroy operator does not exist")
             return None
@@ -193,6 +203,36 @@ class Alns:
             remove_index = sol.routes[vessel].index(order)
             sol.remove_node(vessel, remove_index)
             removals += 1
+
+        sol.recompute_solution_variables()
+        return sol
+
+    def destroy_worst(self, sol: Solution) -> Solution:
+        # Operator only destroys costly order nodes, not factory nodes (should it?)
+        served_orders = [o for v in sol.prbl.vessels
+                         for o in sol.routes[v] if not sol.prbl.nodes[o].is_factory]
+
+        removal_candidates: List[Tuple[str, int, str, float]] = []  # order, idx, vessel, utility
+
+        for v in sol.prbl.vessels:
+            route = sol.routes[v]
+            for idx in range(len(route)):
+                node = sol.prbl.nodes[route[idx]]
+                if not node.is_factory:
+                    removal_candidates.append((node.id, idx, v, sol.get_removal_utility(vessel=v, idx=idx)))
+
+        if not removal_candidates:  # no orders to remove
+            return sol
+
+        removal_candidates.sort(key=lambda tup: tup[3], reverse=True)
+
+        stop_idx = remove_num if remove_num <= len(removal_candidates) else len(removal_candidates)
+        removals = removal_candidates[:stop_idx]  # nodes and positions to be removed
+        removals.sort(key=lambda tup: tup[1], reverse=True)  # largest indices first
+
+        for (node_id, idx, v, util) in removals:
+            removals.pop(0)
+            sol.remove_node(v, idx)
 
         sol.recompute_solution_variables()
         return sol
@@ -350,10 +390,10 @@ class Alns:
 
 
 if __name__ == '__main__':
-    destroy_op = ['d_random']  # 'd_related', 'd_worst', 'd_random']  # TBD
+    destroy_op = ['d_random', 'd_worst']  # 'd_related', 'd_worst', 'd_random']  # TBD
     repair_op = ['r_greedy', 'r_2regret']  # , 'r_regret']  # TBD
-    max_iter_alns = 100
-    max_iter_seg = 1
+    max_iter_alns = 200
+    max_iter_seg = 10
     remove_num = 4
     weight_min_threshold = 0.2
     reaction_param = 0.5

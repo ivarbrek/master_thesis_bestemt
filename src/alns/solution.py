@@ -130,8 +130,8 @@ class Solution:
         self.temp_l = {vessel: l[:] for vessel, l in self.l.items()}
         self.temp_factory_visits = {factory: visits[:] for factory, visits in self.factory_visits.items()}
         self.temp_factory_visits_route_index = {factory: visit_route_idxs[:]
-                                                for factory, visit_route_idxs in self.factory_visits_route_index.items()}
-
+                                                for factory, visit_route_idxs in
+                                                self.factory_visits_route_index.items()}
 
     def check_insertion_feasibility(self, node_id: str, vessel: str, idx: int) -> bool:
         node = self.prbl.nodes[node_id]
@@ -681,7 +681,6 @@ class Solution:
 
         return transport_cost + unmet_order_cost
 
-
     def get_insertion_utility(self, node: Node, vessel: str, idx: int) -> float:  # High utility -> good insertion
         net_sail_change = (self.prbl.transport_times[self.routes[vessel][idx - 1],
                                                      node.id])
@@ -694,6 +693,20 @@ class Solution:
         delivery_gain = self.prbl.external_delivery_penalties[node.id] if not node.is_factory else 0
 
         return delivery_gain - net_sail_change * self.prbl.transport_unit_costs[vessel]
+
+    def get_removal_utility(self, vessel: str, idx: int) -> float:  # High utility -> good removal ("remove worst node")
+        route = self.routes[vessel]
+        if idx >= len(route):
+            print("Index", idx, "does not exist for vessel", vessel)
+            return -1
+        net_sail_change = - self.prbl.transport_times[route[idx - 1], route[idx]]
+        if idx < len(self.routes[vessel]) - 1:
+            net_sail_change += (self.prbl.transport_times[route[idx - 1], route[idx + 1]]
+                                - self.prbl.transport_times[route[idx], route[idx + 1]])
+        delivery_penalty = (self.prbl.external_delivery_penalties[route[idx]]
+                            if not self.prbl.nodes[route[idx]].is_factory else 0)
+
+        return - (delivery_penalty + net_sail_change * self.prbl.transport_unit_costs[vessel])
 
     def get_temp_voyage_start_idxs_for_factory(self, factory_node_id: str) -> Dict[str, List[Tuple[int, int]]]:
         """
