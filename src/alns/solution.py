@@ -135,7 +135,7 @@ class Solution:
 
     def check_insertion_feasibility(self, node_id: str, vessel: str, idx: int) -> bool:
         node = self.prbl.nodes[node_id]
-        idx = len(self.routes[vessel]) if idx > len(self.routes[vessel]) else idx
+        idx = len(self.temp_routes[vessel]) if idx > len(self.temp_routes[vessel]) else idx
         # Checks that do NOT assume node is inserted in temp:
         if not self.check_load_feasibility(node, vessel, idx):
             return False
@@ -148,6 +148,8 @@ class Solution:
 
         # Checks that do assume that node is inserted in temp:
         if not self.check_final_factory_destination_feasibility(vessel, idx):
+            if self.verbose:
+                print(f"check_final_factory_destination_feasibility failed for {vessel}, {node.id} inserted at {idx}")
             return False
 
         if not self.check_production_feasibility(vessel, idx):
@@ -448,6 +450,8 @@ class Solution:
             l, next_arr_times = self.get_factory_latest(insert_node_id, factory_visit_idx)
 
             if l < e:
+                if self.verbose:
+                    print(f"Check failed at: check_time_feasibility (factory check) for {vessel}: ({e}, {l})")
                 return False
 
             self.temp_e[vessel][idx] = max(e, self.temp_e[vessel][idx])
@@ -459,11 +463,35 @@ class Solution:
             if not self.check_factory_visits_latest_backward(insert_node_id, factory_visit_idx, next_arr_times):
                 return False
 
-        # if node is inserted after a destination factory, we must update e for this factory's visits for
-        if idx == len(route) - 1 and self.prbl.nodes[route[-2]].is_factory:
-            return self.check_factory_visits_earliest_forward(route[-2], 1)
+        # if node is inserted after a destination factory, we must update e for this factory's visits
+        # (the factory destination does now have a loading time as it is no longer a destination)
+        if (idx == len(route) - 1 and self.prbl.nodes[route[-2]].is_factory
+                and not self.check_factory_visits_earliest_forward(route[-2], 1)):
+            return False
+
+        # if an order is inserted at the end of the route, insert a new if possible factory destination
+        if (idx == len(route) - 1 and not insert_node.is_factory
+                and not self.check_and_set_destination_factory(vessel)):
+            return False
 
         return True
+
+    def check_and_set_destination_factory(self, vessel: str) -> bool:
+        """Picks a destination factory for the route in a greedy manner"""
+        route = self.temp_routes[vessel]
+        factory_destination_options = [(factory_node, self.get_insertion_utility(factory_node, vessel, len(route)))
+                                       for factory_node in self.prbl.factory_nodes.values()]
+        factory_destination_options.sort(key=lambda item: item[1], reverse=True)
+        for factory_node, _ in factory_destination_options:
+            if self.check_insertion_feasibility(factory_node.id, vessel, len(route)):
+                self.insert_last_checked()
+                return True
+            else:
+                self.clear_last_checked()
+
+        if self.verbose:
+            print(f"Check failed at: check_and_set_destination_factory for {vessel}")
+        return False
 
     def check_final_factory_destination_feasibility(self, vessel: str, idx: int):
         # Check assumes that the insertion is already present in temp variables
@@ -471,8 +499,6 @@ class Solution:
         node = self.prbl.nodes[node_id]
 
         if node.is_factory:
-            if self.verbose:
-                print(f"check_final_factory_destination_feasibility failed for {vessel}, {node} inserted at {idx}")
             return (len([v for v in self.prbl.vessels if self.temp_routes[v][-1] == node_id])
                     <= self.prbl.factory_max_vessels_destination[node_id])
         else:  # destination factories are unchanged or 'removed'
@@ -621,6 +647,14 @@ class Solution:
         return True
 
     def remove_node(self, vessel: str, idx: int):
+        node = self.prbl.nodes[self.routes[vessel][idx]]
+        if node.is_factory:
+            factory_visit_idx = self._get_factory_visit_idx(node.id, vessel, idx)
+            self.factory_visits[node.id].pop(factory_visit_idx)
+            self.factory_visits_route_index[node.id].pop(factory_visit_idx)
+            self.temp_factory_visits[node.id].pop(factory_visit_idx)
+            self.temp_factory_visits_route_index[node.id].pop(factory_visit_idx)
+
         self.routes[vessel].pop(idx)
         self.e[vessel].pop(idx)
         self.l[vessel].pop(idx)
@@ -631,7 +665,16 @@ class Solution:
     def recompute_solution_variables(self):
         # recompute factory visit route indexes
         self.factory_visits_route_index = self.recompute_factory_visits_route_idx()
-        self.temp_factory_visits_route_index = copy.deepcopy(self.factory_visits_route_index)
+        self.temp_factory_visits_route_index = {factory: route_indexes[:]
+                                                for factory, route_indexes in self.factory_visits_route_index.items()}
+
+        # remove factories consecutive factories
+        self.remove_consecutive_factories()
+
+        # recompute factory visit route indexes again after consecutive removals
+        self.factory_visits_route_index = self.recompute_factory_visits_route_idx()
+        self.temp_factory_visits_route_index = {factory: route_indexes[:]
+                                                for factory, route_indexes in self.factory_visits_route_index.items()}
 
         # "open up" temp_e and temp_l to original time window
         for vessel, route in self.routes.items():
@@ -648,9 +691,20 @@ class Solution:
         for factory, factory_visits in self.factory_visits.items():
             self.check_factory_visits_earliest_forward(factory, 0, force_propagation=True)
             self.check_factory_visits_latest_backward(factory, len(factory_visits) - 1, force_propagation=True)
-
         # move updates from temp to main variables
         self.insert_last_checked()
+
+    def remove_consecutive_factories(self) -> None:
+        for vessel, route in self.temp_routes.items():
+            if len(route) == 1:
+                continue
+            next_node = route[-1]
+            # iterate backwards so that we can delete without messing up indexes
+            for idx in range(len(route) - 2, -1, -1):
+                if next_node == route[idx] and self.prbl.nodes[next_node].is_factory:
+                    self.remove_node(vessel, idx)
+                else:
+                    next_node = route[idx]
 
     def recompute_factory_visits_route_idx(self) -> Dict[str, List[int]]:
         # infer factory visit indexes from factory visits and routes
@@ -664,34 +718,25 @@ class Solution:
         return factory_visits_route_idx
 
     def get_solution_cost(self) -> int:
-        transport_cost = 0
-        unmet_orders = list(self.prbl.order_nodes.keys())
-
-        for vessel in self.prbl.vessels:
-            route = self.routes[vessel]
-            for i in range(1, len(route)):
-                transport_cost += self.prbl.transport_times[route[i - 1], route[i]] * self.prbl.transport_unit_costs[
-                    vessel]
-                if not self.prbl.nodes[route[i]].is_factory:
-                    unmet_orders.remove(route[i])
-
-        unmet_order_cost = 0
-        for order_node in unmet_orders:
-            unmet_order_cost += self.prbl.external_delivery_penalties[order_node]
+        transport_cost = sum(self.prbl.transport_times[route[i - 1], route[i]] * self.prbl.transport_unit_costs[vessel]
+                             for vessel, route in self.temp_routes.items()
+                             for i in range(1, len(route)))
+        unmet_order_cost = sum(self.prbl.external_delivery_penalties[order_node]
+                               for order_node in self.get_orders_not_served())
 
         return transport_cost + unmet_order_cost
 
     def get_insertion_utility(self, node: Node, vessel: str, idx: int) -> float:  # High utility -> good insertion
-        net_sail_change = (self.prbl.transport_times[self.routes[vessel][idx - 1],
-                                                     node.id])
-        if idx < len(self.routes[vessel]) - 1:  # node to be inserted is not at end of route
-            net_sail_change += (self.prbl.transport_times[node.id,
-                                                          self.routes[vessel][
-                                                              idx]]  # cost to next node, currently at idx
-                                - self.prbl.transport_times[self.routes[vessel][idx - 1],
-                                                            self.routes[vessel][idx]])
-        elif not node.is_factory:
-            net_sail_change *= 2
+        route = self.temp_routes[vessel]
+        transport_times = self.prbl.transport_times
+        if idx < len(self.temp_routes[vessel]) - 1:  # node to be inserted is not at end of route
+            net_sail_change = (transport_times[route[idx - 1], node.id] + transport_times[node.id, route[idx]]
+                               - transport_times[route[idx - 1], route[idx]])
+        elif not node.is_factory:  # insert order at the end of route
+            # assuming that vessel must sail back to the destination factory afterwards
+            net_sail_change = 2 * transport_times[route[idx - 1], node.id]
+        else:
+            net_sail_change = transport_times[route[idx - 1], node.id]
         delivery_gain = self.prbl.external_delivery_penalties[node.id] if not node.is_factory else 0
 
         return delivery_gain - net_sail_change * self.prbl.transport_unit_costs[vessel]
@@ -830,7 +875,7 @@ class Solution:
         return ordered_list[:i]
 
     def get_orders_not_served(self) -> List[str]:
-        served_orders = set(o for v in self.prbl.vessels for o in self.routes[v])
+        served_orders = set(o for v in self.prbl.vessels for o in self.temp_routes[v])
         return list(set(self.prbl.order_nodes) - served_orders)
 
     def print_routes(self, highlight: List[Tuple[str, int]] = None):
@@ -840,8 +885,8 @@ class Solution:
             for i, (node, e, l) in enumerate(zip(self.routes[vessel], self.e[vessel], self.l[vessel])):
                 if (vessel, i) in highlight:
                     s += f'{bcolors.OKGREEN}{node} ({e},{l}){bcolors.RESET_ALL}, '
-                elif i == len(self.routes[vessel]) - 1 and self.prbl.nodes[node].is_factory:
-                    s += f'{bcolors.GREY}{node} ({e},{l}){bcolors.RESET_ALL}'
+                elif self.prbl.nodes[node].is_factory:
+                    s += f'{bcolors.GREY}{node} ({e},{l}){bcolors.RESET_ALL}, '
                 else:
                     s += f'{node} ({e},{l}), '
             print(f'{vessel}: {s}')
@@ -860,6 +905,15 @@ class Solution:
                 else:
                     s += f'{vessel} ({self.e[vessel][route_idx]},{self.l[vessel][route_idx]}), '
             print(f'{factory}: {s}')
+
+    def check_if_order_is_served_twice(self):
+        orders = set()
+        for vessel, route in self.routes.items():
+            for node_id in route:
+                if not self.prbl.nodes[node_id].is_factory:
+                    if node_id in orders:
+                        print(f"{node_id} appears multiple times!")
+                    orders.add(node_id)
 
     def check_insertion_feasibility_insert_and_print(self, insert_node_id: str, vessel: str, idx: int):
         insert_node = self.prbl.nodes[insert_node_id]
@@ -884,6 +938,7 @@ class Solution:
             print(list(zip(self.e[vessel], self.l[vessel])))
         print()
         return feasibility
+
 
 
 if __name__ == '__main__':

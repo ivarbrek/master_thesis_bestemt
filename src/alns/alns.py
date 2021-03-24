@@ -108,8 +108,7 @@ class Alns:
             insertion: List[Tuple[int, str]] = []
             for v in sol.prbl.vessels:
                 for idx in range(1, len(sol.routes[v]) + 1):
-                    insertion_gain.append(sol.get_insertion_utility(node=sol.prbl.nodes[o],
-                                                                    idx=idx, vessel=v))
+                    insertion_gain.append(sol.get_insertion_utility(sol.prbl.nodes[o], v, idx))
                     insertion.append((idx, v))
             insertion = [ins for _, ins in sorted(zip(insertion_gain, insertion),
                                                   key=lambda pair: pair[0], reverse=True)]
@@ -142,7 +141,8 @@ class Alns:
             if self.destroy_op_segment_usage[op] > 0:
                 self.destroy_op_weight[op] = max(((1 - self.reaction_param) * self.destroy_op_weight[op] +
                                                   self.reaction_param * self.destroy_op_score[op] /
-                                                  self.destroy_op_segment_usage[op]), self.weight_min_threshold)
+                                                  self.destroy_op_segment_usage[op]),
+                                                 self.weight_min_threshold)
             self.destroy_op_score[op] = 0
             self.destroy_op_segment_usage[op] = 0
 
@@ -290,7 +290,7 @@ class Alns:
                 # Get all insertion utilities
                 for v in sol.prbl.vessels:
                     for idx in range(1, len(sol.routes[v]) + 1):
-                        insertion_gain.append(sol.get_insertion_utility(node=sol.prbl.nodes[o], vessel=v, idx=idx))
+                        insertion_gain.append(sol.get_insertion_utility(sol.prbl.nodes[o], v, idx))
                         insertion.append((idx, v))
 
                 insertion = [ins for _, ins in sorted(zip(insertion_gain, insertion),
@@ -388,7 +388,7 @@ class Alns:
 
 
 if __name__ == '__main__':
-    prbl = ProblemDataExtended('../../data/input_data/larger_testcase.xlsx', precedence=True)
+    prbl = ProblemDataExtended('../../data/input_data/larger_testcase_4vessels.xlsx', precedence=True)
 
     print()
     print("ALNS starting...")
@@ -396,23 +396,23 @@ if __name__ == '__main__':
                 destroy_op=['d_random', 'd_worst'],  # 'd_related', 'd_worst', 'd_random']  # TBD,
                 repair_op=['r_greedy', 'r_2regret'],  # , 'r_regret']  # TBD
                 weight_min_threshold=0.2,
-                reaction_param=0.3,
+                reaction_param=0.1,
                 score_params=[5, 3, 1],  # corresponding to sigma_1, sigma_2, sigma_3 in R&P and L&N
-                start_temperature_controlparam=0.5,  # solution 50% worse than best solution is accepted with 50% prob.
-                cooling_rate=0.985,
+                start_temperature_controlparam=0.3,  # solution 30% worse than best solution is accepted with 50% prob.
+                cooling_rate=0.995,
                 max_iter_seg=10,
-                remove_percentage=0.3,
+                remove_percentage=0.4,
                 )
     print(alns)
 
-    iterations = 200
+    iterations = 500
 
     solution_costs = []
     for i in range(iterations):
         print("Iteration", i)
-        # if i % 50 == 0 and i > 0:
-        #     print("> Iteration", i)
         alns.run_alns_iteration()
+        # alns.current_sol.check_if_order_is_served_twice()
+        alns.current_sol.print_routes()
         solution_costs.append((i, alns.current_sol_cost))
         print()
 
