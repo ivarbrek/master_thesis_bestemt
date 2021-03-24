@@ -1,6 +1,9 @@
 import math
 import random
 from typing import Dict, List, Tuple, Union, Callable
+
+import function
+
 from src.alns.solution import Solution, ProblemDataExtended
 import numpy as np
 from src.util.plot import plot_alns_history
@@ -43,6 +46,9 @@ class Alns:
     weight_min_threshold: float
     temperature: float
     cooling_rate: float
+    determinism_param: int
+    relatedness_precedence: Dict[Tuple[str, str], int]
+    related_removal_weight_param: Dict[str, List[float]]
 
     def __init__(self, problem_data: ProblemDataExtended,
                  destroy_op: List[str],
@@ -54,6 +60,9 @@ class Alns:
                  cooling_rate: float,
                  max_iter_seg: int,
                  remove_percentage: float,
+                 determinism_param: int,
+                 relatedness_precedence: Dict[Tuple[str, str], int],
+                 related_removal_weight_param: Dict[str, List[float]],
                  verbose: bool = False) -> None:
 
         # ALNS  parameters
@@ -83,22 +92,41 @@ class Alns:
         self.it_seg_count = 0  # Iterations done in one segment - can maybe do this in run_alns_iteration?
         self.insertion_candidates = self.current_sol.get_orders_not_served()
 
+        # Relatedness operator parameters
+        self.determinism_param = determinism_param
+        self.relatedness_precedence = self.set_relatedness_precedence_dict(
+            relatedness_precedence) if problem_data.precedence else None
+        self.related_removal_weight_param = related_removal_weight_param
+
         self.verbose = verbose
 
     def __repr__(self):
         return (
             f"Best solution with routing cost {self.best_sol_cost}: \n"
             f"{self.best_sol} \n"
-            #f"Current solution with routing cost {self.current_sol_cost}: \n"
-            #f"{self.current_sol} \n"
+            # f"Current solution with routing cost {self.current_sol_cost}: \n"
+            # f"{self.current_sol} \n"
             f"Insertion candidates (orders not served): {self.insertion_candidates} \n"
             f"Destroy operators {[(k, round(v, 2)) for k, v in self.destroy_op_weight.items()]} \n"
             f"and repair operators {[(k, round(v, 2)) for k, v in self.repair_op_weight.items()]} \n")
 
+    def set_relatedness_precedence_dict(self, d: Dict[Tuple[str, str], int]) -> Dict[Tuple[str, str], int]:
+        # Returns a dict with key all combinations of zones (z1, z2) and value defined relatedness of two zones
+        zones = set()
+        original_keys: List[Tuple[str, str]] = list(d.keys())
+        for (z1, z2) in original_keys:
+            d[(z2, z1)] = d[(z1, z2)]  # symmetry
+            zones.add(z1)
+            zones.add(z2)
+        for z in zones:
+            d[(z, z)] = 0  # a zone is perfectly related to itself
+        if len(zones) < len(self.current_sol.prbl.get_zones()):
+            print("Relatedness of zones is not properly defined.")
+        return d
+
     @staticmethod
     def construct_initial_solution(problem_data: ProblemDataExtended) -> Solution:
         sol: Solution = Solution(problem_data)
-        sol.verbose = False
         unrouted_orders = list(sol.prbl.order_nodes.keys())
         unrouted_order_cost = [sol.prbl.external_delivery_penalties[o] for o in unrouted_orders]
         unrouted_orders = [o for _, o in sorted(zip(unrouted_order_cost, unrouted_orders),
@@ -189,6 +217,10 @@ class Alns:
             return self.destroy_random(sol)
         elif destroy_op == "d_worst":
             return self.destroy_worst(sol)
+        elif destroy_op == "d_related_location_time":
+            return self.destroy_related(sol, rel_measure=self._relatedness_location_time)
+        elif destroy_op == "d_related_location_precedence":
+            return self.destroy_related(sol, rel_measure=self._relatedness_location_precedence)
         else:
             print("Destroy operator does not exist")
             return None
@@ -223,9 +255,16 @@ class Alns:
 
         removal_candidates.sort(key=lambda tup: tup[3], reverse=True)
 
+        # removals: List[Tuple[int, str]] = []  # (idx, vessel)
+        # while self.remove_num < len(removal_candidates) and len(removals) < len(removal_candidates):
+        #     pass
+
+        # If no self.determinism_param, then use this:
         stop_idx = self.remove_num if self.remove_num <= len(removal_candidates) else len(removal_candidates)
         removals = removal_candidates[:stop_idx]  # nodes and positions to be removed
         removals.sort(key=lambda tup: tup[1], reverse=True)  # largest indices first
+
+        #removals.sort(key= lambda tup: tup[0], reverse=True)  # largest indices first
 
         for (node_id, idx, v, util) in removals:
             removals.pop(0)
@@ -234,25 +273,78 @@ class Alns:
         sol.recompute_solution_variables()
         return sol
 
-# Requires another "recompute_solution_variables()" function
-#     def destroy_voyage_random(self, sol: Solution) -> Solution:
-#         voyage_starts = [(vessel, idx)
-#                          for vessel in sol.prbl.vessels
-#                          for idx in range(len(sol.routes[vessel])-1)  # not choosing last node in route
-#                          if sol.prbl.nodes[sol.routes[vessel][idx]].is_factory]
-#         ran = random.randint(0, len(voyage_starts)-1)
-#
-#         vessel, start_idx = voyage_starts[ran]
-#         stop_idx = start_idx
-#
-#         while (stop_idx+1 < len(sol.routes[vessel])) and not sol.prbl.nodes[sol.routes[vessel][stop_idx+1]].is_factory:
-#             stop_idx += 1
-#
-#         for i in range(stop_idx, start_idx-1, -1):
-#             sol.remove_node(vessel=vessel, idx=i)
-#
-#         sol.recompute_solution_variables()
-#         return sol
+    def _relatedness_location_time(self, order1: str, order2: str) -> float:
+        w_0 = self.related_removal_weight_param['relatedness_location_time'][0]
+        w_1 = self.related_removal_weight_param['relatedness_location_time'][1]
+        return (w_0 * self.current_sol.prbl.transport_times[order1, order2] +
+                w_1 * (abs(self.current_sol.prbl.get_time_window_start(order1)
+                           - self.current_sol.prbl.get_time_window_start(order2)) +
+                       abs(self.current_sol.prbl.get_time_window_end(order1)
+                           - self.current_sol.prbl.get_time_window_end(order2))))
+
+    def _relatedness_location_precedence(self, order1: str, order2: str) -> float:
+        w_0 = self.related_removal_weight_param['relatedness_location_precedence'][0]
+        w_1 = self.related_removal_weight_param['relatedness_location_precedence'][1]
+        return (w_0 * self.current_sol.prbl.transport_times[order1, order2] +
+                w_1 * self.relatedness_precedence[(self.current_sol.prbl.nodes[order1].zone,
+                                                   self.current_sol.prbl.nodes[order2].zone)])
+
+    def destroy_related(self, sol: Solution, rel_measure: function) -> Solution:
+        # Related removal, based on inputted relatedness measure
+        similar_orders: List[Tuple[str, int, str]] = []  # (order, index, vessel)
+        served_orders = [(sol.routes[v][idx], idx, v) for v in sol.prbl.vessels  # (order, index, vessel)
+                         for idx in range(len(sol.routes[v]))
+                         if not sol.prbl.nodes[sol.routes[v][idx]].is_factory]
+
+        # Select a random first order
+        random_first_idx = random.randint(0, len(served_orders) - 1)
+        similar_orders.append(served_orders[random_first_idx])
+        served_orders.pop(random_first_idx)
+
+        while len(similar_orders) < self.remove_num and served_orders:
+            # Select a task for which similar orders are found
+            base_order = similar_orders[random.randint(0, len(similar_orders) - 1)][0]
+
+            candidates: List[Tuple[str, int, str, float]] = []  # tuple: (order, idx, vessel, relatedness)
+            for v in sol.prbl.vessels:
+                route = sol.routes[v]
+                for idx in range(len(route)):
+                    order = route[idx]
+                    if (order, idx, v) in served_orders:
+                        candidates.append((order, idx, v, rel_measure(base_order, order)))
+            candidates.sort(key=lambda tup: tup[3])  # sort according to relatedness asc (most related orders first)
+
+            chosen_related = candidates[int(pow(random.random(), self.determinism_param) * len(candidates))][:3]
+            similar_orders.append(chosen_related)
+            served_orders.remove(chosen_related)
+
+        similar_orders.sort(key=lambda tup: tup[1], reverse=True)  # sort according to idx desc
+
+        for (order, idx, vessel) in similar_orders:
+            sol.remove_node(vessel=vessel, idx=idx)
+
+        sol.recompute_solution_variables()
+        return sol
+
+    # Requires another "recompute_solution_variables()" function
+    #     def destroy_voyage_random(self, sol: Solution) -> Solution:
+    #         voyage_starts = [(vessel, idx)
+    #                          for vessel in sol.prbl.vessels
+    #                          for idx in range(len(sol.routes[vessel])-1)  # not choosing last node in route
+    #                          if sol.prbl.nodes[sol.routes[vessel][idx]].is_factory]
+    #         ran = random.randint(0, len(voyage_starts)-1)
+    #
+    #         vessel, start_idx = voyage_starts[ran]
+    #         stop_idx = start_idx
+    #
+    #         while (stop_idx+1 < len(sol.routes[vessel])) and not sol.prbl.nodes[sol.routes[vessel][stop_idx+1]].is_factory:
+    #             stop_idx += 1
+    #
+    #         for i in range(stop_idx, start_idx-1, -1):
+    #             sol.remove_node(vessel=vessel, idx=i)
+    #
+    #         sol.recompute_solution_variables()
+    #         return sol
 
     def repair(self, repair_op: str, sol: Solution) -> Union[None, Tuple[Solution, List[str]]]:
         if repair_op == "r_greedy":
@@ -404,13 +496,21 @@ class Alns:
 
 
 if __name__ == '__main__':
-    prbl = ProblemDataExtended('../../data/input_data/larger_testcase.xlsx', precedence=True)
+    precedence = True
+
+    prbl = ProblemDataExtended('../../data/input_data/large_testcase.xlsx', precedence=precedence)
+    destroy_op = ['d_random', 'd_worst', 'd_related_location_time']
+    if precedence:
+        destroy_op.append('d_related_location_precedence')
+
+    related_removal_weight_param: Dict[str, List[float]] = {'relatedness_location_time': [1, 0.5],
+                                                            'relatedness_location_precedence': [1, 1]}
 
     print()
     print("ALNS starting...")
     alns = Alns(problem_data=prbl,
-                destroy_op=['d_random', 'd_worst'],  # 'd_related', 'd_worst', 'd_random']  # TBD,
-                repair_op=['r_greedy', 'r_2regret'],  # , 'r_regret']  # TBD
+                destroy_op=destroy_op,
+                repair_op=['r_greedy', 'r_2regret'],
                 weight_min_threshold=0.2,
                 reaction_param=0.3,
                 score_params=[5, 3, 1],  # corresponding to sigma_1, sigma_2, sigma_3 in R&P and L&N
@@ -418,10 +518,13 @@ if __name__ == '__main__':
                 cooling_rate=0.985,
                 max_iter_seg=10,
                 remove_percentage=0.3,
+                determinism_param=5,
+                relatedness_precedence={('green', 'yellow'): 2, ('green', 'red'): 3, ('yellow', 'red'): 2},
+                related_removal_weight_param=related_removal_weight_param
                 )
     print(alns)
 
-    iterations = 200
+    iterations = 300
 
     solution_costs = []
     for i in range(iterations):

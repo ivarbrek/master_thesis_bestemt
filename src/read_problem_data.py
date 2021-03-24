@@ -168,6 +168,9 @@ class ProblemData:
             zone_orders_dict[zone].append(order)
         return zone_orders_dict
 
+    def get_zones(self) -> List[str]:
+        return list(set([self.order_zones_df.loc[order, 'zone'] for order in self.order_zones_df.index]))
+
     def get_factory_nodes(self, v: str = None) -> List[str]:
         if v:
             return [i for i in self.initial_inventories_df.index if i in self.get_nodes_for_vessels_dict2()[v]]
