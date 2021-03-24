@@ -621,12 +621,21 @@ class Solution:
         return True
 
     def remove_node(self, vessel: str, idx: int):
+        node = self.prbl.nodes[self.routes[vessel][idx]]
+
         self.routes[vessel].pop(idx)
         self.e[vessel].pop(idx)
         self.l[vessel].pop(idx)
         self.temp_routes[vessel].pop(idx)
         self.temp_e[vessel].pop(idx)
         self.temp_l[vessel].pop(idx)
+
+        if node.is_factory:
+            factory_visit_idx = self._get_factory_visit_idx(node.id, vessel, idx)
+            self.factory_visits[node.id].pop(factory_visit_idx)
+            self.factory_visits_route_index[node.id].pop(factory_visit_idx)
+            self.temp_factory_visits[node.id].pop(factory_visit_idx)
+            self.temp_factory_visits_route_index[node.id].pop(factory_visit_idx)
 
     def recompute_solution_variables(self):
         # recompute factory visit route indexes
