@@ -1,6 +1,6 @@
 import math
 import random
-from typing import Dict, List, Tuple, Union, Callable
+from typing import Dict, List, Tuple, Union
 
 import function
 
@@ -25,7 +25,8 @@ int_inf = 9999
 # [/] Regret insertion
 # [/] Random removal
 # [/] Worst removal (objective, longest wait?)
-# [ ] Related removal (distance, time window, shaw)
+# [/] Related removal (distance, time window, shaw)
+# [ ] Voyage removal
 
 
 class Alns:
@@ -99,6 +100,12 @@ class Alns:
         self.related_removal_weight_param = related_removal_weight_param
 
         self.verbose = verbose
+
+        # TODO: Delete these when done with testing
+        # self.rel_components = {'loc_time_amount__transport_time': 0, 'loc_time_amount__time_window': 0,
+        #                        'loc_time_usage': 0,
+        #                        'loc_prec_amount__transport_time': 0, 'loc_prec_amount__prec': 0,
+        #                        'loc_prec_usage': 0}
 
     def __repr__(self):
         return (
@@ -240,35 +247,31 @@ class Alns:
         return sol
 
     def destroy_worst(self, sol: Solution) -> Solution:
-        # Operator only destroys costly order nodes, not factory nodes
-        removal_candidates: List[Tuple[str, int, str, float]] = []  # order, idx, vessel, utility
+        served_orders = [node for v in sol.prbl.vessels
+                         for node in sol.routes[v]
+                         if not sol.prbl.nodes[node].is_factory]
+        removals = 0
 
-        for v in sol.prbl.vessels:
-            route = sol.routes[v]
-            for idx in range(len(route)):
-                node = sol.prbl.nodes[route[idx]]
-                if not node.is_factory:
-                    removal_candidates.append((node.id, idx, v, sol.get_removal_utility(vessel=v, idx=idx)))
+        while removals < self.remove_num and served_orders:
 
-        if not removal_candidates:  # no orders to remove
-            return sol
+            candidates: List[Tuple[str, int, str, float]] = []  # order, idx, vessel, utility
+            for v in sol.prbl.vessels:
+                route = sol.routes[v]
+                for idx in range(len(route)):
+                    node = sol.prbl.nodes[route[idx]]
+                    if not node.is_factory:
+                        candidates.append((node.id, idx, v, sol.get_removal_utility(vessel=v, idx=idx)))
 
-        removal_candidates.sort(key=lambda tup: tup[3], reverse=True)
+            if not candidates:  # no orders to remove
+                return sol
 
-        # removals: List[Tuple[int, str]] = []  # (idx, vessel)
-        # while self.remove_num < len(removal_candidates) and len(removals) < len(removal_candidates):
-        #     pass
+            candidates.sort(key=lambda tup: tup[3], reverse=True)  # sort according to utility desc
+            chosen_worst = (candidates[int(pow(random.random(), self.determinism_param)
+                                                   * len(candidates))])[:3]  # (order, idx, vessel)
 
-        # If no self.determinism_param, then use this:
-        stop_idx = self.remove_num if self.remove_num <= len(removal_candidates) else len(removal_candidates)
-        removals = removal_candidates[:stop_idx]  # nodes and positions to be removed
-        removals.sort(key=lambda tup: tup[1], reverse=True)  # largest indices first
-
-        #removals.sort(key= lambda tup: tup[0], reverse=True)  # largest indices first
-
-        for (node_id, idx, v, util) in removals:
-            removals.pop(0)
-            sol.remove_node(v, idx)
+            served_orders.remove(chosen_worst[0])
+            sol.remove_node(vessel=chosen_worst[2], idx=chosen_worst[1])
+            removals += 1
 
         sol.recompute_solution_variables()
         return sol
@@ -276,15 +279,34 @@ class Alns:
     def _relatedness_location_time(self, order1: str, order2: str) -> float:
         w_0 = self.related_removal_weight_param['relatedness_location_time'][0]
         w_1 = self.related_removal_weight_param['relatedness_location_time'][1]
+
+        time_window_difference = (abs(self.current_sol.prbl.get_time_window_start(order1)
+                                      - self.current_sol.prbl.get_time_window_start(order2)) +
+                                  abs(self.current_sol.prbl.get_time_window_end(order1)
+                                      - self.current_sol.prbl.get_time_window_end(order2)))
+
+        # # Used for weight tuning
+        # self.rel_components['loc_time_amount__transport_time'] += \
+        #     w_0 * self.current_sol.prbl.transport_times[order1, order2]
+        # self.rel_components['loc_time_amount__time_window'] += \
+        #     w_1 * time_window_difference
+        # self.rel_components['loc_time_usage'] += 1
+
         return (w_0 * self.current_sol.prbl.transport_times[order1, order2] +
-                w_1 * (abs(self.current_sol.prbl.get_time_window_start(order1)
-                           - self.current_sol.prbl.get_time_window_start(order2)) +
-                       abs(self.current_sol.prbl.get_time_window_end(order1)
-                           - self.current_sol.prbl.get_time_window_end(order2))))
+                w_1 * time_window_difference)
 
     def _relatedness_location_precedence(self, order1: str, order2: str) -> float:
         w_0 = self.related_removal_weight_param['relatedness_location_precedence'][0]
         w_1 = self.related_removal_weight_param['relatedness_location_precedence'][1]
+
+        # # Used for weight tuning
+        # self.rel_components['loc_prec_amount__transport_time'] += w_0 * self.current_sol.prbl.transport_times[
+        #     order1, order2]
+        # self.rel_components['loc_prec_amount__prec'] += \
+        #     w_1 * self.relatedness_precedence[(self.current_sol.prbl.nodes[order1].zone,
+        #                                        self.current_sol.prbl.nodes[order2].zone)]
+        # self.rel_components['loc_prec_usage'] += 1
+
         return (w_0 * self.current_sol.prbl.transport_times[order1, order2] +
                 w_1 * self.relatedness_precedence[(self.current_sol.prbl.nodes[order1].zone,
                                                    self.current_sol.prbl.nodes[order2].zone)])
@@ -302,7 +324,6 @@ class Alns:
         served_orders.pop(random_first_idx)
 
         while len(similar_orders) < self.remove_num and served_orders:
-            # Select a task for which similar orders are found
             base_order = similar_orders[random.randint(0, len(similar_orders) - 1)][0]
 
             candidates: List[Tuple[str, int, str, float]] = []  # tuple: (order, idx, vessel, relatedness)
@@ -325,26 +346,6 @@ class Alns:
 
         sol.recompute_solution_variables()
         return sol
-
-    # Requires another "recompute_solution_variables()" function
-    #     def destroy_voyage_random(self, sol: Solution) -> Solution:
-    #         voyage_starts = [(vessel, idx)
-    #                          for vessel in sol.prbl.vessels
-    #                          for idx in range(len(sol.routes[vessel])-1)  # not choosing last node in route
-    #                          if sol.prbl.nodes[sol.routes[vessel][idx]].is_factory]
-    #         ran = random.randint(0, len(voyage_starts)-1)
-    #
-    #         vessel, start_idx = voyage_starts[ran]
-    #         stop_idx = start_idx
-    #
-    #         while (stop_idx+1 < len(sol.routes[vessel])) and not sol.prbl.nodes[sol.routes[vessel][stop_idx+1]].is_factory:
-    #             stop_idx += 1
-    #
-    #         for i in range(stop_idx, start_idx-1, -1):
-    #             sol.remove_node(vessel=vessel, idx=i)
-    #
-    #         sol.recompute_solution_variables()
-    #         return sol
 
     def repair(self, repair_op: str, sol: Solution) -> Union[None, Tuple[Solution, List[str]]]:
         if repair_op == "r_greedy":
@@ -503,8 +504,8 @@ if __name__ == '__main__':
     if precedence:
         destroy_op.append('d_related_location_precedence')
 
-    related_removal_weight_param: Dict[str, List[float]] = {'relatedness_location_time': [1, 0.5],
-                                                            'relatedness_location_precedence': [1, 1]}
+    related_removal_weight_param: Dict[str, List[float]] = {'relatedness_location_time': [1, 0.9],
+                                                            'relatedness_location_precedence': [0.25, 1]}
 
     print()
     print("ALNS starting...")
@@ -519,12 +520,12 @@ if __name__ == '__main__':
                 max_iter_seg=10,
                 remove_percentage=0.3,
                 determinism_param=5,
-                relatedness_precedence={('green', 'yellow'): 2, ('green', 'red'): 3, ('yellow', 'red'): 2},
+                relatedness_precedence={('green', 'yellow'): 6, ('green', 'red'): 10, ('yellow', 'red'): 4},
                 related_removal_weight_param=related_removal_weight_param
                 )
     print(alns)
 
-    iterations = 300
+    iterations = 200
 
     solution_costs = []
     for i in range(iterations):
@@ -535,6 +536,7 @@ if __name__ == '__main__':
         solution_costs.append((i, alns.current_sol_cost))
         print()
 
+    # print(alns.rel_components)
     print()
     print("...ALNS terminating")
     print(alns)
