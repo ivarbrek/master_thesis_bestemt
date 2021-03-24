@@ -10,6 +10,7 @@ numpy = "*"
 openpyxl = "*"
 tabulate = "*"
 matplotlib = "*"
+function = "*"
 
 [dev-packages]
 

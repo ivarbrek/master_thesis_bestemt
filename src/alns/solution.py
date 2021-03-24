@@ -691,6 +691,7 @@ class Solution:
         for factory, factory_visits in self.factory_visits.items():
             self.check_factory_visits_earliest_forward(factory, 0, force_propagation=True)
             self.check_factory_visits_latest_backward(factory, len(factory_visits) - 1, force_propagation=True)
+
         # move updates from temp to main variables
         self.insert_last_checked()
 
@@ -723,7 +724,6 @@ class Solution:
                              for i in range(1, len(route)))
         unmet_order_cost = sum(self.prbl.external_delivery_penalties[order_node]
                                for order_node in self.get_orders_not_served())
-
         return transport_cost + unmet_order_cost
 
     def get_insertion_utility(self, node: Node, vessel: str, idx: int) -> float:  # High utility -> good insertion
@@ -938,7 +938,6 @@ class Solution:
             print(list(zip(self.e[vessel], self.l[vessel])))
         print()
         return feasibility
-
 
 
 if __name__ == '__main__':
