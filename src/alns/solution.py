@@ -71,7 +71,7 @@ class ProblemDataExtended(ProblemData):
 
 class Solution:
 
-    def __init__(self, prbl: ProblemDataExtended, debug: bool = False) -> None:
+    def __init__(self, prbl: ProblemDataExtended, verbose: bool = False, debug: bool = False) -> None:
         self.prbl = prbl
         self.debug = debug
 
@@ -88,10 +88,10 @@ class Solution:
         self.temp_factory_visits: Dict[str, List[str]] = copy.deepcopy(self.factory_visits)
         self.temp_factory_visits_route_index: Dict[str, List[int]] = copy.deepcopy(self.factory_visits_route_index)
 
-        self.verbose = True
+        self.verbose = verbose
 
     def __repr__(self) -> str:
-        return (f"Routes: {self.routes}")
+        return f"Routes: {self.routes}"
 
     def copy(self) -> Solution:
         solution_copy = Solution(self.prbl)  # problem data is static
@@ -699,6 +699,8 @@ class Solution:
                                                               idx]]  # cost to next node, currently at idx
                                 - self.prbl.transport_times[self.routes[vessel][idx - 1],
                                                             self.routes[vessel][idx]])
+        elif not node.is_factory:
+            net_sail_change *= 2
         delivery_gain = self.prbl.external_delivery_penalties[node.id] if not node.is_factory else 0
 
         return delivery_gain - net_sail_change * self.prbl.transport_unit_costs[vessel]

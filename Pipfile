@@ -9,6 +9,7 @@ pandas = "*"
 numpy = "*"
 openpyxl = "*"
 tabulate = "*"
+matplotlib = "*"
 
 [dev-packages]
 

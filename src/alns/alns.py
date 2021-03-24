@@ -1,8 +1,9 @@
 import math
 import random
-from typing import Dict, List, Tuple, Union
+from typing import Dict, List, Tuple, Union, Callable
 from src.alns.solution import Solution, ProblemDataExtended
 import numpy as np
+from src.util.plot import plot_alns_history
 
 int_inf = 9999
 
@@ -50,12 +51,14 @@ class Alns:
                  reaction_param: float,
                  score_params: List[int],
                  start_temperature_controlparam: float,
-                 cooling_rate: float) -> None:
+                 cooling_rate: float,
+                 max_iter_seg: int,
+                 remove_percentage: float,
+                 verbose: bool = False) -> None:
+
         # ALNS  parameters
-        self.max_iter_alns = 100
-        self.max_iter_seg = 10
-        self.remove_num = 3
-        # self.weight_min_threshold = 0.2
+        self.max_iter_seg = max_iter_seg
+        self.remove_num = round(remove_percentage * len(problem_data.order_nodes))
 
         # Solutions
         self.current_sol = self.construct_initial_solution(problem_data)
@@ -80,7 +83,7 @@ class Alns:
         self.it_seg_count = 0  # Iterations done in one segment - can maybe do this in run_alns_iteration?
         self.insertion_candidates = self.current_sol.get_orders_not_served()
 
-        self.verbose = True
+        self.verbose = verbose
 
     def __repr__(self):
         return (
@@ -92,7 +95,8 @@ class Alns:
             f"Destroy operators {[(k, round(v, 2)) for k, v in self.destroy_op_weight.items()]} \n"
             f"and repair operators {[(k, round(v, 2)) for k, v in self.repair_op_weight.items()]} \n")
 
-    def construct_initial_solution(self, problem_data: ProblemDataExtended) -> Solution:
+    @staticmethod
+    def construct_initial_solution(problem_data: ProblemDataExtended) -> Solution:
         sol: Solution = Solution(problem_data)
         sol.verbose = False
         unrouted_orders = list(sol.prbl.order_nodes.keys())
@@ -122,7 +126,6 @@ class Alns:
         return sol
 
     def update_scores(self, destroy_op: str, repair_op: str, update_type: int) -> None:
-        self.it_seg_count += 1
         if update_type == -1:
             return
         if not 0 <= update_type < len(self.score_params):
@@ -130,7 +133,6 @@ class Alns:
             return
         self.destroy_op_score[destroy_op] += self.score_params[update_type]
         self.repair_op_score[repair_op] += self.score_params[update_type]
-        return
 
     def update_weights(self) -> None:
         # Update weights based on scores, "blank" scores and operator segment usage
@@ -150,14 +152,12 @@ class Alns:
             if self.repair_op_segment_usage[op] > 0:
                 self.repair_op_weight[op] = max(((1 - self.reaction_param) * self.repair_op_weight[op] +
                                                  self.reaction_param * self.repair_op_score[op] /
-                                                 self.repair_op_segment_usage[
-                                                     op]), self.weight_min_threshold)
+                                                 self.repair_op_segment_usage[op]),
+                                                self.weight_min_threshold)
             self.repair_op_score[op] = 0
             self.repair_op_segment_usage[op] = 0
 
         self.it_seg_count = 0
-
-        return
 
     def choose_operators(self) -> Tuple[str, str]:
         # Choose operators, probability of choosing an operator is based on current weights
@@ -189,8 +189,6 @@ class Alns:
             return self.destroy_random(sol)
         elif destroy_op == "d_worst":
             return self.destroy_worst(sol)
-        elif destroy_op == "d_voyage_random":
-            return self.destroy_voyage_random(sol)
         else:
             print("Destroy operator does not exist")
             return None
@@ -200,7 +198,7 @@ class Alns:
                          for o in sol.routes[v] if not sol.prbl.nodes[o].is_factory]
         random.shuffle(served_orders)
         removals = 0
-        while removals < remove_num and served_orders:
+        while removals < self.remove_num and served_orders:
             vessel, order = served_orders.pop()
             remove_index = sol.routes[vessel].index(order)
             sol.remove_node(vessel, remove_index)
@@ -225,7 +223,7 @@ class Alns:
 
         removal_candidates.sort(key=lambda tup: tup[3], reverse=True)
 
-        stop_idx = remove_num if remove_num <= len(removal_candidates) else len(removal_candidates)
+        stop_idx = self.remove_num if self.remove_num <= len(removal_candidates) else len(removal_candidates)
         removals = removal_candidates[:stop_idx]  # nodes and positions to be removed
         removals.sort(key=lambda tup: tup[1], reverse=True)  # largest indices first
 
@@ -299,7 +297,7 @@ class Alns:
         return sol, unrouted_orders
 
     def repair_2regret(self, sol: Solution) -> Tuple[Solution, List[str]]:
-        for i in range(remove_num):  # TODO: Find out how to do varying q^{ALNS}
+        for i in range(self.remove_num):  # TODO: Find out how to do varying q^{ALNS}
             insertion_cand = sol.get_orders_not_served()
             insertions: List[Tuple[int, str, float]] = []  # tuple (idx, vessel, gain)
             repair_candidates: List[Tuple[str, int, str, float]] = []  # (order, idx, vessel, regret)
@@ -358,18 +356,13 @@ class Alns:
         """
         sol_cost = sol.get_solution_cost()
         if sol_cost < self.best_sol_cost:
-            self.temperature = self.temperature * self.cooling_rate
             return True, 0
         elif sol_cost < self.current_sol_cost:
-            self.temperature = self.temperature * self.cooling_rate
             return True, 1
         else:
             # Simulated annealing criterion
             prob = pow(math.e, -((sol_cost - self.current_sol_cost) / self.temperature))
-            accept = np.random.choice(
-                np.array([True, False]), p=(np.array([prob, (1 - prob)]))
-            )
-            self.temperature = self.temperature * self.cooling_rate
+            accept = np.random.choice(np.array([True, False]), p=(np.array([prob, (1 - prob)])))
             return accept, -1 + 3 * accept
 
     def run_alns_iteration(self) -> None:
@@ -384,6 +377,7 @@ class Alns:
 
         # if x′ is accepted by a simulated annealing–based acceptance criterion then set x = x′
         accept_solution, update_type = self.accept_solution(candidate_sol)
+
         if accept_solution:
             self.current_sol = candidate_sol
             self.current_sol_cost = candidate_sol.get_solution_cost()
@@ -395,7 +389,7 @@ class Alns:
         # if IS iterations has passed since last weight update then
         # Update the weight wdm+1 for method d for the next segment m + 1 based on
         # the scores πd obtained for each method in segment m
-        if self.it_seg_count == max_iter_seg:
+        if self.it_seg_count == self.max_iter_seg:
             self.update_weights()
 
         # if f(x) > f(x∗) then
@@ -403,42 +397,42 @@ class Alns:
         if update_type == 0:  # type 0 means global best solution is found
             self.best_sol = self.current_sol
             self.best_sol_cost = self.current_sol_cost
-        return
+
+        # update iteration parameters
+        self.temperature = self.temperature * self.cooling_rate
+        self.it_seg_count += 1
 
 
 if __name__ == '__main__':
-    destroy_op = ['d_random', 'd_worst', 'd_voyage_random']  # 'd_related', 'd_worst', 'd_random']  # TBD
-    repair_op = ['r_greedy', 'r_2regret']  # TBD
-    max_iter_alns = 200
-    max_iter_seg = 10
-    remove_num = 4
-    weight_min_threshold = 0.2
-    reaction_param = 0.5
-    score_params = [5, 3, 1]  # corresponding to sigma_1, sigma_2, sigma_3 in R&P and L&N
-    start_temperature_controlparam = 0.05  # solution 5% worse than best solution is accepted with 50% probability
-    cooling_rate = 0.98
-
-    prbl = ProblemDataExtended('../../data/input_data/large_testcase.xlsx', precedence=True)
+    prbl = ProblemDataExtended('../../data/input_data/larger_testcase.xlsx', precedence=True)
 
     print()
     print("ALNS starting...")
     alns = Alns(problem_data=prbl,
-                destroy_op=destroy_op,
-                repair_op=repair_op,
-                weight_min_threshold=weight_min_threshold,
-                reaction_param=reaction_param,
-                score_params=score_params,
-                start_temperature_controlparam=start_temperature_controlparam,
-                cooling_rate=cooling_rate)
+                destroy_op=['d_random', 'd_worst'],  # 'd_related', 'd_worst', 'd_random']  # TBD,
+                repair_op=['r_greedy', 'r_2regret'],  # , 'r_regret']  # TBD
+                weight_min_threshold=0.2,
+                reaction_param=0.3,
+                score_params=[5, 3, 1],  # corresponding to sigma_1, sigma_2, sigma_3 in R&P and L&N
+                start_temperature_controlparam=0.5,  # solution 50% worse than best solution is accepted with 50% prob.
+                cooling_rate=0.985,
+                max_iter_seg=10,
+                remove_percentage=0.3,
+                )
     print(alns)
 
-    for i in range(max_iter_alns):
+    iterations = 200
+
+    solution_costs = []
+    for i in range(iterations):
         print("Iteration", i)
         # if i % 50 == 0 and i > 0:
         #     print("> Iteration", i)
         alns.run_alns_iteration()
+        solution_costs.append((i, alns.current_sol_cost))
         print()
 
     print()
     print("...ALNS terminating")
     print(alns)
+    plot_alns_history(solution_costs)
