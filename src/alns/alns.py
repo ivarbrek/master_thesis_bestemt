@@ -41,7 +41,6 @@ class Alns:
     repair_op_weight: Dict[str, float]
     destroy_op_segment_usage: Dict[str, int]
     repair_op_segment_usage: Dict[str, int]
-    unrouted_orders: List[str] = []  # TODO: Remove field? Not currently in use.
     reaction_param: float
     score_params: Dict[int, int]
     weight_min_threshold: float
@@ -210,13 +209,13 @@ class Alns:
         print(destroy_op, repair_op)
         return destroy_op, repair_op
 
-    def generate_new_solution(self, destroy_op: str, repair_op: str) -> Tuple[Solution, List[str]]:
+    def generate_new_solution(self, destroy_op: str, repair_op: str) -> Solution:
         # Generate new feasible solution x' based on given operators
         # Return x'
         candidate_sol = self.current_sol.copy()
         candidate_sol = self.destroy(destroy_op, candidate_sol)
-        candidate_sol, insertion_candidates = self.repair(repair_op, candidate_sol)
-        return candidate_sol, insertion_candidates
+        candidate_sol = self.repair(repair_op, candidate_sol)
+        return candidate_sol
 
     def destroy(self, destroy_op: str, sol: Solution) -> Union[Solution, None]:
         # Run function based on operator "ID"
@@ -280,10 +279,10 @@ class Alns:
         w_0 = self.related_removal_weight_param['relatedness_location_time'][0]
         w_1 = self.related_removal_weight_param['relatedness_location_time'][1]
 
-        time_window_difference = (abs(self.current_sol.prbl.get_time_window_start(order1)
-                                      - self.current_sol.prbl.get_time_window_start(order2)) +
-                                  abs(self.current_sol.prbl.get_time_window_end(order1)
-                                      - self.current_sol.prbl.get_time_window_end(order2)))
+        time_window_difference = (abs(self.current_sol.prbl.nodes[order1].tw_start
+                                      - self.current_sol.prbl.nodes[order2].tw_start +
+                                      abs(self.current_sol.prbl.nodes[order1].tw_end
+                                          - self.current_sol.prbl.nodes[order2].tw_end)))
 
         # # Used for weight tuning
         # self.rel_components['loc_time_amount__transport_time'] += \
@@ -314,7 +313,8 @@ class Alns:
     def destroy_related(self, sol: Solution, rel_measure: function) -> Solution:
         # Related removal, based on inputted relatedness measure
         similar_orders: List[Tuple[str, int, str]] = []  # (order, index, vessel)
-        served_orders = [(sol.routes[v][idx], idx, v) for v in sol.prbl.vessels  # (order, index, vessel)
+        served_orders = [(sol.routes[v][idx], idx, v)  # (order, index, vessel)
+                         for v in sol.prbl.vessels
                          for idx in range(len(sol.routes[v]))
                          if not sol.prbl.nodes[sol.routes[v][idx]].is_factory]
 
@@ -347,7 +347,7 @@ class Alns:
         sol.recompute_solution_variables()
         return sol
 
-    def repair(self, repair_op: str, sol: Solution) -> Union[None, Tuple[Solution, List[str]]]:
+    def repair(self, repair_op: str, sol: Solution) -> Union[None, Solution]:
         if repair_op == "r_greedy":
             return self.repair_greedy(sol)
         elif repair_op == "r_2regret":
@@ -356,7 +356,7 @@ class Alns:
             print("Repair operator does not exist")
             return None
 
-    def repair_greedy(self, sol: Solution) -> Tuple[Solution, List[str]]:
+    def repair_greedy(self, sol: Solution) -> Solution:
         insertion_cand = sol.get_orders_not_served()
         insertions = [(node_id, vessel, idx, sol.get_insertion_utility(sol.prbl.nodes[node_id], vessel, idx))
                       for node_id in insertion_cand
@@ -387,59 +387,55 @@ class Alns:
                 if len([insert for insert in insertions if insert[0] == insert_node]) == 0:
                     insertion_cand.remove(insert_node)
                     unrouted_orders.append(insert_node)
-        return sol, unrouted_orders
+        return sol
 
-    def repair_2regret(self, sol: Solution) -> Tuple[Solution, List[str]]:
-        for i in range(self.remove_num):  # TODO: Find out how to do varying q^{ALNS}
-            insertion_cand = sol.get_orders_not_served()
-            insertions: List[Tuple[int, str, float]] = []  # tuple (idx, vessel, gain)
+    def repair_2regret(self, sol: Solution) -> Solution:
+        unrouted_orders = sol.get_orders_not_served()
+        while unrouted_orders:
+            # find the largest regret for each order and insert the largest regret.
+            # repeat until no unrouted orders, or no feasible insertion
             repair_candidates: List[Tuple[str, int, str, float]] = []  # (order, idx, vessel, regret)
 
-            for o in insertion_cand:
+            for order in unrouted_orders:
                 # Get all insertion utilities
-                for v in sol.prbl.vessels:
-                    for idx in range(1, len(sol.routes[v]) + 1):
-                        insertions.append((idx, v, sol.get_insertion_utility(sol.prbl.nodes[o], v, idx)))
-
-                insertions.sort(key=lambda item: item[2], reverse=True)  # sort by gain, order desc
+                insertions = [(idx, v, sol.get_insertion_utility(sol.prbl.nodes[order], v, idx))  # tuple (idx, vessel, gain)
+                              for v in sol.prbl.vessels for idx in range(1, len(sol.routes[v]) + 1)]
+                insertions.sort(key=lambda item: item[2])  # sort by gain
 
                 insertion_regret = 0
                 num_feasible = 0
-                best_insertion: Tuple[str, int, str]
+                best_insertion: Tuple[str, int, str] = tuple()
 
                 while num_feasible < 2 and len(insertions) > 0:
-                    idx, vessel, util = insertions[0]
-                    feasible = sol.check_insertion_feasibility(o, vessel, idx)
-                    if feasible:
-                        if num_feasible == 0:
-                            insertion_regret += util
-                            best_insertion = (o, idx, vessel)
-                        elif num_feasible == 1:
-                            insertion_regret -= util
+                    idx, vessel, util = insertions.pop()
+                    feasible = sol.check_insertion_feasibility(order, vessel, idx)
+                    sol.clear_last_checked()
+
+                    if feasible and num_feasible == 0:
+                        insertion_regret += util
+                        best_insertion = (order, idx, vessel)
+                        num_feasible += 1
+                    elif feasible and num_feasible == 1:
+                        insertion_regret -= util
                         num_feasible += 1
 
-                    sol.clear_last_checked()
-                    insertions.pop(0)
-
-                if num_feasible == 1:  # Only one feasible solution found
+                if num_feasible == 1:  # Only one feasible solution found -> infinite regret
                     insertion_regret -= -int_inf
 
                 if num_feasible >= 1 and best_insertion:  # at least one feasible solution found
-                    repair_candidates.append((best_insertion[0],
-                                              best_insertion[1],
-                                              best_insertion[2],
-                                              insertion_regret))
+                    node_id, idx, vessel = best_insertion
+                    repair_candidates.append((node_id, idx, vessel, insertion_regret))
 
             if not repair_candidates:  # no orders to insert feasibly
-                return sol, sol.get_orders_not_served()
+                return sol
 
-            highest_regret_insertion = max(repair_candidates, key=lambda item: item[3])
-            sol.check_insertion_feasibility(node_id=highest_regret_insertion[0],
-                                            idx=highest_regret_insertion[1],
-                                            vessel=highest_regret_insertion[2])
+            # insert the greatest regret from repair_candidates
+            node_id, idx, vessel, _ = max(repair_candidates, key=lambda item: item[3])
+            sol.check_insertion_feasibility(node_id, vessel, idx)
             sol.insert_last_checked()
+            unrouted_orders.remove(node_id)
 
-        return sol, sol.get_orders_not_served()
+        return sol
 
     def accept_solution(self, sol: Solution) -> Tuple[bool, int]:
         """
@@ -464,8 +460,7 @@ class Alns:
 
         # Generate a candidate solution x′ from the current solution x using the chosen destroy and repair heuristics
         candidate_sol: Solution
-        insertion_candidates: List[str]
-        candidate_sol, insertion_candidates = self.generate_new_solution(destroy_op=d_op, repair_op=r_op)
+        candidate_sol = self.generate_new_solution(destroy_op=d_op, repair_op=r_op)
 
         # if x′ is accepted by a simulated annealing–based acceptance criterion then set x = x′
         accept_solution, update_type = self.accept_solution(candidate_sol)
@@ -473,7 +468,6 @@ class Alns:
         if accept_solution:
             self.current_sol = candidate_sol
             self.current_sol_cost = candidate_sol.get_solution_cost()
-            self.insertion_candidates = insertion_candidates
 
         # Update scores πd of the destroy and repair heuristics - dependent on how good the solution is
         self.update_scores(destroy_op=d_op, repair_op=r_op, update_type=update_type)
@@ -531,7 +525,7 @@ if __name__ == '__main__':
     for i in range(iterations):
         print("Iteration", i)
         alns.run_alns_iteration()
-        # alns.current_sol.check_if_order_is_served_twice()
+
         alns.current_sol.print_routes()
         print(f"Obj: {alns.current_sol_cost}   Not served: {alns.current_sol.get_orders_not_served()}")
 

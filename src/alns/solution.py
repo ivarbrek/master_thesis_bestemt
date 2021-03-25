@@ -593,8 +593,8 @@ class Solution:
 
             # Find the minimum number of activities that must be undertaken before a given loading event
             activity_requirement_cum = np.copy(production_requirement_cum)
-            production_lines = [l for (i, l) in
-                                filter(lambda x: x[0] == factory_node_id, self.prbl.production_lines_for_factories)]
+            production_lines = [l for (i, l) in self.prbl.production_lines_for_factories if i == factory_node_id]
+                                # filter(lambda x: x[0] == factory_node_id, self.prbl.production_lines_for_factories)]
 
             for p in range(len(self.prbl.products)):  # for all columns in the matrix
                 initial_inventory = self.prbl.factory_initial_inventories[(factory_node_id, self.prbl.products[p])]
@@ -602,22 +602,19 @@ class Solution:
                     [self.prbl.production_max_capacities[l, self.prbl.products[p]] for l in production_lines])
                 for k in range(np.shape(production_requirement_cum)[0]):
                     activity_requirement_cum[k][p] = max(
-                        [0,
-                         np.ceil((production_requirement_cum[k, p] - initial_inventory) / production_capacity_max)])
+                        [0, np.ceil((production_requirement_cum[k, p] - initial_inventory) / production_capacity_max)])
 
             for k in range(len(activity_requirement_cum) - 1, 0, -1):
-                production_time_periods = len(production_lines) * sum(
-                    [self.prbl.production_stops[factory_node_id, t]
-                     for t in range(latest_loading_times[k - 1],
-                                    latest_loading_times[k])])
-                for i in range(max(np.sum(activity_requirement_cum[k], axis=0) -
-                                   np.sum(activity_requirement_cum[k - 1], axis=0) -
-                                   production_time_periods,
+                production_time_periods = len(production_lines) * sum([self.prbl.production_stops[factory_node_id, t]
+                                                                       for t in range(latest_loading_times[k - 1],
+                                                                                      latest_loading_times[k])])
+                for i in range(max(np.sum(activity_requirement_cum[k], axis=0)
+                                   - np.sum(activity_requirement_cum[k - 1], axis=0)
+                                   - production_time_periods,
                                    0)):  # number of activities in this interval exceeding production_time_periods
                     for p in range(np.shape(production_requirement_cum)[1]):
                         if activity_requirement_cum[k][p] > 0:
-                            activity_requirement_cum[k - 1][
-                                p] += 1  # pushing production activities to occur earlier
+                            activity_requirement_cum[k - 1][p] += 1  # pushing production activities to occur earlier
                             break
 
             # If pushing production activities earlier results in too much production taking place
@@ -634,13 +631,12 @@ class Solution:
 
             # Checking for inventory feasibility
             for k in range(np.shape(activity_requirement_cum)[0]):  # for all rows in the array
-                production_capacity_min = min(
-                    [self.prbl.production_min_capacities[l, p] for l in production_lines for p in
-                     self.prbl.products])
+                production_capacity_min = min([self.prbl.production_min_capacities[l, p]
+                                               for l in production_lines
+                                               for p in self.prbl.products])
                 inventory = (np.sum(activity_requirement_cum[k], axis=0) * production_capacity_min +
-                             np.sum(
-                                 [self.prbl.factory_initial_inventories[factory_node_id, p] for p in
-                                  self.prbl.products]))
+                             np.sum([self.prbl.factory_initial_inventories[factory_node_id, p]
+                                     for p in self.prbl.products]))
                 if k > 0:  # subtract previous loadings
                     inventory = inventory - np.sum(products_for_voyage[:k])
                 if inventory > self.prbl.factory_inventory_capacities[factory_node_id]:
@@ -700,7 +696,7 @@ class Solution:
 
     def remove_consecutive_factories(self) -> None:
         for vessel, route in self.temp_routes.items():
-            if len(route) == 1:
+            if len(route) < 2:
                 continue
             next_node = route[-1]
             # iterate backwards so that we can delete without messing up indexes
@@ -839,7 +835,6 @@ class Solution:
     def _get_min_quay_capacity(self, factory: str, t: int, loading_time: int):
         """Helper function that defines min_quay_capacity for t < 0, t >= no_time_periods and loading_time=0"""
         no_time_periods = len(self.prbl.quay_capacity[factory])
-        # print(list(range(t, min(no_time_periods, t + loading_time))))
         if t + loading_time <= 0:
             return self.prbl.quay_capacity[factory][0]
         elif t < no_time_periods and loading_time:
@@ -885,8 +880,10 @@ class Solution:
         self.temp_factory_visits_route_index = solution.temp_factory_visits_route_index
 
     def get_orders_not_served(self) -> List[str]:
-        served_orders = set(o for v in self.prbl.vessels for o in self.temp_routes[v])
-        return list(set(self.prbl.order_nodes) - served_orders)
+        served_orders = set(o for v in self.prbl.vessels for o in self.routes[v]
+                            if not self.prbl.nodes[o].is_factory)
+        unserved_orders = list(set(self.prbl.order_nodes) - served_orders)
+        return unserved_orders
 
     def print_routes(self, highlight: List[Tuple[str, int]] = None):
         highlight = [] if not highlight else highlight
