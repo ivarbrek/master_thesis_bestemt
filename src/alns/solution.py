@@ -482,12 +482,15 @@ class Solution:
         factory_destination_options = [(factory_node, self.get_insertion_utility(factory_node, vessel, len(route)))
                                        for factory_node in self.prbl.factory_nodes.values()]
         factory_destination_options.sort(key=lambda item: item[1], reverse=True)
+        # perform changes in a copy, to distinguish temp changes related to factory destination insertion checks from
+        # those related to the original insertion
+        copy_sol = self.copy()
         for factory_node, _ in factory_destination_options:
-            if self.check_insertion_feasibility(factory_node.id, vessel, len(route)):
-                self.insert_last_checked()
+            if copy_sol.check_insertion_feasibility(factory_node.id, vessel, len(route)):
+                self._set_temp_vars_to_solution(copy_sol)  # move update to self.temp
                 return True
             else:
-                self.clear_last_checked()
+                copy_sol.clear_last_checked()
 
         if self.verbose:
             print(f"Check failed at: check_and_set_destination_factory for {vessel}")
@@ -873,6 +876,13 @@ class Solution:
         """Prunes the ordered_list to only contain values <= max_threshold"""
         i = bisect.bisect_left(ordered_list, max_threshold)
         return ordered_list[:i]
+
+    def _set_temp_vars_to_solution(self, solution: Solution) -> None:
+        self.temp_routes = solution.temp_routes
+        self.temp_e = solution.temp_e
+        self.temp_l = solution.temp_l
+        self.temp_factory_visits = solution.temp_factory_visits
+        self.temp_factory_visits_route_index = solution.temp_factory_visits_route_index
 
     def get_orders_not_served(self) -> List[str]:
         served_orders = set(o for v in self.prbl.vessels for o in self.temp_routes[v])
