@@ -227,6 +227,10 @@ class Alns:
             return self.destroy_related(sol, rel_measure=self._relatedness_location_time)
         elif destroy_op == "d_related_location_precedence":
             return self.destroy_related(sol, rel_measure=self._relatedness_location_precedence)
+        elif destroy_op == "d_voyage":
+            return self.destroy_voyage(sol)
+        elif destroy_op == "d_route":
+            return self.destroy_route(sol)
         else:
             print("Destroy operator does not exist")
             return None
@@ -242,6 +246,44 @@ class Alns:
             sol.remove_node(vessel, remove_index)
             removals += 1
 
+        sol.recompute_solution_variables()
+        return sol
+
+    def destroy_voyage(self, sol: Solution) -> Solution:
+        # voyage: factory visit + orders until next factory visit
+        voyage_start_indexes = [(vessel, idx)
+                                for vessel in sol.prbl.vessels
+                                for idx in range(len(sol.routes[vessel]) - 1)
+                                if sol.prbl.nodes[sol.routes[vessel][idx]].is_factory
+                                and len(sol.routes[vessel]) > 1]
+        random.shuffle(voyage_start_indexes)
+        destroy_voyage_vessels = []
+        orders_removed = 0
+        while orders_removed < self.remove_num and voyage_start_indexes:
+            vessel, voyage_start_idx = voyage_start_indexes.pop()  # pick one voyage to destroy
+            if vessel in destroy_voyage_vessels:
+                # avoid choosing several voyages from the same vessel, as this is messy with the voyage_start_indexes
+                continue
+            remove_indexes = [i for i in range(voyage_start_idx, sol.get_temp_voyage_end_idx(vessel, voyage_start_idx))
+                              if i > 0]  # don't remove initial factory
+            for idx in reversed(remove_indexes):
+                sol.remove_node(vessel, idx)
+                orders_removed += 1
+            orders_removed -= 1  # to adjust for one factory being removed
+            destroy_voyage_vessels.append(vessel)
+
+        sol.recompute_solution_variables()
+        return sol
+
+    def destroy_worst_voyage(self, sol: Solution) -> Solution:  # TODO?
+        pass
+
+    def destroy_route(self, sol: Solution) -> Solution:
+        # choose a vessel that has a route
+        vessel = random.choice([v for v in sol.prbl.vessels if len(sol.routes[v]) > 1])
+        route = sol.routes[vessel]
+        for idx in range(len(route) - 1, 0, -1):
+            sol.remove_node(vessel, idx)
         sol.recompute_solution_variables()
         return sol
 
@@ -492,8 +534,8 @@ class Alns:
 if __name__ == '__main__':
     precedence = True
 
-    prbl = ProblemDataExtended('../../data/input_data/large_testcase.xlsx', precedence=precedence)
-    destroy_op = ['d_random', 'd_worst', 'd_related_location_time']
+    prbl = ProblemDataExtended('../../data/input_data/larger_testcase_4vessels.xlsx', precedence=precedence)
+    destroy_op = ['d_random', 'd_worst', 'd_voyage', 'd_route', 'd_related_location_time']
     if precedence:
         destroy_op.append('d_related_location_precedence')
 
@@ -506,19 +548,19 @@ if __name__ == '__main__':
                 destroy_op=destroy_op,
                 repair_op=['r_greedy', 'r_2regret'],
                 weight_min_threshold=0.2,
-                reaction_param=0.1,
+                reaction_param=0.05,
                 score_params=[5, 3, 1],  # corresponding to sigma_1, sigma_2, sigma_3 in R&P and L&N
-                start_temperature_controlparam=0.3,  # solution 30% worse than best solution is accepted with 50% prob.
+                start_temperature_controlparam=0.4,  # solution 50% worse than best solution is accepted with 50% prob.
                 cooling_rate=0.995,
                 max_iter_seg=10,
-                remove_percentage=0.3,
+                remove_percentage=0.4,
                 determinism_param=5,
                 relatedness_precedence={('green', 'yellow'): 6, ('green', 'red'): 10, ('yellow', 'red'): 4},
                 related_removal_weight_param=related_removal_weight_param
                 )
     print(alns)
 
-    iterations = 200
+    iterations = 500
 
     _stat_solution_cost = []
     _stat_operator_weights = defaultdict(list)

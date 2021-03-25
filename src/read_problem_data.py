@@ -188,7 +188,7 @@ class ProblemData:
                 for order_node in self.time_windows_for_orders_df.index
                 for time_period in self.time_windows_for_orders_df.columns}
 
-    def get_time_window_start(self, order_node):
+    def get_time_window_start(self, order_node):  # TODO: Change tw representation to start-end
         return min(t for (i, t), val in self.get_time_windows_for_orders_dict().items() if i == order_node and val == 1)
 
     def get_time_window_end(self, order_node):
