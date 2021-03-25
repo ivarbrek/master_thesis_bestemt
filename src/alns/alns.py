@@ -1,12 +1,12 @@
 import math
 import random
 from typing import Dict, List, Tuple, Union
-
+from collections import defaultdict
 import function
 
 from src.alns.solution import Solution, ProblemDataExtended
 import numpy as np
-from src.util.plot import plot_alns_history
+import src.util.plot as util
 
 int_inf = 9999
 
@@ -526,17 +526,26 @@ if __name__ == '__main__':
 
     iterations = 200
 
-    solution_costs = []
+    _stat_solution_cost = []
+    _stat_operator_weights = defaultdict(list)
     for i in range(iterations):
         print("Iteration", i)
         alns.run_alns_iteration()
         # alns.current_sol.check_if_order_is_served_twice()
         alns.current_sol.print_routes()
-        solution_costs.append((i, alns.current_sol_cost))
+        print(f"Obj: {alns.current_sol_cost}   Not served: {alns.current_sol.get_orders_not_served()}")
+
+        _stat_solution_cost.append((i, alns.current_sol_cost))
+        for op, score in alns.destroy_op_weight.items():
+            _stat_operator_weights[op].append(score)
+        for op, score in alns.repair_op_weight.items():
+            _stat_operator_weights[op].append(score)
         print()
 
     # print(alns.rel_components)
     print()
     print("...ALNS terminating")
     print(alns)
-    plot_alns_history(solution_costs)
+    util.plot_alns_history(_stat_solution_cost)
+    util.plot_operator_weights(_stat_operator_weights)
+
