@@ -384,7 +384,7 @@ class Alns:
                       for idx in range(1, len(sol.routes[vessel]) + 1)]
         insertions.sort(key=lambda tup: tup[3])  # sort by gain
 
-        unrouted_orders = []
+        #unrouted_orders = []
 
         while len(insertion_cand) > 0:  # try all possible insertions
             insert_node, vessel, idx, _ = insertions[-1]
@@ -406,8 +406,8 @@ class Alns:
                 # Remove node_id from insertion candidate list if no insertions left for this node_id
                 if len([insert for insert in insertions if insert[0] == insert_node]) == 0:
                     insertion_cand.remove(insert_node)
-                    unrouted_orders.append(insert_node)
-        return sol, unrouted_orders
+                    #unrouted_orders.append(insert_node)
+        return sol, sol.get_orders_not_served()  # TODO: Check if this is correct
 
     def repair_2regret(self, sol: Solution) -> Tuple[Solution, List[str]]:
         for i in range(self.remove_num):  # TODO: Find out how to do varying q^{ALNS}
@@ -460,6 +460,10 @@ class Alns:
                                             vessel=highest_regret_insertion[2])
             sol.insert_last_checked()
 
+            if self.verbose:
+                sol.print_routes(highlight=[(vessel, idx)])
+                print()
+
         return sol, sol.get_orders_not_served()
 
     def accept_solution(self, sol: Solution) -> Tuple[bool, int, int]:  # accept, accept_type, cost
@@ -495,6 +499,8 @@ class Alns:
             self.current_sol = candidate_sol
             self.current_sol_cost = cost
             self.insertion_candidates = insertion_candidates
+            if self.verbose:
+                print(f'> Solution is accepted as current solution')
 
         # Update scores πd of the destroy and repair heuristics - dependent on how good the solution is
         self.update_scores(destroy_op=d_op, repair_op=r_op, update_type=update_type)
@@ -513,8 +519,9 @@ class Alns:
                 self.best_sol = self.current_sol
                 self.best_sol_cost = self.current_sol_cost
                 self.new_best_solution_feasible_production_count += 1
+                if self.verbose:
+                    print(f'> Solution is accepted as best solution')
             else:
-                self.feasible_production = False
                 self.new_best_solution_infeasible_production_count += 1
 
         # update iteration parameters
@@ -547,7 +554,7 @@ if __name__ == '__main__':
                 related_removal_weight_param={'relatedness_location_time': [1, 0.9],
                                               'relatedness_location_precedence': [0.25, 1]},
                 inventory_reward=False,
-                verbose=False
+                verbose=True
                 )
     print(alns)
 
@@ -567,7 +574,7 @@ if __name__ == '__main__':
     print("...ALNS terminating")
     print(alns)
 
-    print(f"Best solution updated:{alns.new_best_solution_feasible_production_count} times")
+    print(f"Best solution updated {alns.new_best_solution_feasible_production_count} times")
     print(f"Candidate to become best solution rejected {alns.new_best_solution_infeasible_production_count} times, "
           f"because of production infeasibility")
 
