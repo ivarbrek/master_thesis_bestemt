@@ -227,10 +227,14 @@ class Alns:
             return self.destroy_related(sol, rel_measure=self._relatedness_location_time)
         elif destroy_op == "d_related_location_precedence":
             return self.destroy_related(sol, rel_measure=self._relatedness_location_precedence)
-        elif destroy_op == "d_voyage":
-            return self.destroy_voyage(sol)
-        elif destroy_op == "d_route":
-            return self.destroy_route(sol)
+        elif destroy_op == "d_voyage_random":
+            return self.destroy_voyage_random(sol)
+        elif destroy_op == "d_voyage_worst":
+            return self.destroy_voyage_worst(sol)
+        elif destroy_op == "d_route_random":
+            return self.destroy_route_random(sol)
+        elif destroy_op == "d_route_worst":
+            return self.destroy_route_worst(sol)
         else:
             print("Destroy operator does not exist")
             return None
@@ -275,15 +279,53 @@ class Alns:
         sol.recompute_solution_variables()
         return sol
 
-    def destroy_worst_voyage(self, sol: Solution) -> Solution:  # TODO?
-        pass
+    def destroy_voyage_worst(self, sol: Solution) -> Solution:
+        # voyage: factory visit + orders until next factory visit
+        voyage_start_indexes = [(vessel, idx, sol.get_voyage_profit(vessel, idx))
+                                for vessel in sol.prbl.vessels
+                                for idx in range(len(sol.routes[vessel]) - 1)
+                                if sol.prbl.nodes[sol.routes[vessel][idx]].is_factory
+                                and len(sol.routes[vessel]) > 1]
+        voyage_start_indexes.sort(key=lambda item: item[2], reverse=True)
+        destroy_voyage_vessels = []
+        orders_removed = 0
+        while orders_removed < self.remove_num and voyage_start_indexes:
+            chosen_idx = int(pow(random.random(), self.determinism_param) * len(voyage_start_indexes))
+            vessel, voyage_start_idx, _ = voyage_start_indexes.pop(chosen_idx)  # pick one voyage to destroy
+            if vessel in destroy_voyage_vessels:
+                # avoid choosing several voyages from the same vessel, as this is messy with the voyage_start_indexes
+                continue
+            remove_indexes = [i for i in range(voyage_start_idx, sol.get_temp_voyage_end_idx(vessel, voyage_start_idx))
+                              if i > 0]  # don't remove initial factory
+            for idx in reversed(remove_indexes):
+                sol.remove_node(vessel, idx)
+                orders_removed += 1
+            orders_removed -= 1  # to adjust for one factory being removed
+            destroy_voyage_vessels.append(vessel)
 
-    def destroy_route(self, sol: Solution) -> Solution:
+        sol.recompute_solution_variables()
+        return sol
+
+    def destroy_route_random(self, sol: Solution) -> Solution:
         # choose a vessel that has a route
         vessel = random.choice([v for v in sol.prbl.vessels if len(sol.routes[v]) > 1])
         route = sol.routes[vessel]
         for idx in range(len(route) - 1, 0, -1):
             sol.remove_node(vessel, idx)
+        sol.recompute_solution_variables()
+        return sol
+
+    def destroy_route_worst(self, sol: Solution) -> Solution:
+        route_profits = [(vessel, sol.get_route_profit(vessel))
+                         for vessel in sol.prbl.vessels
+                         if len(sol.routes[vessel]) > 1]
+        route_profits.sort(key=lambda item: item[1], reverse=True)  # descending order
+
+        chosen_idx = int(pow(random.random(), self.determinism_param) * len(route_profits))
+        vessel_for_worst_route = route_profits.pop(chosen_idx)[0]
+        route = sol.routes[vessel_for_worst_route]
+        for idx in range(len(route) - 1, 0, -1):
+            sol.remove_node(vessel_for_worst_route, idx)
         sol.recompute_solution_variables()
         return sol
 
@@ -537,9 +579,14 @@ if __name__ == '__main__':
     precedence = True
 
     prbl = ProblemDataExtended('../../data/input_data/larger_testcase_4vessels.xlsx', precedence=precedence)
-    destroy_op = ['d_random', 'd_worst', 'd_voyage', 'd_route', 'd_related_location_time']
-    if precedence:
-        destroy_op.append('d_related_location_precedence')
+    destroy_op = ['d_random',
+                  'd_worst',
+                  'd_voyage_random',
+                  'd_voyage_worst',
+                  'd_route_random',
+                  'd_route_worst',
+                  'd_related_location_time']
+    destroy_op += ['d_related_location_precedence'] if precedence else []
 
     related_removal_weight_param: Dict[str, List[float]] = {'relatedness_location_time': [1, 0.9],
                                                             'relatedness_location_precedence': [0.25, 1]}
@@ -581,7 +628,6 @@ if __name__ == '__main__':
             _stat_operator_weights[op].append(score)
         print()
 
-    # print(alns.rel_components)
     print()
     print("...ALNS terminating")
     print(alns)

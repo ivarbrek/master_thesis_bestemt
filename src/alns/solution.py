@@ -726,6 +726,23 @@ class Solution:
                                for order_node in self.get_orders_not_served())
         return transport_cost + unmet_order_cost
 
+    def get_route_profit(self, vessel: str):
+        route = self.routes[vessel]
+        order_profits = sum(self.prbl.external_delivery_penalties[node_id]
+                            for node_id in route if not self.prbl.nodes[node_id].is_factory)
+        transport_cost = sum(self.prbl.transport_times[route[i - 1], route[i]] * self.prbl.transport_unit_costs[vessel]
+                             for i in range(1, len(route)))
+        return order_profits - transport_cost
+
+    def get_voyage_profit(self, vessel: str, voyage_start_idx: int):
+        route = self.routes[vessel]
+        voyage_indexes = [i for i in range(self.get_temp_voyage_end_idx(vessel, voyage_start_idx))]
+        order_profits = sum(self.prbl.external_delivery_penalties[route[i]]
+                            for i in voyage_indexes if not self.prbl.nodes[route[i]].is_factory)
+        transport_cost = sum(self.prbl.transport_times[route[i - 1], route[i]] * self.prbl.transport_unit_costs[vessel]
+                             for i in range(1, len(route)))
+        return order_profits - transport_cost
+
     def get_insertion_utility(self, node: Node, vessel: str, idx: int) -> float:  # High utility -> good insertion
         route = self.temp_routes[vessel]
         transport_times = self.prbl.transport_times
