@@ -79,7 +79,7 @@ class Alns:
         self.remove_num = round(remove_percentage * len(problem_data.order_nodes))
 
         # Solutions
-        self.current_sol = self.repair_kregret(2, Solution(problem_data))  # self.construct_initial_solution(problem_data)
+        self.current_sol = self.repair_kregret(2, Solution(problem_data))
         self.production_model = ProductionModel(prbl=problem_data,
                                                 demands=self.current_sol.get_demand_dict(),
                                                 inventory_reward_extension=inventory_reward)
@@ -110,8 +110,6 @@ class Alns:
         self.relatedness_precedence = self.set_relatedness_precedence_dict(
             relatedness_precedence) if problem_data.precedence else None
         self.related_removal_weight_param = related_removal_weight_param
-
-
 
         # TODO: Delete these when done with testing
         # self.rel_components = {'loc_time_amount__transport_time': 0, 'loc_time_amount__time_window': 0,
@@ -145,37 +143,37 @@ class Alns:
             print("Relatedness of zones is not properly defined.")
         return d
 
-    @staticmethod
-    def construct_initial_solution(problem_data: ProblemDataExtended) -> Solution:
-        sol: Solution = Solution(problem_data)
-        unrouted_orders = list(sol.prbl.order_nodes.keys())
-        unrouted_order_cost = [sol.prbl.external_delivery_penalties[o] for o in unrouted_orders]
-        unrouted_orders = [o for _, o in sorted(zip(unrouted_order_cost, unrouted_orders),
-                                                key=lambda pair: pair[0], reverse=True)]  # desc according to cost
-
-        for o in unrouted_orders:
-            insertion_gain = []
-            insertion: List[Tuple[int, str]] = []
-            for v in sol.prbl.vessels:
-                for idx in range(1, len(sol.routes[v]) + 1):
-                    insertion_gain.append(sol.get_insertion_utility(node=sol.prbl.nodes[o],
-                                                                    idx=idx, vessel=v))
-                    insertion.append((idx, v))
-            insertion = [ins for _, ins in sorted(zip(insertion_gain, insertion),
-                                                  key=lambda pair: pair[0], reverse=True)]
-            feasible = False
-            while not feasible and len(insertion) > 0:
-                idx, vessel = insertion[0]
-                feasible = sol.check_insertion_feasibility(o, vessel, idx)
-                if feasible:
-                    sol.insert_last_checked()
-                else:
-                    sol.clear_last_checked()
-                insertion.pop(0)
-        return sol
+    # @staticmethod
+    # def construct_initial_solution(problem_data: ProblemDataExtended) -> Solution:
+    #     sol: Solution = Solution(problem_data)
+    #     unrouted_orders = list(sol.prbl.order_nodes.keys())
+    #     unrouted_order_cost = [sol.prbl.external_delivery_penalties[o] for o in unrouted_orders]
+    #     unrouted_orders = [o for _, o in sorted(zip(unrouted_order_cost, unrouted_orders),
+    #                                             key=lambda pair: pair[0], reverse=True)]  # desc according to cost
+    #
+    #     for o in unrouted_orders:
+    #         insertion_gain = []
+    #         insertion: List[Tuple[int, str]] = []
+    #         for v in sol.prbl.vessels:
+    #             for idx in range(1, len(sol.routes[v]) + 1):
+    #                 insertion_gain.append(sol.get_insertion_utility(node=sol.prbl.nodes[o],
+    #                                                                 idx=idx, vessel=v))
+    #                 insertion.append((idx, v))
+    #         insertion = [ins for _, ins in sorted(zip(insertion_gain, insertion),
+    #                                               key=lambda pair: pair[0], reverse=True)]
+    #         feasible = False
+    #         while not feasible and len(insertion) > 0:
+    #             idx, vessel = insertion[0]
+    #             feasible = sol.check_insertion_feasibility(o, vessel, idx)
+    #             if feasible:
+    #                 sol.insert_last_checked()
+    #             else:
+    #                 sol.clear_last_checked()
+    #             insertion.pop(0)
+    #     return sol
 
     def adjust_initial_sol(self, verbose: bool = False) -> None:
-        self.production_model.solve(verbose=verbose)
+        self.production_model.solve(verbose=False)
         while self.production_model.results.solver.termination_condition != pyo.TerminationCondition.optimal:
             if verbose:
                 print(f"\nDestroying order nodes to find production feasible initial solution \n")
@@ -631,10 +629,12 @@ if __name__ == '__main__':
                 inventory_reward=False,
                 verbose=True
                 )
-    print(alns)
-    print("Remove num:", alns.remove_num)
 
-    iterations = 400
+    print("Route after initialization")
+    alns.current_sol.print_routes()
+    print("\nRemove num:", alns.remove_num, "\n")
+
+    iterations = 100
 
     _stat_solution_cost = []
     _stat_operator_weights = defaultdict(list)
@@ -660,7 +660,8 @@ if __name__ == '__main__':
 
     print()
     print("...ALNS terminating")
-    print(alns)
-    util.plot_alns_history(_stat_solution_cost)
-    util.plot_operator_weights(_stat_operator_weights)
+    print(alns.best_sol.print_routes())
+
+    #util.plot_alns_history(_stat_solution_cost)
+    #util.plot_operator_weights(_stat_operator_weights)
 

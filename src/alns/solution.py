@@ -411,6 +411,7 @@ class Solution:
 
     def check_time_feasibility(self, insert_node_id: str, vessel: str, idx: int) -> bool:
         # TODO: Find out what causes some solutions with negative latest start times to pass this check
+        # TODO: And visits where e > l
         route = self.temp_routes[vessel]
         insert_node = self.prbl.nodes[insert_node_id]
         idx = len(route) + idx + 1 if idx < 0 else idx  # transform negative indexes
