@@ -65,12 +65,14 @@ class Alns:
                  related_removal_weight_param: Dict[str, List[float]],
                  verbose: bool = False) -> None:
 
+        self.verbose = verbose
+
         # ALNS  parameters
         self.max_iter_seg = max_iter_seg
         self.remove_num = round(remove_percentage * len(problem_data.order_nodes))
 
         # Solutions
-        self.current_sol = self.construct_initial_solution(problem_data)
+        self.current_sol = self.repair_kregret(2, Solution(problem_data))  # self.construct_initial_solution(problem_data)
         self.current_sol_cost = self.current_sol.get_solution_cost()
         self.best_sol = self.current_sol
         self.best_sol_cost = self.current_sol_cost
@@ -90,7 +92,6 @@ class Alns:
         self.temperature = -(self.best_sol_cost * start_temperature_controlparam) / math.log2(0.5)
 
         self.it_seg_count = 0  # Iterations done in one segment - can maybe do this in run_alns_iteration?
-        self.insertion_candidates = self.current_sol.get_orders_not_served()
 
         # Relatedness operator parameters
         self.determinism_param = determinism_param
@@ -98,7 +99,7 @@ class Alns:
             relatedness_precedence) if problem_data.precedence else None
         self.related_removal_weight_param = related_removal_weight_param
 
-        self.verbose = verbose
+
 
         # TODO: Delete these when done with testing
         # self.rel_components = {'loc_time_amount__transport_time': 0, 'loc_time_amount__time_window': 0,
@@ -107,14 +108,16 @@ class Alns:
         #                        'loc_prec_usage': 0}
 
     def __repr__(self):
+        destroy_op = [(k, round(v, 2)) for k, v in sorted(self.destroy_op_weight.items(), key=lambda item: item[0])]
+        repair_op = [(k, round(v, 2)) for k, v in sorted(self.repair_op_weight.items(), key=lambda item: item[0])]
         return (
             f"Best solution with routing cost {self.best_sol_cost}: \n"
             f"{self.best_sol} \n"
             # f"Current solution with routing cost {self.current_sol_cost}: \n"
             # f"{self.current_sol} \n"
-            f"Insertion candidates (orders not served): {self.insertion_candidates} \n"
-            f"Destroy operators {[(k, round(v, 2)) for k, v in self.destroy_op_weight.items()]} \n"
-            f"and repair operators {[(k, round(v, 2)) for k, v in self.repair_op_weight.items()]} \n")
+            f"Insertion candidates (orders not served): {self.best_sol.get_orders_not_served()} \n"
+            f"Destroy operators {destroy_op} \n"
+            f"and repair operators {repair_op} \n")
 
     def set_relatedness_precedence_dict(self, d: Dict[Tuple[str, str], int]) -> Dict[Tuple[str, str], int]:
         # Returns a dict with key all combinations of zones (z1, z2) and value defined relatedness of two zones
@@ -240,8 +243,10 @@ class Alns:
             return None
 
     def destroy_random(self, sol: Solution) -> Solution:
-        served_orders = [(v, o) for v in sol.prbl.vessels
-                         for o in sol.routes[v] if not sol.prbl.nodes[o].is_factory]
+        served_orders = [(vessel, order)
+                         for vessel in sol.prbl.vessels
+                         for order in sol.routes[vessel]
+                         if not sol.prbl.nodes[order].is_factory]
         random.shuffle(served_orders)
         removals = 0
         while removals < self.remove_num and served_orders:
@@ -249,11 +254,10 @@ class Alns:
             remove_index = sol.routes[vessel].index(order)
             sol.remove_node(vessel, remove_index)
             removals += 1
-
         sol.recompute_solution_variables()
         return sol
 
-    def destroy_voyage(self, sol: Solution) -> Solution:
+    def destroy_voyage_random(self, sol: Solution) -> Solution:
         # voyage: factory visit + orders until next factory visit
         voyage_start_indexes = [(vessel, idx)
                                 for vessel in sol.prbl.vessels
@@ -308,7 +312,7 @@ class Alns:
 
     def destroy_route_random(self, sol: Solution) -> Solution:
         # choose a vessel that has a route
-        vessel = random.choice([v for v in sol.prbl.vessels if len(sol.routes[v]) > 1])
+        vessel = random.choice([vessel for vessel in sol.prbl.vessels if len(sol.routes[vessel]) > 1])
         route = sol.routes[vessel]
         for idx in range(len(route) - 1, 0, -1):
             sol.remove_node(vessel, idx)
@@ -330,32 +334,18 @@ class Alns:
         return sol
 
     def destroy_worst(self, sol: Solution) -> Solution:
-        served_orders = [node for v in sol.prbl.vessels
-                         for node in sol.routes[v]
-                         if not sol.prbl.nodes[node].is_factory]
+        candidates = True  # dummy initialization
         removals = 0
-
-        while removals < self.remove_num and served_orders:
-
-            candidates: List[Tuple[str, int, str, float]] = []  # order, idx, vessel, utility
-            for v in sol.prbl.vessels:
-                route = sol.routes[v]
-                for idx in range(len(route)):
-                    node = sol.prbl.nodes[route[idx]]
-                    if not node.is_factory:
-                        candidates.append((node.id, idx, v, sol.get_removal_utility(vessel=v, idx=idx)))
-
-            if not candidates:  # no orders to remove
-                return sol
-
-            candidates.sort(key=lambda tup: tup[3], reverse=True)  # sort according to utility desc
-            chosen_worst = (candidates[int(pow(random.random(), self.determinism_param)
-                                                   * len(candidates))])[:3]  # (order, idx, vessel)
-
-            served_orders.remove(chosen_worst[0])
-            sol.remove_node(vessel=chosen_worst[2], idx=chosen_worst[1])
+        while removals < self.remove_num and candidates:
+            candidates = [(vessel, idx, sol.get_removal_utility(vessel, idx))
+                          for vessel in sol.prbl.vessels
+                          for idx, order in enumerate(sol.routes[vessel])
+                          if not sol.prbl.nodes[order].is_factory]
+            candidates.sort(key=lambda tup: tup[2], reverse=True)
+            chosen_idx = int(pow(random.random(), self.determinism_param) * len(candidates))
+            vessel, idx, _ = candidates.pop(chosen_idx)
+            sol.remove_node(vessel, idx)
             removals += 1
-
         sol.recompute_solution_variables()
         return sol
 
@@ -375,8 +365,7 @@ class Alns:
         #     w_1 * time_window_difference
         # self.rel_components['loc_time_usage'] += 1
 
-        return (w_0 * self.current_sol.prbl.transport_times[order1, order2] +
-                w_1 * time_window_difference)
+        return w_0 * self.current_sol.prbl.transport_times[order1, order2] + w_1 * time_window_difference
 
     def _relatedness_location_precedence(self, order1: str, order2: str) -> float:
         w_0 = self.related_removal_weight_param['relatedness_location_precedence'][0]
