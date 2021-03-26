@@ -620,6 +620,68 @@ class Solution:
                     return False
         return True
 
+    def get_demand_dict(self, relevant_factories: List[str] = None) -> Dict[Tuple[str, str, int], int]:
+
+        demands: Dict[Tuple[str, str, int], int] = {}
+        factories = relevant_factories if relevant_factories else [k for k in self.prbl.factory_nodes.keys()]
+
+        for factory_node_id in factories:
+            voyage_start_idxs: Dict[str, List[Tuple[int, int]]] = self.get_temp_voyage_start_idxs_for_factory(
+                factory_node_id)
+
+            products_for_voyage: List[List[int]] = []
+            latest_loading_times: List[int] = []
+
+            for v in voyage_start_idxs.keys():
+                for i in range(len(voyage_start_idxs[v])):
+                    stop_index = self.get_temp_voyage_end_idx(vessel=v, start_idx=voyage_start_idxs[v][i][0])
+                    add_rows = [self.prbl.nodes[node_id].demand
+                                for node_id in self.temp_routes[v][voyage_start_idxs[v][i][0] + 1:stop_index]]
+                    if len(add_rows) > 0:
+                        prod_sums = []
+                        for p in range(len(self.prbl.products)):
+                            prod_sums.append(sum(row[p] for row in add_rows))
+                        products_for_voyage.append(prod_sums)
+                        latest_loading_times.append(voyage_start_idxs[v][i][1])
+
+            # Order rows in matrix products_for_voyage by corresponding latest_loading_times asc
+            products_for_voyage = [sublist for _, sublist in sorted(zip(latest_loading_times, products_for_voyage),
+                                                                    key=lambda pair: pair[0])]
+            latest_loading_times.sort()
+
+            # Sum rows whose latest delivery time is equal
+            def indices_with_same_value(lis, value):
+                return [j for j, x in enumerate(lis) if x == value]
+
+            same_delivery_times = [indices_with_same_value(latest_loading_times, value)
+                                   for value in set(latest_loading_times)]
+
+            # Looping backwards in order not to mess up the indices when popping
+            for i in range(len(same_delivery_times) - 1, -1, -1):
+                if len(same_delivery_times[i]) > 1:  # there are rows whose loading time is equal
+                    products_for_voyage[i] = [sum(row[p]
+                                                  for row in products_for_voyage[
+                                                             same_delivery_times[i][0]:same_delivery_times[i][-1]])
+                                              for p in range(len(self.prbl.products))]
+                    for j in range(1, len(same_delivery_times[i])):
+                        products_for_voyage.pop(j)
+                        latest_loading_times.pop(j)
+
+            # Add values to the demand dict
+            for i in range(len(self.prbl.products)):
+                for t in self.prbl.time_periods:
+                    if t in latest_loading_times:
+                        idx = latest_loading_times.index(t)
+                        demands[(factory_node_id, self.prbl.products[i], t)] = products_for_voyage[idx][i]
+                    else:
+                        demands[(factory_node_id, self.prbl.products[i], t)] = 0
+
+        return demands
+
+    def get_production_cost(self, pp_model) -> int:
+        demands: Dict[Tuple[str, str, int], int] = self.get_demand_dict()
+        return pp_model.get_production_cost(demands, verbose=self.verbose)
+
     def remove_node(self, vessel: str, idx: int):
         node = self.prbl.nodes[self.routes[vessel][idx]]
 
@@ -672,7 +734,7 @@ class Solution:
                 factory_visits_route_idx[factory].append(route_idx)
         return factory_visits_route_idx
 
-    def get_solution_cost(self) -> int:
+    def get_solution_routing_cost(self) -> int:
         transport_cost = 0
         unmet_orders = list(self.prbl.order_nodes.keys())
 

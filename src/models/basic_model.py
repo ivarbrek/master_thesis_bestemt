@@ -714,7 +714,6 @@ class BasicModel:
 
         print("Done setting constraints!")
 
-
     def solve(self, verbose: bool = True, time_limit: int = None) -> None:
         print("Solver running...")
         if time_limit:
