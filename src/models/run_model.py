@@ -2,10 +2,10 @@ from src.models.basic_model import BasicModel
 from src.read_problem_data import ProblemData
 
 
-problem_data = ProblemData('../../data/input_data/small_testcase_one_vessel.xlsx')
+# problem_data = ProblemData('../../data/input_data/small_testcase_one_vessel.xlsx')
 # problem_data = ProblemData('../../data/input_data/small_testcase.xlsx')
 # problem_data = ProblemData('../../data/input_data/medium_testcase.xlsx')
-# problem_data = ProblemData('../../data/input_data/large_testcase.xlsx')
+problem_data = ProblemData('../../data/input_data/large_testcase.xlsx')
 # problem_data = ProblemData('../../data/input_data/larger_testcase.xlsx')
 # problem_data = ProblemData('../../data/input_data/larger_testcase_4vessels.xlsx')
 
