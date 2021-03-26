@@ -393,7 +393,9 @@ class Alns:
         if repair_op == "r_greedy":
             return self.repair_greedy(sol)
         elif repair_op == "r_2regret":
-            return self.repair_2regret(sol)
+            return self.repair_kregret(2, sol)
+        elif repair_op == 'r_3regret':
+            return self.repair_kregret(3, sol)
         else:
             print("Repair operator does not exist")
             return None
@@ -431,7 +433,7 @@ class Alns:
                     unrouted_orders.append(insert_node)
         return sol
 
-    def repair_2regret(self, sol: Solution) -> Solution:
+    def repair_kregret(self, k: int, sol: Solution) -> Solution:
         unrouted_orders = sol.get_orders_not_served()
         while unrouted_orders:
             # find the largest regret for each order and insert the largest regret.
@@ -448,7 +450,7 @@ class Alns:
                 num_feasible = 0
                 best_insertion: Tuple[str, int, str] = tuple()
 
-                while num_feasible < 2 and len(insertions) > 0:
+                while num_feasible < k and len(insertions) > 0:
                     idx, vessel, util = insertions.pop()
                     feasible = sol.check_insertion_feasibility(order, vessel, idx)
                     sol.clear_last_checked()
@@ -461,8 +463,8 @@ class Alns:
                         insertion_regret -= util
                         num_feasible += 1
 
-                if num_feasible == 1:  # Only one feasible solution found -> infinite regret
-                    insertion_regret -= -int_inf
+                if num_feasible < k:  # less than k feasible solutions found -> num_feasible * infinite regret
+                    insertion_regret -= - num_feasible * int_inf
 
                 if num_feasible >= 1 and best_insertion:  # at least one feasible solution found
                     node_id, idx, vessel = best_insertion
@@ -546,19 +548,20 @@ if __name__ == '__main__':
     print("ALNS starting...")
     alns = Alns(problem_data=prbl,
                 destroy_op=destroy_op,
-                repair_op=['r_greedy', 'r_2regret'],
+                repair_op=['r_greedy', 'r_2regret', 'r_3regret'],
                 weight_min_threshold=0.2,
-                reaction_param=0.05,
+                reaction_param=0.1,
                 score_params=[5, 3, 1],  # corresponding to sigma_1, sigma_2, sigma_3 in R&P and L&N
                 start_temperature_controlparam=0.4,  # solution 50% worse than best solution is accepted with 50% prob.
                 cooling_rate=0.995,
-                max_iter_seg=10,
+                max_iter_seg=40,
                 remove_percentage=0.4,
                 determinism_param=5,
                 relatedness_precedence={('green', 'yellow'): 6, ('green', 'red'): 10, ('yellow', 'red'): 4},
                 related_removal_weight_param=related_removal_weight_param
                 )
     print(alns)
+    print("Remove num:", alns.remove_num)
 
     iterations = 500
 
