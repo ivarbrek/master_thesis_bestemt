@@ -48,6 +48,7 @@ class ProblemData:
         # Validate sets
         self._validate_set_consistency()
         self._validate_feasible_problem()
+        #self._validate_transport_time_triangle_inequality()
 
         # Attributes
         self.nodes = self.get_nodes()
@@ -147,6 +148,15 @@ class ProblemData:
                     for factory in self.factory_max_vessel_destination_df.index)
                 >= len(self.get_vessels()))
 
+    def _validate_transport_time_triangle_inequality(self) -> None:
+        nodes = self.get_nodes()
+        for origin in nodes:
+            for intermediate in nodes:
+                for destination in nodes:
+                    assert (self.transport_times_df.loc[origin, destination] <=
+                            self.transport_times_df.loc[origin, intermediate] +
+                            self.transport_times_df.loc[intermediate, destination])
+
     def get_vessels(self) -> List[str]:
         return list(self.vessel_capacities_df.index)
 
@@ -245,7 +255,16 @@ class ProblemData:
                 self.transport_unit_costs_df.index}
 
     def get_transport_times_dict(self) -> Dict[Tuple[str, str], int]:
-        return {**{(node1, node2): self.transport_times_df.loc[node1, node2]
+        # return {**{(node1, node2): self.transport_times_df.loc[node1, node2]
+        #            for node1 in self.transport_times_df.index
+        #            for node2 in self.transport_times_df.columns},
+        #         **{('d_0', node): 1 for node in self.transport_times_df.index},
+        #         **{(node, 'd_-1'): 1 for node in self.transport_times_df.index}}
+
+        return {**{(node1, node2): min(self.transport_times_df.loc[node1, node2] +
+                                       [self.transport_times_df.loc[node1, intermediate]
+                                        + self.transport_times_df.loc[intermediate, node2]
+                                        for intermediate in self.transport_times_df.index])
                    for node1 in self.transport_times_df.index
                    for node2 in self.transport_times_df.columns},
                 **{('d_0', node): 1 for node in self.transport_times_df.index},

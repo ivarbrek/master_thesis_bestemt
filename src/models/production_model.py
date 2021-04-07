@@ -1,3 +1,5 @@
+import math
+
 import pyomo.environ as pyo
 from typing import Dict, List, Tuple
 from time import time
@@ -6,8 +8,6 @@ from tabulate import tabulate
 from pyomo.opt import SolverStatus, TerminationCondition
 
 from src.alns.solution import ProblemDataExtended
-
-int_inf = 999999999999999
 
 
 class ProductionModel:
@@ -314,11 +314,11 @@ class ProductionModel:
 
         # Problem is infeasible
         elif self.results.solver.termination_condition == TerminationCondition.infeasible:
-            return int_inf
+            return math.inf
 
         else:
             print("Solver status:", self.results.solver.status)
-            return int_inf
+            return math.inf
 
 
 if __name__ == '__main__':

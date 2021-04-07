@@ -459,7 +459,7 @@ class Alns:
                       for idx in range(1, len(sol.routes[vessel]) + 1)]
         insertions.sort(key=lambda tup: tup[3])  # sort by gain
 
-        #unrouted_orders = []
+        # unrouted_orders = []
 
         while len(insertion_cand) > 0:  # try all possible insertions
             insert_node, vessel, idx, _ = insertions[-1]
@@ -481,7 +481,7 @@ class Alns:
                 # Remove node_id from insertion candidate list if no insertions left for this node_id
                 if len([insert for insert in insertions if insert[0] == insert_node]) == 0:
                     insertion_cand.remove(insert_node)
-                    #unrouted_orders.append(insert_node)
+                    # unrouted_orders.append(insert_node)
         return sol
 
     def repair_kregret(self, k: int, sol: Solution) -> Solution:
@@ -493,7 +493,8 @@ class Alns:
 
             for order in unrouted_orders:
                 # Get all insertion utilities
-                insertions = [(idx, v, sol.get_insertion_utility(sol.prbl.nodes[order], v, idx))  # tuple (idx, vessel, gain)
+                insertions = [(idx, v, sol.get_insertion_utility(sol.prbl.nodes[order], v, idx))
+                              # tuple (idx, vessel, gain)
                               for v in sol.prbl.vessels for idx in range(1, len(sol.routes[v]) + 1)]
                 insertions.sort(key=lambda item: item[2])  # sort by gain
 
@@ -582,8 +583,7 @@ class Alns:
         # if f(x) > f(x∗) then
         # set x∗ =x
         if update_type == 0:  # type 0 means global best solution is found
-            if self.current_sol.get_production_cost(pp_model=self.production_model) < int_inf:
-                # TODO: int_inf risky, must be less than int_inf in production_model.py
+            if self.current_sol.get_production_cost(pp_model=self.production_model) < math.inf:
                 self.best_sol = self.current_sol
                 self.best_sol_cost = self.current_sol_cost
                 self.new_best_solution_feasible_production_count += 1
@@ -634,7 +634,7 @@ if __name__ == '__main__':
     alns.current_sol.print_routes()
     print("\nRemove num:", alns.remove_num, "\n")
 
-    iterations = 100
+    iterations = 300
 
     _stat_solution_cost = []
     _stat_operator_weights = defaultdict(list)
@@ -652,16 +652,18 @@ if __name__ == '__main__':
             _stat_operator_weights[op].append(score)
         print()
 
+    print()
+    print("...ALNS terminating \n")
+
     # print(alns.rel_components)
 
     print(f"Best solution updated {alns.new_best_solution_feasible_production_count} times")
     print(f"Candidate to become best solution rejected {alns.new_best_solution_infeasible_production_count} times, "
           f"because of production infeasibility")
-
     print()
-    print("...ALNS terminating")
-    print(alns.best_sol.print_routes())
 
-    #util.plot_alns_history(_stat_solution_cost)
-    #util.plot_operator_weights(_stat_operator_weights)
+    alns.best_sol.print_routes()
+    print(alns.best_sol.get_orders_not_served())
 
+    # util.plot_alns_history(_stat_solution_cost)
+    # util.plot_operator_weights(_stat_operator_weights)

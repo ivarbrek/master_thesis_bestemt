@@ -77,7 +77,7 @@ class Solution:
 
         self.routes: Dict[str, List[str]] = {v: [self.prbl.vessel_initial_locations[v]] for v in self.prbl.vessels}
         self.e: Dict[str, List[int]] = {v: [max(1, self.prbl.start_times_for_vessels[v])] for v in self.prbl.vessels}
-        self.l: Dict[str, List[int]] = {v: [len(self.prbl.time_periods)] for v in self.prbl.vessels}
+        self.l: Dict[str, List[int]] = {v: [len(self.prbl.time_periods) - 1] for v in self.prbl.vessels}   # changed from just len
         self.factory_visits: Dict[str, List[str]] = self._init_factory_visits()
         self.factory_visits_route_index: Dict[str, List[int]] = {f: [0 for _ in self.factory_visits[f]]
                                                                  for f in self.prbl.factory_nodes}
@@ -386,7 +386,8 @@ class Solution:
         :param next_arr_times:
         :return: True if there is no constraint violation
         """
-        for i in range(idx - 1, -1, -1):
+
+        for i in range(idx, -1, -1):
             vessel = self.temp_factory_visits[factory][i]
             route_index = self.temp_factory_visits_route_index[factory][i]
 
@@ -410,8 +411,6 @@ class Solution:
         return True
 
     def check_time_feasibility(self, insert_node_id: str, vessel: str, idx: int) -> bool:
-        # TODO: Find out what causes some solutions with negative latest start times to pass this check
-        # TODO: And visits where e > l
         route = self.temp_routes[vessel]
         insert_node = self.prbl.nodes[insert_node_id]
         idx = len(route) + idx + 1 if idx < 0 else idx  # transform negative indexes
@@ -685,16 +684,25 @@ class Solution:
 
         # recompute new e and l for routes
         for vessel, route in self.routes.items():
-            self.check_earliest_forward(vessel, 0, force_propagation=True)
-            self.check_latest_backward(vessel, len(route) - 1, force_propagation=True)
+            feasible_earliest_forward = self.check_earliest_forward(vessel, 0, force_propagation=True)
+            feasible_latest_backward = self.check_latest_backward(vessel, len(route) - 1, force_propagation=True)
 
         # recompute new e and l for factory visits
         for factory, factory_visits in self.factory_visits.items():
-            self.check_factory_visits_earliest_forward(factory, 0, force_propagation=True)
-            self.check_factory_visits_latest_backward(factory, len(factory_visits) - 1, force_propagation=True)
+            feasible_factory_visits_earliest_forward = self.check_factory_visits_earliest_forward(factory, 0, force_propagation=True)
+            feasible_factory_visits_latest_backward = self.check_factory_visits_latest_backward(factory, len(factory_visits) - 1, force_propagation=True)
 
         # move updates from temp to main variables
         self.insert_last_checked()
+
+        # print if error
+        if not (feasible_earliest_forward and feasible_latest_backward
+                and feasible_factory_visits_earliest_forward and feasible_factory_visits_latest_backward) \
+                and self.verbose:
+            print(f"{bcolors.WARNING}[WARNING] {bcolors.ENDC}"
+                  f"Not feasible after recomputation")
+            self.print_routes()
+            print()
 
     def remove_consecutive_factories(self) -> None:
         for vessel, route in self.temp_routes.items():
@@ -906,11 +914,13 @@ class Solution:
 
     def print_routes(self, highlight: List[Tuple[str, int]] = None):
         highlight = [] if not highlight else highlight
+        error = False
         for vessel, route in self.routes.items():
             s = ''
             for i, (node, e, l) in enumerate(zip(self.routes[vessel], self.e[vessel], self.l[vessel])):
                 if e > l:
                     s += f'{bcolors.FAIL}[ERROR]{bcolors.RESET_ALL} '
+                    error = True
                 if (vessel, i) in highlight:
                     s += f'{bcolors.OKGREEN}{node} ({e},{l}){bcolors.RESET_ALL}, '
                 elif self.prbl.nodes[node].is_factory:
@@ -918,6 +928,10 @@ class Solution:
                 else:
                     s += f'{node} ({e},{l}), '
             print(f'{vessel}: {s}')
+        if error:
+            for factory in self.prbl.factory_nodes:
+                print(f"{factory}: {self.factory_visits[factory]}")
+
 
     def print_temp_routes(self, highlight: List[Tuple[str, int]] = None):
         highlight = [] if not highlight else highlight
