@@ -5,7 +5,6 @@ from time import time
 from typing import Dict, List, Tuple, Union
 from collections import defaultdict
 import function
-import pyomo.environ as pyo
 import joblib
 
 from src.alns.solution import Solution, ProblemDataExtended
@@ -69,7 +68,7 @@ class Alns:
         self.production_model = ProductionModel(prbl=problem_data,
                                                 demands=self.current_sol.get_demand_dict(),
                                                 inventory_reward_extension=inventory_reward)
-        self.best_sol_production_cost = self.adjust_initial_sol()  # Make sure initial solution is production-feasible
+        self.best_sol_production_cost = self.adjust_curr_sol_to_prod_feasibility()  # Make sure initial solution is production-feasible
         self.current_sol_cost = self.current_sol.get_solution_routing_cost()
         self.best_sol = self.current_sol
         self.best_sol_cost = self.current_sol_cost
@@ -128,39 +127,11 @@ class Alns:
             print("Relatedness of zones is not properly defined.")
         return d
 
-    # @staticmethod
-    # def construct_initial_solution(problem_data: ProblemDataExtended) -> Solution:
-    #     sol: Solution = Solution(problem_data)
-    #     unrouted_orders = list(sol.prbl.order_nodes.keys())
-    #     unrouted_order_cost = [sol.prbl.external_delivery_penalties[o] for o in unrouted_orders]
-    #     unrouted_orders = [o for _, o in sorted(zip(unrouted_order_cost, unrouted_orders),
-    #                                             key=lambda pair: pair[0], reverse=True)]  # desc according to cost
-    #
-    #     for o in unrouted_orders:
-    #         insertion_gain = []
-    #         insertion: List[Tuple[int, str]] = []
-    #         for v in sol.prbl.vessels:
-    #             for idx in range(1, len(sol.routes[v]) + 1):
-    #                 insertion_gain.append(sol.get_insertion_utility(node=sol.prbl.nodes[o],
-    #                                                                 idx=idx, vessel=v))
-    #                 insertion.append((idx, v))
-    #         insertion = [ins for _, ins in sorted(zip(insertion_gain, insertion),
-    #                                               key=lambda pair: pair[0], reverse=True)]
-    #         feasible = False
-    #         while not feasible and len(insertion) > 0:
-    #             idx, vessel = insertion[0]
-    #             feasible = sol.check_insertion_feasibility(o, vessel, idx)
-    #             if feasible:
-    #                 sol.insert_last_checked()
-    #             else:
-    #                 sol.clear_last_checked()
-    #             insertion.pop(0)
-    #     return sol
 
-    def adjust_initial_sol(self) -> float:
+    def adjust_curr_sol_to_prod_feasibility(self) -> float:
         production_cost = self.current_sol.get_production_cost(self.production_model)
         while production_cost == math.inf:
-            self.current_sol = self.destroy_random(self.current_sol)
+            self.current_sol = self.destroy_worst(self.current_sol)
             production_cost = self.current_sol.get_production_cost(self.production_model)
         return production_cost
 
@@ -624,7 +595,6 @@ if __name__ == '__main__':
     alns.current_sol.print_routes()
     print("\nRemove num:", alns.remove_num, "\n")
 
-
     iterations = 500
 
     _stat_solution_cost = []
@@ -648,13 +618,17 @@ if __name__ == '__main__':
 
     print(f"Best solution updated {alns.new_best_solution_feasible_production_count} times")
     print(f"Candidate to become best solution rejected {alns.new_best_solution_infeasible_production_count} times, "
-          f"because of production infeasibility")
+          f"because of production infeasibility, where cache was used "
+          f"{alns.new_best_solution_infeasible_revisited_count} times")
 
     print()
     print(f"...ALNS terminating  ({round(time() - t0)}s)")
     alns.best_sol.print_routes()
-    print("Routing obj:", alns.best_sol_cost, "Prod obj:", round(alns.best_sol_production_cost, 1), "Total: ")
+    print("Not served:", alns.best_sol.get_orders_not_served())
 
-    #util.plot_alns_history(_stat_solution_cost)
-    #util.plot_operator_weights(_stat_operator_weights)
+    print("Routing obj:", alns.best_sol_cost, "Prod obj:", round(alns.best_sol_production_cost, 1),
+          "Total:", alns.best_sol_cost + round(alns.best_sol_production_cost, 1))
+
+    util.plot_alns_history(_stat_solution_cost)
+    util.plot_operator_weights(_stat_operator_weights)
 

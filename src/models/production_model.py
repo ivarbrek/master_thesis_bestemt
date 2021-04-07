@@ -2,11 +2,13 @@ import pyomo.environ as pyo
 from typing import Dict, Tuple
 from time import time
 import math
-from pyomo.core import Constraint  # TODO: Remove this and use pyo.Constraint.Feasible/Skip
+import logging
 from tabulate import tabulate
 from pyomo.opt import SolverStatus, TerminationCondition
 
 from src.alns.solution import ProblemDataExtended
+
+logging.getLogger('pyomo.core').setLevel(logging.ERROR)
 
 
 class ProductionModel:
@@ -169,7 +171,7 @@ class ProductionModel:
 
         def constr_inventory_balance(model, i, p, t):
             if t == 0:
-                return Constraint.Feasible
+                return pyo.Constraint.Feasible
             return (model.s[i, p, t] == (model.s[i, p, (t - 1)] +
                     sum(model.q[l, p, t] for (ii, l) in model.PRODUCTION_LINES_FOR_FACTORIES_TUP if ii == i) -
                     model.demands[i, p, t]))
@@ -198,7 +200,7 @@ class ProductionModel:
 
         def constr_activate_delta(model, l, p, t):
             if t == 0:
-                return Constraint.Feasible
+                return pyo.Constraint.Feasible
             return model.g[l, p, t] - model.g[l, p, t - 1] <= model.delta[l, p, t]
 
         self.m.constr_activate_delta = pyo.Constraint(self.m.PRODUCTION_LINES,
@@ -234,7 +236,7 @@ class ProductionModel:
 
         def constr_production_shift(model, l, p, t):
             if t == 0:
-                return Constraint.Feasible
+                return pyo.Constraint.Feasible
             relevant_products = {q for (qq, q) in model.PRODUCTS_WITHIN_SAME_PRODUCT_GROUP_TUP if qq == p}
             return model.g[l, p, (t - 1)] <= model.a[l, t] + sum(model.g[l, q, t] for q in relevant_products)
 

@@ -516,7 +516,7 @@ class Solution:
         return voyage_demand + sum(d for d in insert_node.demand) <= self.prbl.vessel_ton_capacities[vessel]
 
     def check_no_products_feasibility(self, insert_node: Node, vessel: str, idx: int) -> bool:
-        if self.prbl.vessel_nprod_capacities[vessel] >= len(self.prbl.products):
+        if self.prbl.vessel_nprod_capacities[vessel] >= len(self.prbl.products) or insert_node.is_factory:
             return True
         route = self.routes[vessel]
         voyage_start, voyage_end = self.get_voyage_start_end_idx(vessel, idx)
