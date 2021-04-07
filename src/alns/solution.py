@@ -643,8 +643,8 @@ class Solution:
 
         return demands
 
-    def get_production_cost(self, pp_model) -> int:
-        demands: Dict[Tuple[str, str, int], int] = self.get_demand_dict()
+    def get_production_cost(self, pp_model: 'ProductionModel') -> float:
+        demands = self.get_demand_dict()
         return pp_model.get_production_cost(demands, verbose=self.verbose)
 
     def remove_node(self, vessel: str, idx: int):
@@ -722,7 +722,7 @@ class Solution:
 
     def get_solution_routing_cost(self) -> int:
         transport_cost = sum(self.prbl.transport_times[route[i - 1], route[i]] * self.prbl.transport_unit_costs[vessel]
-                             for vessel, route in self.temp_routes.items()
+                             for vessel, route in self.routes.items()
                              for i in range(1, len(route)))
         unmet_order_cost = sum(self.prbl.external_delivery_penalties[order_node]
                                for order_node in self.get_orders_not_served())

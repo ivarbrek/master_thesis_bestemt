@@ -129,6 +129,7 @@ dmypy.json
 
 # data files
 /data
+/cache
 
 # iOS .DS_store
 .DS_store

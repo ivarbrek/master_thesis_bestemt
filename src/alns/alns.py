@@ -1,5 +1,7 @@
 import math
 import random
+import numpy as np
+from time import time
 from typing import Dict, List, Tuple, Union
 from collections import defaultdict
 import function
@@ -7,28 +9,9 @@ import pyomo.environ as pyo
 
 from src.alns.solution import Solution, ProblemDataExtended
 from src.models.production_model import ProductionModel
-import numpy as np
 import src.util.plot as util
 
 int_inf = 999999
-
-
-# What to do on ALNS:
-#
-# General
-# [x] Construct initial solution
-# [x] Update solution (e and l) after removal.
-# [x] Calculate and update scores and weights
-# DROP THIS: Check that solution is feasible after removal (vessel load and n.o. products, production constraints)
-# [x] Calculate and update scores and weights
-#
-# Operators
-# [/] Greedy insertion
-# [/] Regret insertion
-# [/] Random removal
-# [/] Worst removal (objective, longest wait?)
-# [/] Related removal (distance, time window, shaw)
-# [ ] Voyage removal
 
 
 class Alns:
@@ -83,8 +66,7 @@ class Alns:
         self.production_model = ProductionModel(prbl=problem_data,
                                                 demands=self.current_sol.get_demand_dict(),
                                                 inventory_reward_extension=inventory_reward)
-        self.adjust_initial_sol(verbose=verbose)  # Make sure initial solution is production-feasible
-
+        self.best_sol_production_cost = self.adjust_initial_sol()  # Make sure initial solution is production-feasible
         self.current_sol_cost = self.current_sol.get_solution_routing_cost()
         self.best_sol = self.current_sol
         self.best_sol_cost = self.current_sol_cost
@@ -172,14 +154,12 @@ class Alns:
     #             insertion.pop(0)
     #     return sol
 
-    def adjust_initial_sol(self, verbose: bool = False) -> None:
-        self.production_model.solve(verbose=False)
-        while self.production_model.results.solver.termination_condition != pyo.TerminationCondition.optimal:
-            if verbose:
-                print(f"\nDestroying order nodes to find production feasible initial solution \n")
+    def adjust_initial_sol(self) -> float:
+        production_cost = self.current_sol.get_production_cost(self.production_model)
+        while production_cost == math.inf:
             self.current_sol = self.destroy_random(self.current_sol)
-            self.production_model.reconstruct_demand(new_demands=self.current_sol.get_demand_dict())
-            self.production_model.solve(verbose=verbose)
+            production_cost = self.current_sol.get_production_cost(self.production_model)
+        return production_cost
 
     def update_scores(self, destroy_op: str, repair_op: str, update_type: int) -> None:
         if update_type == -1:
@@ -582,11 +562,13 @@ class Alns:
         # if f(x) > f(x∗) then
         # set x∗ =x
         if update_type == 0:  # type 0 means global best solution is found
-            if self.current_sol.get_production_cost(pp_model=self.production_model) < int_inf:
-                # TODO: int_inf risky, must be less than int_inf in production_model.py
+            current_sol_production_cost = self.current_sol.get_production_cost(self.production_model)
+            if current_sol_production_cost < math.inf:
                 self.best_sol = self.current_sol
                 self.best_sol_cost = self.current_sol_cost
+                self.best_sol_production_cost = current_sol_production_cost
                 self.new_best_solution_feasible_production_count += 1
+                print("New best solutions' total obj:", round(current_sol_production_cost) + self.best_sol_cost)
                 if self.verbose:
                     print(f'> Solution is accepted as best solution')
             else:
@@ -598,9 +580,9 @@ class Alns:
 
 
 if __name__ == '__main__':
-    precedence: bool = True
+    precedence: bool = False
 
-    prbl = ProblemDataExtended('../../data/input_data/larger_testcase_4vessels.xlsx', precedence=precedence)
+    prbl = ProblemDataExtended('../../data/input_data/larger_testcase.xlsx', precedence=precedence)
     destroy_op = ['d_random',
                   'd_worst',
                   'd_voyage_random',
@@ -627,17 +609,19 @@ if __name__ == '__main__':
                 related_removal_weight_param={'relatedness_location_time': [1, 0.9],
                                               'relatedness_location_precedence': [0.25, 1]},
                 inventory_reward=False,
-                verbose=True
+                verbose=False
                 )
 
     print("Route after initialization")
     alns.current_sol.print_routes()
     print("\nRemove num:", alns.remove_num, "\n")
 
-    iterations = 100
+
+    iterations = 500
 
     _stat_solution_cost = []
     _stat_operator_weights = defaultdict(list)
+    t0 = time()
     for i in range(iterations):
         print("Iteration", i)
         alns.run_alns_iteration()
@@ -659,8 +643,9 @@ if __name__ == '__main__':
           f"because of production infeasibility")
 
     print()
-    print("...ALNS terminating")
-    print(alns.best_sol.print_routes())
+    print(f"...ALNS terminating  ({round(time() - t0)}s)")
+    alns.best_sol.print_routes()
+    print("Routing obj:", alns.best_sol_cost, "Prod obj:", round(alns.best_sol_production_cost, 1), "Total: ")
 
     #util.plot_alns_history(_stat_solution_cost)
     #util.plot_operator_weights(_stat_operator_weights)
