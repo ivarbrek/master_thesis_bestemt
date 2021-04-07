@@ -77,7 +77,8 @@ class Solution:
 
         self.routes: Dict[str, List[str]] = {v: [self.prbl.vessel_initial_locations[v]] for v in self.prbl.vessels}
         self.e: Dict[str, List[int]] = {v: [max(1, self.prbl.start_times_for_vessels[v])] for v in self.prbl.vessels}
-        self.l: Dict[str, List[int]] = {v: [len(self.prbl.time_periods) - 1] for v in self.prbl.vessels}   # changed from just len
+        self.l: Dict[str, List[int]] = {v: [len(self.prbl.time_periods) - 1] for v in
+                                        self.prbl.vessels}  # changed from just len
         self.factory_visits: Dict[str, List[str]] = self._init_factory_visits()
         self.factory_visits_route_index: Dict[str, List[int]] = {f: [0 for _ in self.factory_visits[f]]
                                                                  for f in self.prbl.factory_nodes}
@@ -88,6 +89,7 @@ class Solution:
         self.temp_factory_visits: Dict[str, List[str]] = copy.deepcopy(self.factory_visits)
         self.temp_factory_visits_route_index: Dict[str, List[int]] = copy.deepcopy(self.factory_visits_route_index)
 
+        self.ppfc_slack_factor: float = 1.0
         self.verbose = verbose
 
     def __repr__(self) -> str:
@@ -112,7 +114,9 @@ class Solution:
                                                          for factory, visit_route_idxs in
                                                          self.temp_factory_visits_route_index.items()}
 
+        solution_copy.ppfc_slack_factor = self.ppfc_slack_factor
         solution_copy.verbose = self.verbose
+
         return solution_copy
 
     def insert_last_checked(self):
@@ -515,7 +519,7 @@ class Solution:
         return voyage_demand + sum(d for d in insert_node.demand) <= self.prbl.vessel_ton_capacities[vessel]
 
     def check_no_products_feasibility(self, insert_node: Node, vessel: str, idx: int) -> bool:
-        if self.prbl.vessel_nprod_capacities[vessel] >= len(self.prbl.products):
+        if self.prbl.vessel_nprod_capacities[vessel] >= len(self.prbl.products) or insert_node.is_factory:
             return True
         route = self.routes[vessel]
         voyage_start, voyage_end = self.get_voyage_start_end_idx(vessel, idx)
@@ -555,7 +559,7 @@ class Solution:
             # Find the minimum number of activities that must be undertaken before a given loading event
             activity_requirement_cum = np.copy(production_requirement_cum)
             production_lines = [l for (i, l) in self.prbl.production_lines_for_factories if i == factory_node_id]
-                                # filter(lambda x: x[0] == factory_node_id, self.prbl.production_lines_for_factories)]
+            # filter(lambda x: x[0] == factory_node_id, self.prbl.production_lines_for_factories)]
 
             for p in range(len(self.prbl.products)):  # for all columns in the matrix
                 initial_inventory = self.prbl.factory_initial_inventories[(factory_node_id, self.prbl.products[p])]
@@ -585,7 +589,8 @@ class Solution:
                 first_production_time_periods = len(production_lines) * sum(
                     [self.prbl.production_stops[factory_node_id, t]
                      for t in range(latest + 1)])
-                if first_production_time_periods < np.sum(activity_requirement_cum[0], axis=None):
+                if (first_production_time_periods <
+                        self.ppfc_slack_factor * np.sum(activity_requirement_cum[0], axis=None)):
                     if self.verbose:
                         print(f"check_production_feasibility failed on production for {factory_node_id}")
                     return False
@@ -606,7 +611,8 @@ class Solution:
                     return False
         return True
 
-    def get_demand_dict(self, relevant_factories: List[str] = None) -> Dict[Tuple[str, str, int], int]:
+    def get_demand_dict(self, relevant_factories: List[str] = None) \
+            -> Dict[Tuple[str, str, int], int]:
         demands: Dict[Tuple[str, str, int], int] = {}  # (i, p, t): demand
         factories = relevant_factories if relevant_factories else [k for k in self.prbl.factory_nodes.keys()]
 
@@ -643,7 +649,7 @@ class Solution:
         return demands
 
     def get_production_cost(self, pp_model: 'ProductionModel') -> float:
-        demands = self.get_demand_dict()
+        demands: Dict[Tuple[str, str, int], int] = self.get_demand_dict()
         return pp_model.get_production_cost(demands, verbose=self.verbose)
 
     def remove_node(self, vessel: str, idx: int):
@@ -689,20 +695,23 @@ class Solution:
 
         # recompute new e and l for factory visits
         for factory, factory_visits in self.factory_visits.items():
-            feasible_factory_visits_earliest_forward = self.check_factory_visits_earliest_forward(factory, 0, force_propagation=True)
-            feasible_factory_visits_latest_backward = self.check_factory_visits_latest_backward(factory, len(factory_visits) - 1, force_propagation=True)
+            feasible_factory_visits_earliest_forward = self.check_factory_visits_earliest_forward(factory, 0,
+                                                                                                  force_propagation=True)
+            feasible_factory_visits_latest_backward = self.check_factory_visits_latest_backward(factory,
+                                                                                                len(factory_visits) - 1,
+                                                                                                force_propagation=True)
 
         # move updates from temp to main variables
         self.insert_last_checked()
 
         # print if error
-        if not (feasible_earliest_forward and feasible_latest_backward
-                and feasible_factory_visits_earliest_forward and feasible_factory_visits_latest_backward) \
-                and self.verbose:
-            print(f"{bcolors.WARNING}[WARNING] {bcolors.ENDC}"
-                  f"Not feasible after recomputation")
-            self.print_routes()
-            print()
+        # if not (feasible_earliest_forward and feasible_latest_backward
+        #         and feasible_factory_visits_earliest_forward and feasible_factory_visits_latest_backward) \
+        #         and self.verbose:
+        #     print(f"{bcolors.WARNING}[WARNING] {bcolors.ENDC}"
+        #           f"Not feasible after recomputation")
+        #     self.print_routes()
+        #     print()
 
     def remove_consecutive_factories(self) -> None:
         for vessel, route in self.temp_routes.items():
@@ -932,7 +941,6 @@ class Solution:
         if error:
             for factory in self.prbl.factory_nodes:
                 print(f"{factory}: {self.factory_visits[factory]}")
-
 
     def print_temp_routes(self, highlight: List[Tuple[str, int]] = None):
         highlight = [] if not highlight else highlight

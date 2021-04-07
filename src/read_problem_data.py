@@ -379,7 +379,6 @@ class ProblemData:
         if cache_file_name in os.listdir('../../cache/'):
             return json.load(open('../../cache/' + cache_file_name))
 
-
         dummy_start_arc = {v: [('d_0', i)] for v, i in self.get_vessel_first_location().items()}
         dummy_end_arcs = {v: [(i, 'd_-1') for i in self.get_factory_nodes(v)] for v in self.get_vessels()}
         all_other_arcs = {v: [(i, j)

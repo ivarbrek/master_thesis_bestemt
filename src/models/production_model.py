@@ -323,21 +323,43 @@ class ProductionModel:
             return math.inf
 
 
+def hardcode_demand_dict(prbl: ProblemDataExtended) -> Dict[Tuple[str, str, int], int]:
+    y_locks = [
+        ('f_1', 'o_6', 2),
+        ('f_1', 'o_7', 2),
+        ('f_1', 'o_8', 2),
+        ('f_1', 'o_10', 2),
+        ('f_1', 'o_11', 2),
+
+        ('f_2', 'o_16', 8),
+        ('f_2', 'o_13', 8),
+        ('f_2', 'o_12', 8),
+
+        ('f_1', 'o_4', 11),
+        ('f_1', 'o_1', 11)
+    ]
+
+    demands: Dict[Tuple[str, str, int], int] = {(i, p, t): 0 for i in prbl.factory_nodes
+                                                for p in prbl.products for t in prbl.time_periods}
+    for visit in y_locks:
+        for j in range(len(prbl.nodes[visit[1]].demand)):  # index in product list
+            if prbl.nodes[visit[1]].demand[j] > 0:
+                demands[visit[0], prbl.products[j], visit[2]] += prbl.nodes[visit[1]].demand[j]
+
+    return demands
+
+
 if __name__ == '__main__':
     pass
-    # prbl = ProblemDataExtended('../../data/input_data/large_testcase.xlsx', precedence=True)
+
+    # prbl = ProblemDataExtended('../../data/input_data/larger_testcase.xlsx', precedence=False)
+    # demands = hardcode_demand_dict(prbl)
     #
-    # demands: Dict[Tuple[str, str, int], int] = {(i, p, t): 0 for i in prbl.factory_nodes
-    #                                             for p in prbl.products for t in prbl.time_periods}
-    # demands[('f_1', 'p_1', 4)] = 500
-    # demands[('f_2', 'p_2', 3)] = 700
-    # print(demands)
+    # pp_model = ProductionModel(prbl=prbl, demands=demands, inventory_reward_extension=False)
+    # pp_model.solve(verbose=False, time_limit=100)
     #
-    # pp_model = ProductionModel(prbl=prbl, demands=demands, inventory_reward_extension=True)
-    # pp_model.solve(verbose=True, time_limit=100)
-    #
-    # print("COST RESULT")
+    # print("\nCOST RESULT")
     # try:
-    #     print(pyo.value(pp_model.objective))
+    #     print(pyo.value(pp_model.m.objective))
     # except AttributeError:
     #     print("Infeasible problem")
