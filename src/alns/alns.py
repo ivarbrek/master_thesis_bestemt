@@ -6,6 +6,7 @@ from typing import Dict, List, Tuple, Union
 from collections import defaultdict
 import function
 import pyomo.environ as pyo
+import joblib
 
 from src.alns.solution import Solution, ProblemDataExtended
 from src.models.production_model import ProductionModel
@@ -38,6 +39,8 @@ class Alns:
     related_removal_weight_param: Dict[str, List[float]]
     new_best_solution_feasible_production_count = 0
     new_best_solution_infeasible_production_count = 0
+    new_best_solution_infeasible_revisited_count = 0
+    production_problems_infeasible_cache = defaultdict(lambda: False)
 
     def __init__(self, problem_data: ProblemDataExtended,
                  destroy_op: List[str],
@@ -562,17 +565,22 @@ class Alns:
         # if f(x) > f(x∗) then
         # set x∗ =x
         if update_type == 0:  # type 0 means global best solution is found
-            current_sol_production_cost = self.current_sol.get_production_cost(self.production_model)
-            if current_sol_production_cost < math.inf:
-                self.best_sol = self.current_sol
-                self.best_sol_cost = self.current_sol_cost
-                self.best_sol_production_cost = current_sol_production_cost
-                self.new_best_solution_feasible_production_count += 1
-                print("New best solutions' total obj:", round(current_sol_production_cost) + self.best_sol_cost)
-                if self.verbose:
-                    print(f'> Solution is accepted as best solution')
-            else:
+            if self.production_problems_infeasible_cache[joblib.hash(self.current_sol.routes)]:
                 self.new_best_solution_infeasible_production_count += 1
+                self.new_best_solution_infeasible_revisited_count += 1
+            else:
+                current_sol_production_cost = self.current_sol.get_production_cost(self.production_model)
+                if current_sol_production_cost < math.inf:
+                    self.best_sol = self.current_sol
+                    self.best_sol_cost = self.current_sol_cost
+                    self.best_sol_production_cost = current_sol_production_cost
+                    self.new_best_solution_feasible_production_count += 1
+                    print("New best solutions' total obj:", round(current_sol_production_cost) + self.best_sol_cost)
+                    if self.verbose:
+                        print(f'> Solution is accepted as best solution')
+                else:
+                    self.production_problems_infeasible_cache[joblib.hash(self.current_sol.routes)] = True
+                    self.new_best_solution_infeasible_production_count += 1
 
         # update iteration parameters
         self.temperature = self.temperature * self.cooling_rate
