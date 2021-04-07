@@ -11,6 +11,7 @@ openpyxl = "*"
 tabulate = "*"
 matplotlib = "*"
 function = "*"
+joblib = "*"
 
 [dev-packages]
 

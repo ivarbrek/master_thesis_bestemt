@@ -1,8 +1,9 @@
 import math
 
 import pyomo.environ as pyo
-from typing import Dict, List, Tuple
+from typing import Dict, Tuple
 from time import time
+import math
 from pyomo.core import Constraint  # TODO: Remove this and use pyo.Constraint.Feasible/Skip
 from tabulate import tabulate
 from pyomo.opt import SolverStatus, TerminationCondition
@@ -303,19 +304,20 @@ class ProductionModel:
         self.m.constr_initial_inventory.reconstruct()
         self.m.constr_inventory_balance.reconstruct()
 
-    def get_production_cost(self, new_demands: Dict[Tuple[str, str, int], int], verbose: bool = False) -> int:
-        self.reconstruct_demand(new_demands=new_demands)
-        self.solve(verbose=verbose)  # Current pyo cannot suppress warning? https://github.com/coin-or/rbfopt/issues/14
+    def get_production_cost(self, new_demands: Dict[Tuple[str, str, int], int], verbose: bool = False) -> float:
+        self.reconstruct_demand(new_demands)
+        self.solve(verbose)  # Current pyo cannot suppress warning? https://github.com/coin-or/rbfopt/issues/14
 
         # Solution is optimal and feasible
-        if (self.results.solver.status == SolverStatus.ok) and (
+        if (self.results.solver.status == SolverStatus.ok) and (  # TODO: Is it necessary to check solver.status=
                 self.results.solver.termination_condition == TerminationCondition.optimal):
-            return int(pyo.value(self.m.objective))
+            return self.m.objective()
 
         # Problem is infeasible
         elif self.results.solver.termination_condition == TerminationCondition.infeasible:
             return math.inf
 
+        # Other non-optimal termination condition
         else:
             print("Solver status:", self.results.solver.status)
             return math.inf

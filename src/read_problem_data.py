@@ -1,4 +1,7 @@
+import os
 import pandas as pd
+import joblib
+import json
 from typing import List, Dict, Tuple
 from collections import defaultdict
 
@@ -371,6 +374,12 @@ class ProblemData:
 
     @property
     def arcs_for_vessels(self) -> Dict[str, List[Tuple[str, str]]]:
+        # Return cached arcs if they exist
+        cache_file_name = self._get_cached_file_name_for_arcs()
+        if cache_file_name in os.listdir('../../cache/'):
+            return json.load(open('../../cache/' + cache_file_name))
+
+
         dummy_start_arc = {v: [('d_0', i)] for v, i in self.get_vessel_first_location().items()}
         dummy_end_arcs = {v: [(i, 'd_-1') for i in self.get_factory_nodes(v)] for v in self.get_vessels()}
         all_other_arcs = {v: [(i, j)
@@ -379,7 +388,11 @@ class ProblemData:
                               if i != j
                               and not self._has_tw_conflict(v, i, j)]
                           for v in self.get_vessels()}
-        return {v: dummy_start_arc[v] + dummy_end_arcs[v] + all_other_arcs[v] for v in self.get_vessels()}
+        arcs = {v: dummy_start_arc[v] + dummy_end_arcs[v] + all_other_arcs[v] for v in self.get_vessels()}
+
+        # Save arcs to cache
+        json.dump(arcs, open('../../cache/' + self._get_cached_file_name_for_arcs(), 'w'))
+        return arcs
 
     def _has_tw_conflict(self, v, i, j):
         # i or j is a factory node
@@ -397,3 +410,12 @@ class ProblemData:
                     >
                     self.get_time_window_end(j)
                     + extra_violation)
+
+    def _get_cached_file_name_for_arcs(self):
+        relevant_sub_hashes = [joblib.hash(self.time_windows_for_orders_df),
+                               joblib.hash(self.get_loading_unloading_times_dict()),
+                               joblib.hash(self.get_transport_times_dict()),
+                               self.get_max_time_window_violation(),
+                               joblib.hash(self.get_nodes_for_vessels_dict2())]
+        file_name = joblib.hash(relevant_sub_hashes) + '.json'
+        return file_name

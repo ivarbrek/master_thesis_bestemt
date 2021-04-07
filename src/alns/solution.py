@@ -642,8 +642,8 @@ class Solution:
 
         return demands
 
-    def get_production_cost(self, pp_model) -> int:
-        demands: Dict[Tuple[str, str, int], int] = self.get_demand_dict()
+    def get_production_cost(self, pp_model: 'ProductionModel') -> float:
+        demands = self.get_demand_dict()
         return pp_model.get_production_cost(demands, verbose=self.verbose)
 
     def remove_node(self, vessel: str, idx: int):
@@ -708,13 +708,14 @@ class Solution:
         for vessel, route in self.temp_routes.items():
             if len(route) < 2:
                 continue
-            next_node = route[-1]
             # iterate backwards so that we can delete without messing up indexes
-            for idx in range(len(route) - 2, -1, -1):
-                if next_node == route[idx] and self.prbl.nodes[next_node].is_factory:
-                    self.remove_node(vessel, idx)
-                else:
-                    next_node = route[idx]
+            for idx in range(len(route) - 1, 0, -1):
+                curr_node = route[idx]
+                preceding_node = route[idx - 1]
+                # remove the second visit if the route's two first factory visits are consecutive
+                remove_idx = max(1, idx)
+                if preceding_node == curr_node and self.prbl.nodes[curr_node].is_factory:
+                    self.remove_node(vessel, remove_idx)
 
     def recompute_factory_visits_route_idx(self) -> Dict[str, List[int]]:
         # infer factory visit indexes from factory visits and routes
@@ -729,7 +730,7 @@ class Solution:
 
     def get_solution_routing_cost(self) -> int:
         transport_cost = sum(self.prbl.transport_times[route[i - 1], route[i]] * self.prbl.transport_unit_costs[vessel]
-                             for vessel, route in self.temp_routes.items()
+                             for vessel, route in self.routes.items()
                              for i in range(1, len(route)))
         unmet_order_cost = sum(self.prbl.external_delivery_penalties[order_node]
                                for order_node in self.get_orders_not_served())
