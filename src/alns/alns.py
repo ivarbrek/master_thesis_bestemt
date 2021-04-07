@@ -52,6 +52,7 @@ class Alns:
                  max_iter_seg: int,
                  remove_percentage: float,
                  determinism_param: int,
+                 noise_param: float,
                  relatedness_precedence: Dict[Tuple[str, str], int],
                  related_removal_weight_param: Dict[str, List[float]],
                  inventory_reward: bool,
@@ -62,6 +63,8 @@ class Alns:
         # ALNS  parameters
         self.max_iter_seg = max_iter_seg
         self.remove_num = round(remove_percentage * len(problem_data.order_nodes))
+        self.determinism_param = determinism_param
+        self.noise_param = noise_param
 
         # Solutions
         self.current_sol = self.repair_kregret(2, Solution(problem_data))
@@ -90,7 +93,6 @@ class Alns:
         self.it_seg_count = 0  # Iterations done in one segment - can maybe do this in run_alns_iteration?
 
         # Relatedness operator parameters
-        self.determinism_param = determinism_param
         self.relatedness_precedence = self.set_relatedness_precedence_dict(
             relatedness_precedence) if problem_data.precedence else None
         self.related_removal_weight_param = related_removal_weight_param
@@ -407,7 +409,7 @@ class Alns:
 
     def repair_greedy(self, sol: Solution) -> Solution:
         insertion_cand = sol.get_orders_not_served()
-        insertions = [(node_id, vessel, idx, sol.get_insertion_utility(sol.prbl.nodes[node_id], vessel, idx))
+        insertions = [(node_id, vessel, idx, sol.get_insertion_utility(sol.prbl.nodes[node_id], vessel, idx, self.noise_param))
                       for node_id in insertion_cand
                       for vessel in sol.prbl.vessels
                       for idx in range(1, len(sol.routes[vessel]) + 1)]
@@ -421,7 +423,7 @@ class Alns:
                 sol.insert_last_checked()
                 insertion_cand.remove(insert_node)
                 # recalculate profit gain and omit other insertions of node_id
-                insertions = [(node, vessel, idx, sol.get_insertion_utility(sol.prbl.nodes[insert_node], vessel, idx))
+                insertions = [(node, vessel, idx, sol.get_insertion_utility(sol.prbl.nodes[insert_node], vessel, idx, self.noise_param))
                               for node, vessel, idx, utility in insertions if node != insert_node]
                 insertions.sort(key=lambda item: item[3])  # sort by gain
 
@@ -447,7 +449,7 @@ class Alns:
 
             for order in unrouted_orders:
                 # Get all insertion utilities
-                insertions = [(idx, v, sol.get_insertion_utility(sol.prbl.nodes[order], v, idx))  # tuple (idx, vessel, gain)
+                insertions = [(idx, v, sol.get_insertion_utility(sol.prbl.nodes[order], v, idx, self.noise_param))
                               for v in sol.prbl.vessels for idx in range(1, len(sol.routes[v]) + 1)]
                 insertions.sort(key=lambda item: item[2])  # sort by gain
 
@@ -584,6 +586,7 @@ if __name__ == '__main__':
                 max_iter_seg=40,
                 remove_percentage=0.4,
                 determinism_param=5,
+                noise_param=200,
                 relatedness_precedence={('green', 'yellow'): 6, ('green', 'red'): 10, ('yellow', 'red'): 4},
                 related_removal_weight_param={'relatedness_location_time': [1, 0.9],
                                               'relatedness_location_precedence': [0.25, 1]},

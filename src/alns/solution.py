@@ -4,6 +4,7 @@ import math
 import numpy as np
 import bisect
 import copy
+import random
 from src.read_problem_data import ProblemData
 from src.util.print import bcolors
 
@@ -67,6 +68,10 @@ class ProblemDataExtended(ProblemData):
         self.quay_capacity: Dict[str, List[int]] = quay_capacity
         self.quay_cap_incr_times: Dict[str, List[int]] = quay_cap_incr_times
         self.quay_cap_decr_times: Dict[str, List[int]] = quay_cap_decr_times
+
+    @property
+    def max_transport_time(self):
+        return max(self.transport_times.values())
 
 
 class Solution:
@@ -745,7 +750,7 @@ class Solution:
                              for i in range(1, len(route)))
         return order_profits - transport_cost
 
-    def get_insertion_utility(self, node: Node, vessel: str, idx: int) -> float:  # High utility -> good insertion
+    def get_insertion_utility(self, node: Node, vessel: str, idx: int, noise_factor: float = 0) -> float:  # High utility -> good insertion
         route = self.temp_routes[vessel]
         transport_times = self.prbl.transport_times
         if idx < len(self.temp_routes[vessel]) - 1:  # node to be inserted is not at end of route
@@ -757,8 +762,8 @@ class Solution:
         else:
             net_sail_change = transport_times[route[idx - 1], node.id]
         delivery_gain = self.prbl.external_delivery_penalties[node.id] if not node.is_factory else 0
-
-        return delivery_gain - net_sail_change * self.prbl.transport_unit_costs[vessel]
+        noise = noise_factor * random.randrange(-self.prbl.max_transport_time, self.prbl.max_transport_time)
+        return delivery_gain - net_sail_change * self.prbl.transport_unit_costs[vessel] + noise
 
     def get_removal_utility(self, vessel: str, idx: int) -> float:  # High utility -> good removal ("remove worst node")
         route = self.routes[vessel]
