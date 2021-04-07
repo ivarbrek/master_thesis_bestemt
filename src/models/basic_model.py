@@ -333,7 +333,8 @@ class BasicModel:
                     + sum(model.transport_unit_costs[v] * model.transport_times[i, j] * model.x[v, i, j, t]
                           for t in model.TIME_PERIODS
                           for v in model.VESSELS
-                          for i, j in model.ARCS[v])
+                          for i, j in model.ARCS[v]
+                          if i != 'd_0' and j != 'd_-1')
                     + sum(model.production_start_costs[i, p] * model.delta[l, p, t]
                           for i in model.FACTORY_NODES
                           for (ii, l) in model.PRODUCTION_LINES_FOR_FACTORIES_TUP if i == ii
@@ -1028,7 +1029,8 @@ class BasicModel:
                 sum(self.m.transport_unit_costs[v] * self.m.transport_times[i, j] * pyo.value(self.m.x[v, i, j, t])
                     for t in self.m.TIME_PERIODS
                     for v in self.m.VESSELS
-                    for i, j in self.m.ARCS[v]))
+                    for i, j in self.m.ARCS[v]
+                    if i != 'd_0' and j != 'd_-1'))
 
             production_start_cost = (sum(self.m.production_start_costs[i, p] * pyo.value(self.m.delta[l, p, t])
                                          for i in self.m.FACTORY_NODES
