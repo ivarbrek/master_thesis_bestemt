@@ -258,13 +258,7 @@ class ProblemData:
                 self.transport_unit_costs_df.index}
 
     def get_transport_times_dict(self) -> Dict[Tuple[str, str], int]:
-        # return {**{(node1, node2): self.transport_times_df.loc[node1, node2]
-        #            for node1 in self.transport_times_df.index
-        #            for node2 in self.transport_times_df.columns},
-        #         **{('d_0', node): 1 for node in self.transport_times_df.index},
-        #         **{(node, 'd_-1'): 1 for node in self.transport_times_df.index}}
-
-        return {**{(node1, node2): min(self.transport_times_df.loc[node1, node2] +
+        return {**{(node1, node2): min([self.transport_times_df.loc[node1, node2]] +
                                        [self.transport_times_df.loc[node1, intermediate]
                                         + self.transport_times_df.loc[intermediate, node2]
                                         for intermediate in self.transport_times_df.index])
