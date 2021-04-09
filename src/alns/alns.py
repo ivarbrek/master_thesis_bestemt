@@ -495,15 +495,15 @@ class Alns:
                     sol.clear_last_checked()
 
                     if feasible and num_feasible == 0:
-                        insertion_regret += util
+                        insertion_regret += (k-1) * util  # inserting for k-1 terms in sum
                         best_insertion = (order, idx, vessel)
                         num_feasible += 1
-                    elif feasible and num_feasible == 1:
+                    elif feasible and num_feasible > 0:
                         insertion_regret -= util
                         num_feasible += 1
 
                 if num_feasible < k:  # less than k feasible solutions found -> num_feasible * infinite regret
-                    insertion_regret -= - num_feasible * int_inf
+                    insertion_regret -= - (k - num_feasible) * int_inf
 
                 if num_feasible >= 1 and best_insertion:  # at least one feasible solution found
                     node_id, idx, vessel = best_insertion

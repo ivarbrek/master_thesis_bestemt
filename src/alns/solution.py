@@ -596,19 +596,20 @@ class Solution:
                     return False
 
             # Checking for inventory feasibility
-            for k in range(np.shape(activity_requirement_cum)[0]):  # for all rows in the array
-                production_capacity_min = min([self.prbl.production_min_capacities[l, p]
-                                               for l in production_lines
-                                               for p in self.prbl.products])
-                inventory = (np.sum(activity_requirement_cum[k], axis=0) * production_capacity_min +
-                             np.sum([self.prbl.factory_initial_inventories[factory_node_id, p]
-                                     for p in self.prbl.products]))
-                if k > 0:  # subtract previous loadings
-                    inventory = inventory - np.sum(products_for_voyage[:k])
-                if inventory > self.prbl.factory_inventory_capacities[factory_node_id]:
-                    if self.verbose:
-                        print(f"check_production_feasibility failed on inventory for {factory_node_id}")
-                    return False
+            # Removed this - cannot _prove_ infeasibility (could pick up at earliest point in time instead)
+            # for k in range(np.shape(activity_requirement_cum)[0]):  # for all rows in the array
+            #     production_capacity_min = min([self.prbl.production_min_capacities[l, p]
+            #                                    for l in production_lines
+            #                                    for p in self.prbl.products])
+            #     inventory = (np.sum(activity_requirement_cum[k], axis=0) * production_capacity_min +
+            #                  np.sum([self.prbl.factory_initial_inventories[factory_node_id, p]
+            #                          for p in self.prbl.products]))
+            #     if k > 0:  # subtract previous loadings
+            #         inventory = inventory - np.sum(products_for_voyage[:k])
+            #     if inventory > self.prbl.factory_inventory_capacities[factory_node_id]:
+            #         if self.verbose:
+            #             print(f"check_production_feasibility failed on inventory for {factory_node_id}")
+            #         return False
         return True
 
     def get_demand_dict(self, relevant_factories: List[str] = None) \
