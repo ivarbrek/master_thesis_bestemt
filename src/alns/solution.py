@@ -492,6 +492,7 @@ class Solution:
         factory_destination_options = [(factory_node, self.get_insertion_utility(factory_node, vessel, len(route)))
                                        for factory_node in self.prbl.factory_nodes.values()]
         factory_destination_options.sort(key=lambda item: item[1], reverse=True)
+        # TODO: Don't be pure greedy her, but use determinism parameter
         # perform changes in a copy, to distinguish temp changes related to factory destination insertion checks from
         # those related to the original insertion
         copy_sol = self.copy()
@@ -500,7 +501,7 @@ class Solution:
                 self._set_temp_vars_to_solution(copy_sol)  # move update to self.temp
                 return True
             else:
-                copy_sol.clear_last_checked()
+                copy_sol = self.copy()
 
         if self.verbose:
             print(f"Check failed at: check_and_set_destination_factory for {vessel}")
@@ -636,10 +637,9 @@ class Solution:
                 voyage_end_idx = self.get_temp_voyage_end_idx(vessel=v, start_idx=idx)
                 if l > time_horizon:  # factory visit is not for product pickup
                     continue
-                demand: Dict[str, int] = {self.prbl.products[i]: sum(self.prbl.nodes[j].demand[i]
-                                                                     for j in
-                                                                     self.temp_routes[v][idx + 1:voyage_end_idx])
-                                          for i in range(len(self.prbl.products))}
+                demand = {self.prbl.products[i]: sum(self.prbl.nodes[j].demand[i]
+                                                     for j in self.temp_routes[v][idx + 1:voyage_end_idx])
+                          for i in range(len(self.prbl.products))}
                 for p in demand.keys():
                     if (factory_node_id, p, l) in demands.keys():
                         demands[(factory_node_id, p, l)] += demand[p]
@@ -695,28 +695,16 @@ class Solution:
 
         # recompute new e and l for routes
         for vessel, route in self.routes.items():
-            feasible_earliest_forward = self.check_earliest_forward(vessel, 0, force_propagation=True)
-            feasible_latest_backward = self.check_latest_backward(vessel, len(route) - 1, force_propagation=True)
+            self.check_earliest_forward(vessel, 0, force_propagation=True)
+            self.check_latest_backward(vessel, len(route) - 1, force_propagation=True)
 
         # recompute new e and l for factory visits
         for factory, factory_visits in self.factory_visits.items():
-            feasible_factory_visits_earliest_forward = self.check_factory_visits_earliest_forward(factory, 0,
-                                                                                                  force_propagation=True)
-            feasible_factory_visits_latest_backward = self.check_factory_visits_latest_backward(factory,
-                                                                                                len(factory_visits) - 1,
-                                                                                                force_propagation=True)
+            self.check_factory_visits_earliest_forward(factory, 0, force_propagation=True)
+            self.check_factory_visits_latest_backward(factory, len(factory_visits) - 1, force_propagation=True)
 
         # move updates from temp to main variables
         self.insert_last_checked()
-
-        # print if error
-        # if not (feasible_earliest_forward and feasible_latest_backward
-        #         and feasible_factory_visits_earliest_forward and feasible_factory_visits_latest_backward) \
-        #         and self.verbose:
-        #     print(f"{bcolors.WARNING}[WARNING] {bcolors.ENDC}"
-        #           f"Not feasible after recomputation")
-        #     self.print_routes()
-        #     print()
 
     def remove_consecutive_factories(self) -> None:
         for vessel, route in self.temp_routes.items():

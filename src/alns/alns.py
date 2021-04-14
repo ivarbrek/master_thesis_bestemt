@@ -92,7 +92,7 @@ class Alns:
         self.score_params = {i: score_params[i] for i in range(len(score_params))}
 
         self.cooling_rate = cooling_rate
-        self.temperature = -(self.best_sol_cost * start_temperature_controlparam) / math.log2(0.5)
+        self.temperature = -(self.best_sol_cost * start_temperature_controlparam) / math.log(0.5)
 
         self.it_seg_count = 0  # Iterations done in one segment - can maybe do this in run_alns_iteration?
 
@@ -100,9 +100,9 @@ class Alns:
         self.ppfc_slack_increment = ppfc_slack_increment
 
         # Relatedness operator parameters
-        self.relatedness_precedence = self.set_relatedness_precedence_dict(
-            relatedness_precedence) if problem_data.precedence else None
         self.related_removal_weight_param = related_removal_weight_param
+        if problem_data.precedence:
+            self.relatedness_precedence = self.set_relatedness_precedence_dict(relatedness_precedence)
 
         # TODO: Delete these when done with testing
         # self.rel_components = {'loc_time_amount__transport_time': 0, 'loc_time_amount__time_window': 0,
@@ -337,9 +337,9 @@ class Alns:
         w_1 = self.related_removal_weight_param['relatedness_location_time'][1]
 
         time_window_difference = (abs(self.current_sol.prbl.nodes[order1].tw_start
-                                      - self.current_sol.prbl.nodes[order2].tw_start +
-                                      abs(self.current_sol.prbl.nodes[order1].tw_end
-                                          - self.current_sol.prbl.nodes[order2].tw_end)))
+                                      - self.current_sol.prbl.nodes[order2].tw_start) +
+                                  abs(self.current_sol.prbl.nodes[order1].tw_end
+                                      - self.current_sol.prbl.nodes[order2].tw_end))
 
         # # Used for weight tuning
         # self.rel_components['loc_time_amount__transport_time'] += \
@@ -376,19 +376,14 @@ class Alns:
 
         # Select a random first order
         random_first_idx = random.randint(0, len(served_orders) - 1)
-        similar_orders.append(served_orders[random_first_idx])
-        served_orders.pop(random_first_idx)
+        similar_orders.append(served_orders.pop(random_first_idx))
 
         while len(similar_orders) < self.remove_num and served_orders:
             base_order = similar_orders[random.randint(0, len(similar_orders) - 1)][0]
-
-            candidates: List[Tuple[str, int, str, float]] = []  # tuple: (order, idx, vessel, relatedness)
-            for v in sol.prbl.vessels:
-                route = sol.routes[v]
-                for idx in range(len(route)):
-                    order = route[idx]
-                    if (order, idx, v) in served_orders:
-                        candidates.append((order, idx, v, rel_measure(base_order, order)))
+            candidates = [(order, idx, vessel, rel_measure(base_order, order))
+                          for vessel in sol.prbl.vessels
+                          for idx, order in enumerate(sol.routes[vessel])
+                          if (order, idx, vessel) in served_orders]
             candidates.sort(key=lambda tup: tup[3])  # sort according to relatedness asc (most related orders first)
 
             chosen_related = candidates[int(pow(random.random(), self.determinism_param) * len(candidates))][:3]
