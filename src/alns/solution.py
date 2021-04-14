@@ -761,11 +761,14 @@ class Solution:
     def get_voyage_profit(self, vessel: str, voyage_start_idx: int):
         route = self.routes[vessel]
         voyage_indexes = [i for i in range(self.get_temp_voyage_end_idx(vessel, voyage_start_idx))]
+        node_before = route[max(0, voyage_indexes[0] - 1)]
+        node_after = route[min(len(route) - 1, voyage_indexes[-1] + 1)]
         order_profits = sum(self.prbl.external_delivery_penalties[route[i]]
                             for i in voyage_indexes if not self.prbl.nodes[route[i]].is_factory)
-        transport_cost = sum(self.prbl.transport_times[route[i - 1], route[i]] * self.prbl.transport_unit_costs[vessel]
-                             for i in range(1, len(route)))
-        return order_profits - transport_cost
+        transport_cost = sum(self.prbl.transport_times[route[i], route[i + 1]] * self.prbl.transport_unit_costs[vessel]
+                             for i in voyage_indexes)
+        new_transport_cost = self.prbl.transport_times[node_before, node_after] * self.prbl.transport_unit_costs[vessel]
+        return order_profits - transport_cost + new_transport_cost
 
     def get_insertion_utility(self, node: Node, vessel: str, idx: int, noise_factor: float = 0) -> float:  # High utility -> good insertion
         route = self.temp_routes[vessel]
