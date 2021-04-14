@@ -22,6 +22,7 @@ class Alns:
     current_sol_cost: int
     production_model: ProductionModel
     inventory_reward: bool
+    update_type: int
     destroy_op_score: Dict[str, float]
     repair_op_score: Dict[str, float]
     destroy_op_weight: Dict[str, float]
@@ -37,8 +38,6 @@ class Alns:
     relatedness_precedence: Dict[Tuple[str, str], int]
     related_removal_weight_param: Dict[str, List[float]]
     new_best_solution_feasible_production_count = 0
-    new_best_solution_infeasible_production_count = 0
-    new_best_solution_infeasible_revisited_count = 0
     production_problems_infeasible_cache = defaultdict(lambda: False)
     production_infeasibility_strike = 0
     production_infeasibility_strike_max: int
@@ -72,6 +71,8 @@ class Alns:
 
         # Solutions
         self.current_sol = self.repair_kregret(2, Solution(problem_data))
+        self.current_sol.print_routes()
+        print()
         self.production_model = ProductionModel(prbl=problem_data,
                                                 demands=self.current_sol.get_demand_dict(),
                                                 inventory_reward_extension=inventory_reward)
@@ -136,18 +137,16 @@ class Alns:
             print("Relatedness of zones is not properly defined.")
         return d
 
-
-    def adjust_curr_sol_to_prod_feasibility(self) -> float:
-        production_cost = self.current_sol.get_production_cost(self.production_model)
-        while production_cost == math.inf:
+    def adjust_curr_sol_to_prod_feasibility(self) -> None:
+        while not self.production_model.is_feasible(self.current_sol):
             self.current_sol = self.destroy_worst(self.current_sol)
-            production_cost = self.current_sol.get_production_cost(self.production_model)
-        return production_cost
 
     def update_scores(self, destroy_op: str, repair_op: str, update_type: int) -> None:
         if update_type == -1:
             return
-        if not 0 <= update_type < len(self.score_params):
+        elif update_type == -2:
+            return
+        elif not 0 <= update_type < len(self.score_params):
             print("Update type does not exist. Scores not updated.")
             return
         self.destroy_op_score[destroy_op] += self.score_params[update_type]
@@ -499,8 +498,13 @@ class Alns:
         :return: True if sol should be accepted to self.current_sol, else False
         """
         sol_cost = sol.get_solution_routing_cost()
+
         if sol_cost < self.best_sol_cost:
-            return True, 0, sol_cost
+            if self.production_model.is_feasible(sol):
+                return True, 0, sol_cost
+            else:
+                print("Solution rejected by production check:", sol_cost)
+                return False, -2, sol_cost
         elif sol_cost < self.current_sol_cost:
             return True, 1, sol_cost
         else:
@@ -519,35 +523,16 @@ class Alns:
         candidate_sol = self.generate_new_solution(destroy_op=d_op, repair_op=r_op)
 
         # if x′ is accepted by a simulated annealing–based acceptance criterion then set x = x′
-        accept_solution, update_type, cost = self.accept_solution(candidate_sol)
+        accept_solution, self.update_type, cost = self.accept_solution(candidate_sol)
 
-        production_cost = None
         if accept_solution:
             self.current_sol = candidate_sol
             self.current_sol_cost = cost
             if self.verbose:
                 print(f'> Solution is accepted as current solution')
 
-            # If in a production infeasibility strike, check if new current solution is production feasible
-            if self.production_infeasibility_strike >= 1:
-                production_cost = self.current_sol.get_production_cost(pp_model=self.production_model)
-                if production_cost < math.inf:
-                    self.production_infeasibility_strike = 0
-                    self.current_sol.ppfc_slack_factor = 1
-                    if self.verbose:
-                        print(f"PPFC slack factor reset to {self.current_sol.ppfc_slack_factor}")
-                else:
-                    self.production_infeasibility_strike += 1
-
-                    # Increase slack requirement in PPFC to avoid further infeasibility
-                    if self.production_infeasibility_strike >= self.production_infeasibility_strike_max:
-                        self.current_sol.ppfc_slack_factor *= (1 + self.ppfc_slack_increment)
-                        if self.verbose:
-                            print(f"Increasing PPFC slack factor by {self.ppfc_slack_increment * 100}%, "
-                                  f"to {self.current_sol.ppfc_slack_factor}")
-
         # Update scores πd of the destroy and repair heuristics - dependent on how good the solution is
-        self.update_scores(destroy_op=d_op, repair_op=r_op, update_type=update_type)
+        self.update_scores(destroy_op=d_op, repair_op=r_op, update_type=self.update_type)
 
         # if IS iterations has passed since last weight update then
         # Update the weight wdm+1 for method d for the next segment m + 1 based on
@@ -557,31 +542,21 @@ class Alns:
 
         # if f(x) > f(x∗) then
         # set x∗ =x
-        if update_type == 0:  # type 0 means global best solution is found
-            if self.production_problems_infeasible_cache[joblib.hash(self.current_sol.routes)]:
-                production_cost = math.inf
-            elif not production_cost:
-                production_cost = self.current_sol.get_production_cost(self.production_model)
+        if self.update_type == 0:  # type 0 means global best solution is found
+            self.best_sol = self.current_sol
+            self.best_sol_cost = self.current_sol_cost
+            self.new_best_solution_feasible_production_count += 1
+            if self.verbose:
+                print(f'> Solution is accepted as best solution')
+            print("New best solutions' routing obj:", self.best_sol_cost)
 
-            if production_cost < math.inf:
-                self.best_sol = self.current_sol
-                self.best_sol_cost = self.current_sol_cost
-                self.best_sol_production_cost = production_cost
-                self.new_best_solution_feasible_production_count += 1
-                if self.verbose:
-                    print(f'> Solution is accepted as best solution')
-                print("New best solutions' total obj:", round(production_cost) + self.best_sol_cost)
-
-            else:
-                self.production_problems_infeasible_cache[joblib.hash(self.current_sol.routes)] = True
-                self.new_best_solution_infeasible_production_count += 1
-                if self.production_infeasibility_strike == 0:  # initiate infeasibility strike
-                    self.production_infeasibility_strike += 1
-                    if self.production_infeasibility_strike >= self.production_infeasibility_strike_max:
-                        self.current_sol.ppfc_slack_factor *= (1 + self.ppfc_slack_increment)
-                        if self.verbose:
-                            print(f"Increasing PPFC slack factor by {self.ppfc_slack_increment * 100}%, "
-                                  f"to {self.current_sol.ppfc_slack_factor}")
+        if self.update_type == -2:  # type -2 means solution gave global best routing, but was not production feasible
+            self.production_infeasibility_strike += 1
+            if self.production_infeasibility_strike > self.production_infeasibility_strike_max:
+                self.current_sol.ppfc_slack_factor += self.ppfc_slack_increment
+        else:
+            self.production_infeasibility_strike = 0
+            self.current_sol.ppfc_slack_factor = 1.0
 
         # update iteration parameters
         self.temperature = self.temperature * self.cooling_rate
@@ -591,7 +566,7 @@ class Alns:
 if __name__ == '__main__':
     precedence: bool = False
 
-    prbl = ProblemDataExtended('../../data/input_data/larger_testcase2.xlsx', precedence=precedence)
+    prbl = ProblemDataExtended('../../data/input_data/largest_testcase.xlsx', precedence=precedence)
     destroy_op = ['d_random',
                   'd_worst',
                   'd_voyage_random',
@@ -605,21 +580,21 @@ if __name__ == '__main__':
     print("ALNS starting...")
     alns = Alns(problem_data=prbl,
                 destroy_op=destroy_op,
-                repair_op=['r_greedy', 'r_2regret', 'r_3regret'],
+                repair_op=['r_greedy', 'r_2regret'],  # 'r_3regret'],
                 weight_min_threshold=0.2,
                 reaction_param=0.1,
                 score_params=[5, 3, 1],  # corresponding to sigma_1, sigma_2, sigma_3 in R&P and L&N
-                start_temperature_controlparam=0.4,  # solution 50% worse than best solution is accepted with 50% prob.
+                start_temperature_controlparam=0.3,  # solution 50% worse than best solution is accepted with 50% prob.
                 cooling_rate=0.995,
-                max_iter_seg=40,
+                max_iter_seg=10,
                 remove_percentage=0.4,
                 determinism_param=5,
-                noise_param=200,
+                noise_param=150,
                 relatedness_precedence={('green', 'yellow'): 6, ('green', 'red'): 10, ('yellow', 'red'): 4},
                 related_removal_weight_param={'relatedness_location_time': [1, 0.9],
                                               'relatedness_location_precedence': [0.25, 1]},
-                production_infeasibility_strike_max=1,
-                ppfc_slack_increment=0.1,  # increase slack factor by 10% after x subsequent production infeasibilities
+                production_infeasibility_strike_max=0,
+                ppfc_slack_increment=0.05,
                 inventory_reward=False,
                 verbose=False
                 )
@@ -628,10 +603,11 @@ if __name__ == '__main__':
     alns.current_sol.print_routes()
     print("\nRemove num:", alns.remove_num, "\n")
 
-    iterations = 1000
+    iterations = 100
 
     _stat_solution_cost = []
     _stat_operator_weights = defaultdict(list)
+    _stat_proven_production_feasible = []
     t0 = time()
     for i in range(iterations):
         print("Iteration", i)
@@ -639,26 +615,29 @@ if __name__ == '__main__':
 
         alns.current_sol.print_routes()
         print(f"Obj: {alns.current_sol_cost}   Not served: {alns.current_sol.get_orders_not_served()}")
+        print("Slack factor:", round(alns.current_sol.ppfc_slack_factor, 2),
+              "  Infeasible strike:", alns.production_infeasibility_strike)
 
         _stat_solution_cost.append((i, alns.current_sol_cost))
+        _stat_proven_production_feasible.append((i, alns.update_type != -2))
         for op, score in alns.destroy_op_weight.items():
             _stat_operator_weights[op].append(score)
         for op, score in alns.repair_op_weight.items():
             _stat_operator_weights[op].append(score)
         print()
 
+    alns.best_sol_production_cost = alns.production_model.get_production_cost(alns.best_sol, verbose=True, time_limit=10)
+
     print()
     print(f"...ALNS terminating  ({round(time() - t0)}s)")
     alns.best_sol.print_routes()
     print("Not served:", alns.best_sol.get_orders_not_served())
+    alns.production_model.print_solution()
 
     print("Routing obj:", alns.best_sol_cost, "Prod obj:", round(alns.best_sol_production_cost, 1),
           "Total:", alns.best_sol_cost + round(alns.best_sol_production_cost, 1))
 
     print(f"Best solution updated {alns.new_best_solution_feasible_production_count} times")
-    print(f"Candidate to become best solution rejected {alns.new_best_solution_infeasible_production_count} times, "
-          f"because of production infeasibility, where cache was used "
-          f"{alns.new_best_solution_infeasible_revisited_count} times")
 
-    util.plot_alns_history(_stat_solution_cost)
+    util.plot_alns_history(_stat_solution_cost, _stat_proven_production_feasible)
     util.plot_operator_weights(_stat_operator_weights)

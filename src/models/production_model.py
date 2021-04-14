@@ -8,7 +8,7 @@ import logging
 from tabulate import tabulate
 from pyomo.opt import SolverStatus, TerminationCondition
 
-from src.alns.solution import ProblemDataExtended
+from src.alns.solution import ProblemDataExtended, Solution
 
 logging.getLogger('pyomo.core').setLevel(logging.ERROR)
 
@@ -263,11 +263,11 @@ class ProductionModel:
                                                                                      self.m.PRODUCTS,
                                                                                      rule=constr_rewarded_inventory_below_inventory_target)
 
-    def solve(self, verbose: bool = True, time_limit: int = None) -> None:
-        if time_limit:
-            self.solver_factory.options['TimeLimit'] = time_limit  # time limit in seconds
+    def solve(self, verbose: bool = True, time_limit: int = None, feasibility_check: bool = False) -> None:
+        self.solver_factory.options['SolutionLimit'] = 1 if feasibility_check else 1e8
+        self.solver_factory.options['TimeLimit'] = time_limit if time_limit else 1e6
         t = time()
-        self.results = self.solver_factory.solve(self.m, tee=verbose)
+        self.results = self.solver_factory.solve(self.m, tee=verbose, load_solutions=(not feasibility_check))
         if verbose:
             if self.results.solver.termination_condition != pyo.TerminationCondition.optimal:
                 print("Not optimal termination condition: ", self.results.solver.termination_condition)
@@ -306,23 +306,26 @@ class ProductionModel:
         self.m.constr_initial_inventory.reconstruct()
         self.m.constr_inventory_balance.reconstruct()
 
-    def get_production_cost(self, new_demands: Dict[Tuple[str, str, int], int], verbose: bool = False) -> float:
-        self.reconstruct_demand(new_demands)
-        self.solve(verbose)  # Current pyo cannot suppress warning? https://github.com/coin-or/rbfopt/issues/14
+    def get_production_cost(self, sol: Solution, verbose: bool = False, time_limit: int = 60) -> float:
+        demand = sol.get_demand_dict()
+        self.reconstruct_demand(demand)
+        self.solve(verbose=verbose, time_limit=time_limit)
 
-        # Solution is optimal and feasible
-        if (self.results.solver.status == SolverStatus.ok) and (  # TODO: Is it necessary to check solver.status=
-                self.results.solver.termination_condition == TerminationCondition.optimal):
+        if self.results.solver.termination_condition in [TerminationCondition.maxTimeLimit, TerminationCondition.optimal]:
             return self.m.objective()
-
-        # Problem is infeasible
-        elif self.results.solver.termination_condition == TerminationCondition.infeasible:
-            return math.inf
-
-        # Other non-optimal termination condition
         else:
-            print("Solver status:", self.results.solver.status)
             return math.inf
+
+    def is_feasible(self, sol: Solution, verbose: bool = False) -> bool:
+        demand = sol.get_demand_dict()
+        self.reconstruct_demand(demand)
+        t0 = time()
+        self.solve(verbose=verbose, time_limit=5, feasibility_check=True)
+        print(round(time() - t0, 1), "s", sep="")
+        if self.results.solver.termination_condition not in [TerminationCondition.infeasible, TerminationCondition.maxTimeLimit]:
+            return True
+        else:
+            return False
 
 
 def hardcode_demand_dict(prbl: ProblemDataExtended) -> Dict[Tuple[str, str, int], int]:

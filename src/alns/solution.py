@@ -653,9 +653,6 @@ class Solution:
 
         return demands
 
-    def get_production_cost(self, pp_model: 'ProductionModel') -> float:
-        demands: Dict[Tuple[str, str, int], int] = self.get_demand_dict()
-        return pp_model.get_production_cost(demands, verbose=self.verbose)
 
     def remove_node(self, vessel: str, idx: int):
         node = self.prbl.nodes[self.routes[vessel][idx]]
