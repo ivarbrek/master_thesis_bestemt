@@ -2,16 +2,10 @@ import matplotlib.pyplot as plt
 from typing import List, Tuple, Dict
 import pandas as pd
 
-def plot_alns_history(solution_costs: List[Tuple[int, int]],
-                      feasible_solutions: List[Tuple[int, bool]] = None) -> None:
-    color_map = {True: 'black', False: 'red'}
-    if feasible_solutions:
-        colors = [color_map[is_feasible] for iter, is_feasible in feasible_solutions]
-    else:
-        colors = 'black'
+def plot_alns_history(solution_costs: List[Tuple[int, int]]) -> None:
     x, y = zip(*solution_costs)
     plt.figure(figsize=(10, 7))  # (8, 6) is default
-    plt.scatter(x, y, s=7, alpha=0.4, c=colors)
+    plt.scatter(x, y, s=7, alpha=0.4, c='black')
     # plt.yscale('log')
     plt.show()
 

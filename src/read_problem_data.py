@@ -51,7 +51,6 @@ class ProblemData:
         # Validate sets
         self._validate_set_consistency()
         self._validate_feasible_problem()
-        #self._validate_transport_time_triangle_inequality()
 
         # Attributes
         self.nodes = self.get_nodes()
@@ -151,14 +150,14 @@ class ProblemData:
                     for factory in self.factory_max_vessel_destination_df.index)
                 >= len(self.get_vessels()))
 
-    def _validate_transport_time_triangle_inequality(self) -> None:
-        nodes = self.get_nodes()
+    def _validate_transport_time_triangle_inequality(self, distance_matrix: Dict[Tuple[str, str], int]) -> None:
+        nodes = self.transport_times_df.index
         for origin in nodes:
             for intermediate in nodes:
                 for destination in nodes:
-                    assert (self.transport_times_df.loc[origin, destination] <=
-                            self.transport_times_df.loc[origin, intermediate] +
-                            self.transport_times_df.loc[intermediate, destination])
+                    assert (distance_matrix[origin, destination] <=
+                            distance_matrix[origin, intermediate] +
+                            distance_matrix[intermediate, destination])
 
     def get_vessels(self) -> List[str]:
         return list(self.vessel_capacities_df.index)
@@ -258,14 +257,25 @@ class ProblemData:
                 self.transport_unit_costs_df.index}
 
     def get_transport_times_dict(self) -> Dict[Tuple[str, str], int]:
-        return {**{(node1, node2): min([self.transport_times_df.loc[node1, node2]] +
-                                       [self.transport_times_df.loc[node1, intermediate]
-                                        + self.transport_times_df.loc[intermediate, node2]
-                                        for intermediate in self.transport_times_df.index])
-                   for node1 in self.transport_times_df.index
-                   for node2 in self.transport_times_df.columns},
-                **{('d_0', node): 1 for node in self.transport_times_df.index},
-                **{(node, 'd_-1'): 1 for node in self.transport_times_df.index}}
+        d = {**{(node1, node2): min([self.transport_times_df.loc[node1, node2]] +
+                                    [self.transport_times_df.loc[node1, intermediate]
+                                     + self.transport_times_df.loc[intermediate, node2]
+                                     for intermediate in self.transport_times_df.index])
+                for node1 in self.transport_times_df.index
+                for node2 in self.transport_times_df.columns},
+             **{('d_0', node): 1 for node in self.transport_times_df.index},
+             **{(node, 'd_-1'): 1 for node in self.transport_times_df.index}}
+        validity = False
+        while not validity:
+            try:
+                self._validate_transport_time_triangle_inequality(d)
+                validity = True
+            except AssertionError:
+                for orig in self.transport_times_df.index:
+                    for dest in self.transport_times_df.index:
+                        d[orig, dest] = min([d[orig, dest]] + [(d[orig, intermediate] + d[intermediate, dest])
+                                                               for intermediate in self.transport_times_df.index])
+        return d
 
     def get_loading_unloading_times_dict(self) -> Dict[Tuple[str, str], int]:
         return {(vessel, node): int(self.loading_unloading_times_df.loc[node, vessel])
