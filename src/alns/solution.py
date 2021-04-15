@@ -1,6 +1,8 @@
 from __future__ import annotations
 from typing import List, Dict, Tuple
 import math
+
+import joblib
 import numpy as np
 import bisect
 import copy
@@ -156,8 +158,8 @@ class Solution:
                 print(f"check_final_factory_destination_feasibility failed for {vessel}, {node.id} inserted at {idx}")
             return False
 
-        if not self.check_production_feasibility(vessel, idx):
-            return False
+        # if not self.check_production_feasibility(vessel, idx):
+        #     return False
 
         return True
 
@@ -495,7 +497,7 @@ class Solution:
                 self._set_temp_vars_to_solution(copy_sol)  # move update to self.temp
                 return True
             else:
-                copy_sol.clear_last_checked()
+                copy_sol = self.copy()
 
         if self.verbose:
             print(f"Check failed at: check_and_set_destination_factory for {vessel}")
@@ -530,15 +532,18 @@ class Solution:
         combined_demanded_products = np.logical_or(voyage_demanded_products, insert_node_demanded_products)
         return sum(combined_demanded_products) <= self.prbl.vessel_nprod_capacities[vessel]
 
-    def check_production_feasibility(self, vessel: str, idx: int) -> bool:
+    def check_production_feasibility(self, vessel: str = None, idx: int = None) -> bool:
 
-        factories_to_check = []
-        for f in self.prbl.factory_nodes.keys():
-            if (not self.prbl.nodes[self.temp_routes[vessel][idx]].is_factory and
-                    self.get_temp_voyage_start_factory(vessel=vessel, idx=idx) == f):  # added order picked up at f
-                factories_to_check.append(f)
-            elif self.is_factory_latest_changed_in_temp(f):  # factory may have to be ready for vessel loading earlier
-                factories_to_check.append(f)
+        factories_to_check: List[str] = []
+        if vessel and idx:
+            for f in self.prbl.factory_nodes.keys():
+                if (not self.prbl.nodes[self.temp_routes[vessel][idx]].is_factory and
+                        self.get_temp_voyage_start_factory(vessel=vessel, idx=idx) == f):  # added order picked up at f
+                    factories_to_check.append(f)
+                elif self.is_factory_latest_changed_in_temp(f):  # factory may have to be ready for vessel loading earlier
+                    factories_to_check.append(f)
+        else:
+            factories_to_check = list(self.prbl.factory_nodes.keys())
 
         # Feasibility is checked for relevant factories
         for factory_node_id in factories_to_check:
@@ -922,6 +927,14 @@ class Solution:
                             if not self.prbl.nodes[o].is_factory)
         unserved_orders = list(set(self.prbl.order_nodes) - served_orders)
         return unserved_orders
+
+    def get_solution_hash(self) -> str:
+        relevant_sub_hashes = [joblib.hash(self.routes),
+                               joblib.hash(self.e),
+                               joblib.hash(self.l),
+                               joblib.hash(self.factory_visits),
+                               joblib.hash(self.factory_visits_route_index)]
+        return joblib.hash(relevant_sub_hashes)
 
     def print_routes(self, highlight: List[Tuple[str, int]] = None):
         highlight = [] if not highlight else highlight

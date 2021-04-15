@@ -2,7 +2,7 @@ import math
 import random
 import numpy as np
 from time import time
-from typing import Dict, List, Tuple, Union
+from typing import Dict, List, Tuple, Union, Set
 from collections import defaultdict
 import function
 import pyomo.environ as pyo
@@ -38,8 +38,10 @@ class Alns:
     related_removal_weight_param: Dict[str, List[float]]
     new_best_solution_feasible_production_count = 0
     new_best_solution_infeasible_production_count = 0
+    ppfc_infeasible_count = 0
     production_infeasibility_strike = 0
     production_infeasibility_strike_max: int
+    previous_solutions: Set[str] = set()
 
     def __init__(self, problem_data: ProblemDataExtended,
                  destroy_op: List[str],
@@ -51,6 +53,7 @@ class Alns:
                  cooling_rate: float,
                  max_iter_seg: int,
                  remove_percentage: float,
+                 remove_num_percentage_adjust: float,
                  determinism_param: int,
                  relatedness_precedence: Dict[Tuple[str, str], int],
                  related_removal_weight_param: Dict[str, List[float]],
@@ -64,16 +67,21 @@ class Alns:
         # ALNS  parameters
         self.max_iter_seg = max_iter_seg
         self.remove_num = round(remove_percentage * len(problem_data.order_nodes))
+        self.remove_num_percentage_adjust = remove_num_percentage_adjust
 
         # Solutions
         self.current_sol = self.repair_kregret(2, Solution(problem_data))
         self.production_model = ProductionModel(prbl=problem_data,
                                                 demands=self.current_sol.get_demand_dict(),
                                                 inventory_reward_extension=inventory_reward)
-        self.best_sol_production_cost = self.adjust_initial_sol()  # Make sure initial solution is production-feasible
+        self.current_sol = self.adjust_sol_iteratively(exact=True, sol=self.current_sol,
+                                                       remove_num=1)  # ensure prod feasibility
+        # self.best_sol_production_cost = self.adjust_initial_sol()
         self.current_sol_cost = self.current_sol.get_solution_routing_cost()
         self.best_sol = self.current_sol
         self.best_sol_cost = self.current_sol_cost
+        self.best_sol_production_cost = self.best_sol.get_production_cost(pp_model=self.production_model)
+        self.record_solution(self.current_sol)
 
         # Operator weights, scores and usage
         self.weight_min_threshold = weight_min_threshold
@@ -87,7 +95,7 @@ class Alns:
         self.score_params = {i: score_params[i] for i in range(len(score_params))}
 
         self.cooling_rate = cooling_rate
-        self.temperature = -(self.best_sol_cost * start_temperature_controlparam) / math.log2(0.5)
+        self.temperature = -(self.best_sol_cost * start_temperature_controlparam) / math.log(0.5)
 
         self.it_seg_count = 0  # Iterations done in one segment - can maybe do this in run_alns_iteration?
 
@@ -99,12 +107,6 @@ class Alns:
         self.relatedness_precedence = self.set_relatedness_precedence_dict(
             relatedness_precedence) if problem_data.precedence else None
         self.related_removal_weight_param = related_removal_weight_param
-
-        # TODO: Delete these when done with testing
-        # self.rel_components = {'loc_time_amount__transport_time': 0, 'loc_time_amount__time_window': 0,
-        #                        'loc_time_usage': 0,
-        #                        'loc_prec_amount__transport_time': 0, 'loc_prec_amount__prec': 0,
-        #                        'loc_prec_usage': 0}
 
     def __repr__(self):
         destroy_op = [(k, round(v, 2)) for k, v in sorted(self.destroy_op_weight.items(), key=lambda item: item[0])]
@@ -161,12 +163,37 @@ class Alns:
     #             insertion.pop(0)
     #     return sol
 
-    def adjust_initial_sol(self) -> float:
-        production_cost = self.current_sol.get_production_cost(self.production_model)
-        while production_cost == math.inf:
-            self.current_sol = self.destroy_random(self.current_sol)
-            production_cost = self.current_sol.get_production_cost(self.production_model)
-        return production_cost
+    # def adjust_initial_sol(self) -> float:
+    #     production_cost = self.current_sol.get_production_cost(self.production_model)
+    #     while production_cost == math.inf:
+    #         self.current_sol = self.destroy_random(self.current_sol)
+    #         production_cost = self.current_sol.get_production_cost(self.production_model)
+    #     return production_cost
+
+    def adjust_sol_iteratively(self, exact: bool, sol: Solution = None, remove_num: int = None) -> Solution:
+        """
+        :param sol: solution to be adjusted, default is self.current_sol
+        :param remove_num: number of order nodes to be removed before checking for prod feasibility,
+                default is self.remove_num
+        :return: production feasible solution
+        """
+        sol = sol if sol is not None else self.current_sol
+        prod_feasible: bool = (True if sol.get_production_cost(self.production_model) < math.inf else False) if exact \
+            else (sol.check_production_feasibility())
+
+        sol.clear_last_checked()
+        it = 0
+        while not prod_feasible:
+            print(f"> Production iteration {it}")
+            it += 1
+            sol.print_routes()
+            print()
+            sol = self.destroy_random(sol=sol, remove_num=remove_num)  # if remove_num = None, self.remove_num used
+            prod_feasible = (True if sol.get_production_cost(self.production_model) < math.inf else False) if exact \
+                else (sol.check_production_feasibility())
+            print(f">> Production feasibility by {'exact' if exact else 'inexact'} method evaluated to {prod_feasible}")
+
+        return sol
 
     def update_scores(self, destroy_op: str, repair_op: str, update_type: int) -> None:
         if update_type == -1:
@@ -249,14 +276,15 @@ class Alns:
             print("Destroy operator does not exist")
             return None
 
-    def destroy_random(self, sol: Solution) -> Solution:
+    def destroy_random(self, sol: Solution, remove_num: int = None) -> Solution:
+        remove_num = remove_num if remove_num is not None else self.remove_num
         served_orders = [(vessel, order)
                          for vessel in sol.prbl.vessels
                          for order in sol.routes[vessel]
                          if not sol.prbl.nodes[order].is_factory]
         random.shuffle(served_orders)
         removals = 0
-        while removals < self.remove_num and served_orders:
+        while removals < remove_num and served_orders:
             vessel, order = served_orders.pop()
             remove_index = sol.routes[vessel].index(order)
             sol.remove_node(vessel, remove_index)
@@ -361,30 +389,15 @@ class Alns:
         w_1 = self.related_removal_weight_param['relatedness_location_time'][1]
 
         time_window_difference = (abs(self.current_sol.prbl.nodes[order1].tw_start
-                                      - self.current_sol.prbl.nodes[order2].tw_start +
-                                      abs(self.current_sol.prbl.nodes[order1].tw_end
-                                          - self.current_sol.prbl.nodes[order2].tw_end)))
-
-        # # Used for weight tuning
-        # self.rel_components['loc_time_amount__transport_time'] += \
-        #     w_0 * self.current_sol.prbl.transport_times[order1, order2]
-        # self.rel_components['loc_time_amount__time_window'] += \
-        #     w_1 * time_window_difference
-        # self.rel_components['loc_time_usage'] += 1
+                                      - self.current_sol.prbl.nodes[order2].tw_start) +
+                                  abs(self.current_sol.prbl.nodes[order1].tw_end
+                                      - self.current_sol.prbl.nodes[order2].tw_end))
 
         return w_0 * self.current_sol.prbl.transport_times[order1, order2] + w_1 * time_window_difference
 
     def _relatedness_location_precedence(self, order1: str, order2: str) -> float:
         w_0 = self.related_removal_weight_param['relatedness_location_precedence'][0]
         w_1 = self.related_removal_weight_param['relatedness_location_precedence'][1]
-
-        # # Used for weight tuning
-        # self.rel_components['loc_prec_amount__transport_time'] += w_0 * self.current_sol.prbl.transport_times[
-        #     order1, order2]
-        # self.rel_components['loc_prec_amount__prec'] += \
-        #     w_1 * self.relatedness_precedence[(self.current_sol.prbl.nodes[order1].zone,
-        #                                        self.current_sol.prbl.nodes[order2].zone)]
-        # self.rel_components['loc_prec_usage'] += 1
 
         return (w_0 * self.current_sol.prbl.transport_times[order1, order2] +
                 w_1 * self.relatedness_precedence[(self.current_sol.prbl.nodes[order1].zone,
@@ -428,15 +441,27 @@ class Alns:
         return sol
 
     def repair(self, repair_op: str, sol: Solution) -> Union[None, Solution]:
+        repaired_sol: Solution = None
         if repair_op == "r_greedy":
-            return self.repair_greedy(sol)
+            repaired_sol = self.repair_greedy(sol)
         elif repair_op == "r_2regret":
-            return self.repair_kregret(2, sol)
+            repaired_sol = self.repair_kregret(2, sol)
         elif repair_op == 'r_3regret':
-            return self.repair_kregret(3, sol)
+            repaired_sol = self.repair_kregret(3, sol)
         else:
             print("Repair operator does not exist")
             return None
+
+        # If PPFC run for each insertion:
+        # return repaired_sol
+
+        # Else:
+        production_feasible = repaired_sol.check_production_feasibility()
+        self.ppfc_infeasible_count += 1 if not production_feasible else 0
+
+        return repaired_sol if production_feasible \
+            else self.adjust_sol_iteratively(exact=False, sol=repaired_sol,
+                                             remove_num=math.ceil(self.remove_num*self.remove_num_percentage_adjust))
 
     def repair_greedy(self, sol: Solution) -> Solution:
         insertion_cand = sol.get_orders_not_served()
@@ -445,8 +470,6 @@ class Alns:
                       for vessel in sol.prbl.vessels
                       for idx in range(1, len(sol.routes[vessel]) + 1)]
         insertions.sort(key=lambda tup: tup[3])  # sort by gain
-
-        # unrouted_orders = []
 
         while len(insertion_cand) > 0:  # try all possible insertions
             insert_node, vessel, idx, _ = insertions[-1]
@@ -495,7 +518,7 @@ class Alns:
                     sol.clear_last_checked()
 
                     if feasible and num_feasible == 0:
-                        insertion_regret += (k-1) * util  # inserting for k-1 terms in sum
+                        insertion_regret += (k - 1) * util  # inserting for k-1 terms in sum
                         best_insertion = (order, idx, vessel)
                         num_feasible += 1
                     elif feasible and num_feasible > 0:
@@ -524,21 +547,28 @@ class Alns:
 
         return sol
 
-    def accept_solution(self, sol: Solution) -> Tuple[bool, int, int]:  # accept, accept_type, cost
+    def accept_solution(self, sol: Solution) -> Tuple[bool, int, int]:  # accept, update_type, cost
         """
         :param sol: solution to be compared with self.current_sol
-        :return: True if sol should be accepted to self.current_sol, else False
+        :return: True if sol should be accepted to self.current_sol, else False, update_type and cost of new solution
         """
         sol_cost = sol.get_solution_routing_cost()
         if sol_cost < self.best_sol_cost:
             return True, 0, sol_cost
         elif sol_cost < self.current_sol_cost:
-            return True, 1, sol_cost
+            update_type = -1 if sol.get_solution_hash() in self.previous_solutions else 1
+            return True, update_type, sol_cost
         else:
             # Simulated annealing criterion
             prob = pow(math.e, -((sol_cost - self.current_sol_cost) / self.temperature))
             accept = np.random.choice(np.array([True, False]), p=(np.array([prob, (1 - prob)])))
-            return accept, -1 + 3 * accept, sol_cost  # cost only used if accept=True
+            update_type = -1 if sol.get_solution_hash() in self.previous_solutions else -1 + 3 * accept
+            return accept, update_type, sol_cost
+
+    def record_solution(self, sol: Solution) -> None:
+        if self.verbose:
+            print(f"> Recording solution hash...")
+        self.previous_solutions.add(sol.get_solution_hash())
 
     def run_alns_iteration(self) -> None:
         # Choose a destroy heuristic and a repair heuristic based on adaptive weights wdm
@@ -556,27 +586,29 @@ class Alns:
         if accept_solution:
             self.current_sol = candidate_sol
             self.current_sol_cost = cost
+            if update_type > -1:  # if we except a solution that has not been accepted before
+                self.record_solution(candidate_sol)
             if self.verbose:
                 print(f'> Solution is accepted as current solution')
 
             # If in a production infeasibility strike, check if new current solution is production feasible
-            if self.production_infeasibility_strike >= 1:
-                production_cost = self.current_sol.get_production_cost(pp_model=self.production_model)
-                if production_cost < math.inf:
-                    self.production_infeasibility_strike = 0
-                    self.current_sol.ppfc_slack_factor = 1
-                    if self.verbose:
-                        print(f"PPFC slack factor reset to {self.current_sol.ppfc_slack_factor}")
-                else:
-                    self.production_infeasibility_strike += 1
-
-                    # Increase slack requirement in PPFC to avoid further infeasibility
-                    if self.production_infeasibility_strike >= self.production_infeasibility_strike_max:
-                        self.current_sol.ppfc_slack_factor *= (
-                                1 + self.ppfc_slack_increment)
-                        if self.verbose:
-                            print(
-                                f"Increasing PPFC slack factor by {self.ppfc_slack_increment * 100}%, to {self.current_sol.ppfc_slack_factor}")
+            # if self.production_infeasibility_strike >= 1:
+            #     production_cost = self.current_sol.get_production_cost(pp_model=self.production_model)
+            #     if production_cost < math.inf:
+            #         self.production_infeasibility_strike = 0
+            #         self.current_sol.ppfc_slack_factor = 1
+            #         if self.verbose:
+            #             print(f"PPFC slack factor reset to {self.current_sol.ppfc_slack_factor}")
+            #     else:
+            #         self.production_infeasibility_strike += 1
+            #
+            #         # Increase slack requirement in PPFC to avoid further infeasibility
+            #         if self.production_infeasibility_strike >= self.production_infeasibility_strike_max:
+            #             self.current_sol.ppfc_slack_factor *= (
+            #                     1 + self.ppfc_slack_increment)
+            #             if self.verbose:
+            #                 print(
+            #                     f"Increasing PPFC slack factor by {self.ppfc_slack_increment * 100}%, to {self.current_sol.ppfc_slack_factor}")
 
         # Update scores πd of the destroy and repair heuristics - dependent on how good the solution is
         self.update_scores(destroy_op=d_op, repair_op=r_op, update_type=update_type)
@@ -590,7 +622,8 @@ class Alns:
         # if f(x) > f(x∗) then
         # set x∗ =x
         if update_type == 0:  # type 0 means global best solution is found
-            current_sol_production_cost = production_cost if production_cost is not None else self.current_sol.get_production_cost(self.production_model)
+            current_sol_production_cost = production_cost if production_cost is not None \
+                else self.current_sol.get_production_cost(self.production_model)
             if current_sol_production_cost < math.inf:
                 self.best_sol = self.current_sol
                 self.best_sol_cost = self.current_sol_cost
@@ -603,14 +636,14 @@ class Alns:
 
             else:
                 self.new_best_solution_infeasible_production_count += 1
-                if self.production_infeasibility_strike == 0:  # initiate infeasibility strike
-                    self.production_infeasibility_strike += 1
-                    if self.production_infeasibility_strike >= self.production_infeasibility_strike_max:
-                        self.current_sol.ppfc_slack_factor *= (
-                                1 + self.ppfc_slack_increment)  # avoid production infeasibility
-                        if self.verbose:
-                            print(
-                                f"Increasing PPFC slack factor by {self.ppfc_slack_increment * 100}%, to {self.current_sol.ppfc_slack_factor}")
+                # if self.production_infeasibility_strike == 0:  # initiate infeasibility strike
+                #     self.production_infeasibility_strike += 1
+                #     if self.production_infeasibility_strike >= self.production_infeasibility_strike_max:
+                #         self.current_sol.ppfc_slack_factor *= (
+                #                 1 + self.ppfc_slack_increment)  # avoid production infeasibility
+                #         if self.verbose:
+                #             print(
+                #                 f"Increasing PPFC slack factor by {self.ppfc_slack_increment * 100}%, to {self.current_sol.ppfc_slack_factor}")
 
         # update iteration parameters
         self.temperature = self.temperature * self.cooling_rate
@@ -620,7 +653,7 @@ class Alns:
 if __name__ == '__main__':
     precedence: bool = False
 
-    prbl = ProblemDataExtended('../../data/input_data/larger_testcase2.xlsx', precedence=precedence)
+    prbl = ProblemDataExtended('../../data/input_data/largest_testcase.xlsx', precedence=precedence)
     destroy_op = ['d_random',
                   'd_worst',
                   'd_voyage_random',
@@ -642,6 +675,7 @@ if __name__ == '__main__':
                 cooling_rate=0.995,
                 max_iter_seg=40,
                 remove_percentage=0.4,
+                remove_num_percentage_adjust=0.2,
                 determinism_param=5,
                 relatedness_precedence={('green', 'yellow'): 6, ('green', 'red'): 10, ('yellow', 'red'): 4},
                 related_removal_weight_param={'relatedness_location_time': [1, 0.9],
@@ -685,6 +719,8 @@ if __name__ == '__main__':
     print(f"Best solution updated {alns.new_best_solution_feasible_production_count} times")
     print(f"Candidate to become best solution rejected {alns.new_best_solution_infeasible_production_count} times, "
           f"because of production infeasibility")
+    print(f"{len(alns.previous_solutions)} different solutions accepted")
+    print(f"Repaired solution rejected {alns.ppfc_infeasible_count} times, because of PPFC infeasibility")
 
     print(alns.best_sol.print_routes())
     print(alns.best_sol.get_orders_not_served())
