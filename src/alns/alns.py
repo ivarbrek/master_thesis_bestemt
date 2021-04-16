@@ -5,8 +5,6 @@ from time import time
 from typing import Dict, List, Tuple, Union, Set
 from collections import defaultdict
 import function
-import joblib
-import pyomo.environ as pyo
 
 from src.alns.solution import Solution, ProblemDataExtended
 from src.models.production_model import ProductionModel
@@ -80,7 +78,7 @@ class Alns:
                                                 demands=self.current_sol.get_demand_dict(),
                                                 inventory_reward_extension=inventory_reward)
         # ensure prod feasibility
-        self.current_sol = self.adjust_sol_iteratively(self.current_sol, exact=True, remove_num=1)
+        self.current_sol = self.adjust_sol_exact(self.current_sol, remove_num=self.remove_num_adjust)
         self.current_sol_cost = self.current_sol.get_solution_routing_cost()
         self.best_sol = self.current_sol
         self.best_sol_cost = self.current_sol_cost
@@ -136,37 +134,31 @@ class Alns:
             print("Relatedness of zones is not properly defined.")
         return d
 
-    def adjust_sol_iteratively(self, sol: Solution = None, exact: bool = False, remove_num: int = None) -> Solution:
+    def adjust_sol_exact(self, sol: Solution = None, remove_num: int = None) -> Solution:
         """
         :param sol: solution to be adjusted, default is self.current_sol
         :param remove_num: number of order nodes to be removed before checking for prod feasibility,
                 default is self.remove_num
-        :return: production feasible solution
+        :return: exact production feasible solution
         """
-        # TODO: Maybe use destroy_worst?
-        # TODO: Destroy only from voyages starting from the factory with production infeasibility?
-        #       (Not possible for MIP production check)
         sol = sol if sol else self.current_sol
-        if exact:
-            prod_feasible = self.production_model.is_feasible(sol)
+        while not self.production_model.is_feasible(sol):
+            sol = self.destroy_random(sol, remove_num)
+        return sol
 
-        else:
-            prod_feasible = sol.check_production_feasibility()
-            self.ppfc_infeasible_count += 1
-
-        it = 0
+    def adjust_sol_ppfc(self, sol: Solution = None, remove_num: int = None) -> Solution:
+        """
+        :param sol: solution to be adjusted, default is self.current_sol
+        :param remove_num: number of order nodes to be removed before checking for prod feasibility,
+                default is self.remove_num
+        :return: production feasible solution according to ppfc
+        """
+        sol = sol if sol else self.current_sol
+        prod_feasible, infeasible_factory = sol.check_production_feasibility()
+        self.ppfc_infeasible_count += int(not prod_feasible)
         while not prod_feasible:
-            # print(f"> Production iteration {it}")
-            it += 1
-            # sol.print_routes()
-            # print()
-            sol = self.destroy_random(sol=sol, remove_num=remove_num)  # if remove_num = None, self.remove_num used
-            if exact:
-                prod_feasible = self.production_model.is_feasible(sol)
-            else:
-                prod_feasible = sol.check_production_feasibility()
-            # print(f">> Production feasibility by {'exact' if exact else 'inexact'} method evaluated to {prod_feasible}")
-
+            sol = self.remove_from_factory(sol, infeasible_factory, remove_num=remove_num)
+            prod_feasible, infeasible_factory = sol.check_production_feasibility()
         return sol
 
     def update_scores(self, destroy_op: str, repair_op: str, update_type: int) -> None:
@@ -251,6 +243,20 @@ class Alns:
         else:
             print("Destroy operator does not exist")
             return None
+
+    def remove_from_factory(self, sol: Solution, factory_node_id: str, remove_num: int = 1):
+        candidates = True  # dummy initialization
+        removals = 0
+        while removals < remove_num and candidates:
+            candidates = [(vessel, idx, sol.get_removal_utility(vessel, idx))
+                          for vessel, idx in sol.get_order_vessel_idx_for_factory(factory_node_id)]
+            candidates.sort(key=lambda tup: tup[2], reverse=True)
+            chosen_idx = int(pow(random.random(), self.determinism_param) * len(candidates))
+            vessel, idx, _ = candidates.pop(chosen_idx)
+            sol.remove_node(vessel, idx)
+            removals += 1
+        sol.recompute_solution_variables()
+        return sol
 
     def destroy_random(self, sol: Solution, remove_num: int = None) -> Solution:
         remove_num = remove_num if remove_num is not None else self.remove_num
@@ -426,7 +432,7 @@ class Alns:
         # return repaired_sol
 
         # Else:
-        repaired_sol = self.adjust_sol_iteratively(repaired_sol, remove_num=self.remove_num_adjust)
+        repaired_sol = self.adjust_sol_ppfc(repaired_sol, remove_num=self.remove_num_adjust)
         return repaired_sol
 
     def repair_greedy(self, sol: Solution) -> Solution:

@@ -35,6 +35,7 @@ class ProblemDataExtended(ProblemData):
         self.precedence = precedence
         self._init_nodes()
         self._init_quay_capacities()
+        self.max_transport_time = max(self.transport_times.values())
 
     def _init_nodes(self) -> None:
         f_nodes = self.factory_nodes[:]
@@ -70,10 +71,6 @@ class ProblemDataExtended(ProblemData):
         self.quay_capacity: Dict[str, List[int]] = quay_capacity
         self.quay_cap_incr_times: Dict[str, List[int]] = quay_cap_incr_times
         self.quay_cap_decr_times: Dict[str, List[int]] = quay_cap_decr_times
-
-    @property
-    def max_transport_time(self):
-        return max(self.transport_times.values())
 
 
 class Solution:
@@ -538,7 +535,7 @@ class Solution:
         combined_demanded_products = np.logical_or(voyage_demanded_products, insert_node_demanded_products)
         return sum(combined_demanded_products) <= self.prbl.vessel_nprod_capacities[vessel]
 
-    def check_production_feasibility(self, vessel: str = None, idx: int = None) -> bool:
+    def check_production_feasibility(self, vessel: str = None, idx: int = None) -> Tuple[bool, str]:
 
         factories_to_check: List[str] = []
         if vessel and idx:
@@ -604,7 +601,7 @@ class Solution:
                         self.ppfc_slack_factor * np.sum(activity_requirement_cum[0], axis=None)):
                     if self.verbose:
                         print(f"check_production_feasibility failed on production for {factory_node_id}")
-                    return False
+                    return False, factory_node_id
 
             # Checking for inventory feasibility
             # Removed this - cannot _prove_ infeasibility (could pick up at earliest point in time instead)
@@ -621,7 +618,7 @@ class Solution:
             #         if self.verbose:
             #             print(f"check_production_feasibility failed on inventory for {factory_node_id}")
             #         return False
-        return True
+        return True, ''
 
     def get_demand_dict(self, relevant_factories: List[str] = None) \
             -> Dict[Tuple[str, str, int], int]:
@@ -811,6 +808,12 @@ class Solution:
             if len(voyage_start_idxs_for_vessels[v]) == 0:
                 voyage_start_idxs_for_vessels.pop(v, None)
         return voyage_start_idxs_for_vessels
+
+    def get_order_vessel_idx_for_factory(self, factory_node_id: str) -> List[Tuple[str, int]]:
+        return [(vessel, idx)
+                for vessel, voyage_start_idx in zip(self.factory_visits[factory_node_id],
+                                                    self.factory_visits_route_index[factory_node_id])
+                for idx in range(voyage_start_idx + 1, self.get_temp_voyage_end_idx(vessel, voyage_start_idx))]
 
     def is_factory_latest_changed_in_temp(self, factory_node_id: str) -> bool:
         if (self.temp_factory_visits[factory_node_id] != self.factory_visits[factory_node_id] or
