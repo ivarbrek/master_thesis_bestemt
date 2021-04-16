@@ -87,11 +87,14 @@ class Solution:
         self.factory_visits_route_index: Dict[str, List[int]] = {f: [0 for _ in self.factory_visits[f]]
                                                                  for f in self.prbl.factory_nodes}
 
-        self.temp_routes: Dict[str, List[str]] = copy.deepcopy(self.routes)
-        self.temp_e: Dict[str, List[int]] = copy.deepcopy(self.e)
-        self.temp_l: Dict[str, List[int]] = copy.deepcopy(self.l)
-        self.temp_factory_visits: Dict[str, List[str]] = copy.deepcopy(self.factory_visits)
-        self.temp_factory_visits_route_index: Dict[str, List[int]] = copy.deepcopy(self.factory_visits_route_index)
+        self.temp_routes: Dict[str, List[str]] = {vessel: route[:] for vessel, route in self.routes.items()}
+        self.temp_e: Dict[str, List[int]] = {vessel: e[:] for vessel, e in self.e.items()}
+        self.temp_l: Dict[str, List[int]] = {vessel: e[:] for vessel, e in self.e.items()}
+        self.temp_factory_visits: Dict[str, List[str]] = {factory: visits[:]
+                                                          for factory, visits in self.factory_visits.items()}
+        self.temp_factory_visits_route_index: Dict[str, List[int]] = {factory: visit_route_idxs[:]
+                                                                      for factory, visit_route_idxs in
+                                                                      self.factory_visits_route_index.items()}
 
         self.ppfc_slack_factor: float = 1.0
         self.verbose = verbose
@@ -925,12 +928,8 @@ class Solution:
         return unserved_orders
 
     def get_solution_hash(self) -> str:
-        relevant_sub_hashes = [joblib.hash(self.routes),
-                               joblib.hash(self.e),
-                               joblib.hash(self.l),
-                               joblib.hash(self.factory_visits),
-                               joblib.hash(self.factory_visits_route_index)]
-        return joblib.hash(relevant_sub_hashes)
+        relevant_solution_parts = [self.routes, self.factory_visits]
+        return joblib.hash(relevant_solution_parts)
 
     def print_routes(self, highlight: List[Tuple[str, int]] = None):
         highlight = [] if not highlight else highlight
