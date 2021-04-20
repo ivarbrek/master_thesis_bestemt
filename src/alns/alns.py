@@ -9,6 +9,7 @@ import function
 from src.alns.solution import Solution, ProblemDataExtended
 from src.models.production_model import ProductionModel
 import src.util.plot as util
+from src.alns.production_problem_heuristic import ProductionProblemHeuristic, ProductionProblem
 
 int_inf = 999999
 
@@ -20,6 +21,7 @@ class Alns:
     current_sol: Solution
     current_sol_cost: int
     production_model: ProductionModel
+    production_heuristic: ProductionProblemHeuristic
     inventory_reward: bool
     update_type: int
     destroy_op_score: Dict[str, float]
@@ -77,6 +79,8 @@ class Alns:
         self.production_model = ProductionModel(prbl=problem_data,
                                                 demands=self.current_sol.get_demand_dict(),
                                                 inventory_reward_extension=inventory_reward)
+        self.production_heuristic = ProductionProblemHeuristic(ProductionProblem(problem_data))
+
         # ensure prod feasibility
         self.current_sol = self.adjust_sol_exact(self.current_sol, remove_num=self.remove_num_adjust)
         self.current_sol_cost = self.current_sol.get_solution_routing_cost()
@@ -142,8 +146,9 @@ class Alns:
         :return: exact production feasible solution
         """
         sol = sol if sol else self.current_sol
-        while not self.production_model.is_feasible(sol):
+        while not self.production_heuristic.is_feasible(sol):
             sol = self.destroy_random(sol, remove_num)
+            # print(self.production_model.is_feasible(sol))
         return sol
 
     def adjust_sol_ppfc(self, sol: Solution = None, remove_num: int = None) -> Solution:
@@ -526,7 +531,10 @@ class Alns:
         """
         sol_cost = sol.get_solution_routing_cost()
         if sol_cost < self.best_sol_cost:
-            accept = self.production_model.is_feasible(sol)
+            accept, _ = self.production_heuristic.is_feasible(sol)
+            # exact_accept = self.production_model.is_feasible(sol)
+            # if accept != exact_accept:
+            #     print(f"Heuristic result ({accept})  deviates from exact ({exact_accept}). Sol cost: {sol_cost}")
             update_type = 0 if accept else -2  # -2 means new global best was not production feasible
             return accept, update_type, sol_cost
         elif sol_cost < self.current_sol_cost:

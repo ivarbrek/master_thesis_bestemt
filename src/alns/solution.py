@@ -623,8 +623,7 @@ class Solution:
             #         return False
         return True, ''
 
-    def get_demand_dict(self, relevant_factories: List[str] = None) \
-            -> Dict[Tuple[str, str, int], int]:
+    def get_demand_dict(self, relevant_factories: List[str] = None) -> Dict[Tuple[str, str, int], int]:
         demands: Dict[Tuple[str, str, int], int] = {}  # (i, p, t): demand
         factories = relevant_factories if relevant_factories else [k for k in self.prbl.factory_nodes.keys()]
 
@@ -632,12 +631,11 @@ class Solution:
 
         for factory_node_id in factories:
             # List of tuples: (vessel, route_idx, latest)
-            visits: List[Tuple[str, int, int]] \
-                = [(self.temp_factory_visits[factory_node_id][i],
-                    self.temp_factory_visits_route_index[factory_node_id][i],
-                    self.temp_l[self.temp_factory_visits[factory_node_id][i]][
-                        self.temp_factory_visits_route_index[factory_node_id][i]])
-                   for i in range(len(self.temp_factory_visits[factory_node_id]))]
+            visits: List[Tuple[str, int, int]] = [(self.temp_factory_visits[factory_node_id][i],
+                                                   self.temp_factory_visits_route_index[factory_node_id][i],
+                                                   self.temp_l[self.temp_factory_visits[factory_node_id][i]][
+                                                       self.temp_factory_visits_route_index[factory_node_id][i]])
+                                                  for i in range(len(self.temp_factory_visits[factory_node_id]))]
 
             for (v, idx, l) in visits:
                 voyage_end_idx = self.get_temp_voyage_end_idx(vessel=v, start_idx=idx)
