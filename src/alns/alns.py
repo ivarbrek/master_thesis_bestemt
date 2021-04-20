@@ -152,7 +152,7 @@ class Alns:
 
         else:
             prod_feasible = sol.check_production_feasibility()
-            self.ppfc_infeasible_count += 1
+            self.ppfc_infeasible_count += int(not prod_feasible)
 
         it = 0
         while not prod_feasible:
@@ -631,7 +631,7 @@ if __name__ == '__main__':
     alns.current_sol.print_routes()
     print("\nRemove num:", alns.remove_num, "\n")
 
-    iterations = 1000
+    iterations = 500
 
     _stat_solution_cost = []
     _stat_operator_weights = defaultdict(list)

@@ -35,6 +35,7 @@ class ProblemDataExtended(ProblemData):
         self.precedence = precedence
         self._init_nodes()
         self._init_quay_capacities()
+        self.max_transport_time = max(self.transport_times.values())
 
     def _init_nodes(self) -> None:
         f_nodes = self.factory_nodes[:]
@@ -70,10 +71,6 @@ class ProblemDataExtended(ProblemData):
         self.quay_capacity: Dict[str, List[int]] = quay_capacity
         self.quay_cap_incr_times: Dict[str, List[int]] = quay_cap_incr_times
         self.quay_cap_decr_times: Dict[str, List[int]] = quay_cap_decr_times
-
-    @property
-    def max_transport_time(self):
-        return max(self.transport_times.values())
 
 
 class Solution:

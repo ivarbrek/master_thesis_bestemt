@@ -1,7 +1,7 @@
 import pyomo.environ as pyo
 from typing import Dict, List
 from time import time
-from pyomo.core import Constraint   # TODO: Remove this and use pyo.Constraint.Feasible/Skip
+from pyomo.core import Constraint  # TODO: Remove this and use pyo.Constraint.Feasible/Skip
 from tabulate import tabulate
 from src.read_problem_data import ProblemData
 
@@ -127,7 +127,8 @@ class BasicModel:
 
             green_and_yellow_nodes_for_vessel_tup = [(vessel, node)
                                                      for vessel, node in nodes_for_vessels_tup
-                                                     if node in prbl.orders_for_zones['green'] + prbl.orders_for_zones['yellow']]
+                                                     if node in prbl.orders_for_zones['green'] + prbl.orders_for_zones[
+                                                         'yellow']]
             self.m.GREEN_AND_YELLOW_NODES_FOR_VESSEL_TUP = pyo.Set(initialize=green_and_yellow_nodes_for_vessel_tup)
 
             self.m.WAIT_EDGES = pyo.Set(dimen=2, initialize=prbl.min_wait_if_sick.keys())
@@ -213,7 +214,7 @@ class BasicModel:
                                                        initialize=prbl.factory_max_vessels_loading)
 
         self.m.external_delivery_penalties = pyo.Param(self.m.ORDER_NODES,
-                                                     initialize=prbl.external_delivery_penalties)
+                                                       initialize=prbl.external_delivery_penalties)
 
         # Extension
         if extended_model:
@@ -521,7 +522,11 @@ class BasicModel:
                                                                      rule=constr_product_load_binary_activator)
 
         def constr_load_below_vessel_ton_capacity(model, v, t):
-            return sum(model.l[v, p, t] for p in model.PRODUCTS) <= model.vessel_ton_capacities[v]
+            if t == 0:
+                return Constraint.Feasible
+            return sum(model.l[v, p, (t - 1)] for p in model.PRODUCTS) <= (model.vessel_ton_capacities[v] *
+                                                                           (1 - sum(model.y[v, i, t] for i in
+                                                                                    model.FACTORY_NODES)))
 
         self.m.constr_load_below_vessel_ton_capacity = pyo.Constraint(self.m.VESSELS,
                                                                       self.m.TIME_PERIODS,
@@ -534,12 +539,12 @@ class BasicModel:
                                                                         self.m.TIME_PERIODS,
                                                                         rule=constr_load_below_vessel_nprod_capacity)
 
-        def constr_zero_final_load(model, v, p):
-            return model.l[v, p, max(model.TIME_PERIODS)] == 0
-
-        self.m.constr_zero_final_load = pyo.Constraint(self.m.VESSELS,
-                                                       self.m.PRODUCTS,
-                                                       rule=constr_zero_final_load)
+        # def constr_zero_final_load(model, v, p):
+        #     return model.l[v, p, max(model.TIME_PERIODS)] == 0
+        #
+        # self.m.constr_zero_final_load = pyo.Constraint(self.m.VESSELS,
+        #                                                self.m.PRODUCTS,
+        #                                                rule=constr_zero_final_load)
 
         def constr_inventory_below_capacity(model, i, t):
             return sum(model.s[i, p, t] for p in model.PRODUCTS) <= model.factory_inventory_capacities[i]
@@ -720,7 +725,8 @@ class BasicModel:
         if time_limit:
             self.solver_factory.options['TimeLimit'] = time_limit  # time limit in seconds
         t = time()
-        self.results = self.solver_factory.solve(self.m, tee=verbose)  # logfile=f'../../log_files/console_output_{log_name}.log'
+        self.results = self.solver_factory.solve(self.m,
+                                                 tee=verbose)  # logfile=f'../../log_files/console_output_{log_name}.log'
         if self.results.solver.termination_condition != pyo.TerminationCondition.optimal:
             print("Not optimal termination condition: ", self.results.solver.termination_condition)
         print("Solve time: ", round(time() - t, 1))
