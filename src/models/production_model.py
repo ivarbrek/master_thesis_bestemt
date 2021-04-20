@@ -1,5 +1,3 @@
-import math
-
 import pyomo.environ as pyo
 from typing import Dict, Tuple
 from time import time
@@ -7,7 +5,6 @@ import math
 import logging
 from tabulate import tabulate
 from pyomo.opt import SolverStatus, TerminationCondition
-
 from src.alns.solution import ProblemDataExtended, Solution
 
 logging.getLogger('pyomo.core').setLevel(logging.ERROR)
@@ -163,9 +160,7 @@ class ProductionModel:
                                                                 rule=constr_inventory_below_capacity)
 
         def constr_initial_inventory(model, i, p):
-            return (model.s[i, p, 0] == (model.factory_initial_inventories[i, p] +
-                    sum(model.q[l, p, 0] for (ii, l) in model.PRODUCTION_LINES_FOR_FACTORIES_TUP if ii == i) -
-                    model.demands[i, p, 0]))
+            return model.s[i, p, 0] == (model.factory_initial_inventories[i, p] - model.demands[i, p, 0])
 
         self.m.constr_initial_inventory = pyo.Constraint(self.m.FACTORY_NODES,
                                                          self.m.PRODUCTS,
@@ -175,7 +170,7 @@ class ProductionModel:
             if t == 0:
                 return pyo.Constraint.Feasible
             return (model.s[i, p, t] == (model.s[i, p, (t - 1)] +
-                    sum(model.q[l, p, t] for (ii, l) in model.PRODUCTION_LINES_FOR_FACTORIES_TUP if ii == i) -
+                    sum(model.q[l, p, t - 1] for (ii, l) in model.PRODUCTION_LINES_FOR_FACTORIES_TUP if ii == i) -
                     model.demands[i, p, t]))
 
         self.m.constr_inventory_balance = pyo.Constraint(self.m.FACTORY_NODES,

@@ -70,12 +70,8 @@ class ProductionProblemSolution:
 
     def demand_is_satisfied(self, t_demand: int) -> bool:
         # Demand is satisfied if inventory is larger than the demand in t_demand
-        # TODO: Update if
-        production_in_t = [sum(self._get_produced_amount(activities[t_demand], prod_line)
-                               for prod_line, activities in self.activities.items() if activities[t_demand] == p)
-                           for p in self.prbl.products_index_map]
-        return all(demand_p <= inventory_p + production_p for inventory_p, demand_p, production_p in
-                   zip(self.inventory[t_demand], self.prbl.demands[self.factory][t_demand], production_in_t))
+        return all(demand_p <= inventory_p for inventory_p, demand_p in
+                   zip(self.inventory[t_demand], self.prbl.demands[self.factory][t_demand]))
 
     def get_insertion_candidates(self, t_demand: int) -> List[Tuple[str, int, int, int]]:
         unmet_demand_product_idxs = [i for i, (inv, dem) in
