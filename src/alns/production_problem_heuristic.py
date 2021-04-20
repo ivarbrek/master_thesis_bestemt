@@ -140,17 +140,22 @@ class ProductionProblemSolution:
 
         inventory_cost = 0
         temp_inventory = sum(self.prbl.init_inventory[self.factory])
+
         for t in self.prbl.base_problem.time_periods:
+            if t in self.prbl.pickup_times[self.factory]:
+                temp_inventory -= sum(self.prbl.demands[self.factory][t])
             inventory_cost += temp_inventory * self.prbl.base_problem.inventory_unit_costs[self.factory]
             temp_inventory += sum(self._get_produced_amount(activities[t], prod_line)
                                   for prod_line, activities in self.activities.items())
-            if t in self.prbl.pickup_times[self.factory]:
-                temp_inventory -= sum(self.prbl.demands[self.factory][t])
-        production_start_cost = sum(int(activities[t - 1] != activities[t])
-                                    * prod_start_costs[self.factory, product_name[activities[t]]]
-                                    for prod_line, activities in self.activities.items()
-                                    for t in range(1, len(activities))
-                                    if activities[t] is not None)
+
+        production_start_cost = (sum(prod_start_costs[self.factory, product_name[activities[0]]]
+                                     for prod_line, activities in self.activities.items()
+                                     if activities[0] is not None)
+                                 + sum(int(activities[t - 1] != activities[t])
+                                       * prod_start_costs[self.factory, product_name[activities[t]]]
+                                       for prod_line, activities in self.activities.items()
+                                       for t in range(1, len(activities))
+                                       if activities[t] is not None))
         return production_start_cost + inventory_cost
 
     def _get_produced_amount(self, activity: int, prod_line: str):
