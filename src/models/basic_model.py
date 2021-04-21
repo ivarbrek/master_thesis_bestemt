@@ -555,10 +555,9 @@ class BasicModel:
 
         def constr_initial_inventory(model, i, p):
             return (model.s[i, p, 0] == model.factory_initial_inventories[i, p] +
-                    sum(model.q[l, p, 0] for (ii, l) in model.PRODUCTION_LINES_FOR_FACTORIES_TUP if ii == i) +
                     sum(model.demands[i, j, p] * model.z[v, i, j, 0]
                         for (v, i2, j) in model.ORDER_NODES_RELEVANT_NODES_FOR_VESSELS_TRIP
-                        if i2 == i))  # Changed
+                        if i2 == i))
 
         self.m.constr_initial_inventory = pyo.Constraint(self.m.FACTORY_NODES,
                                                          self.m.PRODUCTS,
@@ -568,7 +567,7 @@ class BasicModel:
             if t == 0:
                 return Constraint.Feasible
             return (model.s[i, p, t] == model.s[i, p, (t - 1)] +
-                    sum(model.q[l, p, t] for (ii, l) in model.PRODUCTION_LINES_FOR_FACTORIES_TUP if ii == i) +
+                    sum(model.q[l, p, t - 1] for (ii, l) in model.PRODUCTION_LINES_FOR_FACTORIES_TUP if ii == i) +
                     sum(model.demands[i, j, p] * model.z[v, i, j, t]
                         for v, i2, j in model.ORDER_NODES_RELEVANT_NODES_FOR_VESSELS_TRIP
                         if i2 == i))

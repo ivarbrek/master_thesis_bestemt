@@ -87,11 +87,14 @@ class Solution:
         self.factory_visits_route_index: Dict[str, List[int]] = {f: [0 for _ in self.factory_visits[f]]
                                                                  for f in self.prbl.factory_nodes}
 
-        self.temp_routes: Dict[str, List[str]] = copy.deepcopy(self.routes)
-        self.temp_e: Dict[str, List[int]] = copy.deepcopy(self.e)
-        self.temp_l: Dict[str, List[int]] = copy.deepcopy(self.l)
-        self.temp_factory_visits: Dict[str, List[str]] = copy.deepcopy(self.factory_visits)
-        self.temp_factory_visits_route_index: Dict[str, List[int]] = copy.deepcopy(self.factory_visits_route_index)
+        self.temp_routes: Dict[str, List[str]] = {vessel: route[:] for vessel, route in self.routes.items()}
+        self.temp_e: Dict[str, List[int]] = {vessel: e[:] for vessel, e in self.e.items()}
+        self.temp_l: Dict[str, List[int]] = {vessel: e[:] for vessel, e in self.e.items()}
+        self.temp_factory_visits: Dict[str, List[str]] = {factory: visits[:]
+                                                          for factory, visits in self.factory_visits.items()}
+        self.temp_factory_visits_route_index: Dict[str, List[int]] = {factory: visit_route_idxs[:]
+                                                                      for factory, visit_route_idxs in
+                                                                      self.factory_visits_route_index.items()}
 
         self.ppfc_slack_factor: float = 1.0
         self.verbose = verbose
@@ -535,7 +538,7 @@ class Solution:
         combined_demanded_products = np.logical_or(voyage_demanded_products, insert_node_demanded_products)
         return sum(combined_demanded_products) <= self.prbl.vessel_nprod_capacities[vessel]
 
-    def check_production_feasibility(self, vessel: str = None, idx: int = None) -> bool:
+    def check_production_feasibility(self, vessel: str = None, idx: int = None) -> Tuple[bool, str]:
 
         factories_to_check: List[str] = []
         if vessel and idx:
@@ -601,7 +604,7 @@ class Solution:
                         self.ppfc_slack_factor * np.sum(activity_requirement_cum[0], axis=None)):
                     if self.verbose:
                         print(f"check_production_feasibility failed on production for {factory_node_id}")
-                    return False
+                    return False, factory_node_id
 
             # Checking for inventory feasibility
             # Removed this - cannot _prove_ infeasibility (could pick up at earliest point in time instead)
@@ -618,10 +621,9 @@ class Solution:
             #         if self.verbose:
             #             print(f"check_production_feasibility failed on inventory for {factory_node_id}")
             #         return False
-        return True
+        return True, ''
 
-    def get_demand_dict(self, relevant_factories: List[str] = None) \
-            -> Dict[Tuple[str, str, int], int]:
+    def get_demand_dict(self, relevant_factories: List[str] = None) -> Dict[Tuple[str, str, int], int]:
         demands: Dict[Tuple[str, str, int], int] = {}  # (i, p, t): demand
         factories = relevant_factories if relevant_factories else [k for k in self.prbl.factory_nodes.keys()]
 
@@ -629,12 +631,11 @@ class Solution:
 
         for factory_node_id in factories:
             # List of tuples: (vessel, route_idx, latest)
-            visits: List[Tuple[str, int, int]] \
-                = [(self.temp_factory_visits[factory_node_id][i],
-                    self.temp_factory_visits_route_index[factory_node_id][i],
-                    self.temp_l[self.temp_factory_visits[factory_node_id][i]][
-                        self.temp_factory_visits_route_index[factory_node_id][i]])
-                   for i in range(len(self.temp_factory_visits[factory_node_id]))]
+            visits: List[Tuple[str, int, int]] = [(self.temp_factory_visits[factory_node_id][i],
+                                                   self.temp_factory_visits_route_index[factory_node_id][i],
+                                                   self.temp_l[self.temp_factory_visits[factory_node_id][i]][
+                                                       self.temp_factory_visits_route_index[factory_node_id][i]])
+                                                  for i in range(len(self.temp_factory_visits[factory_node_id]))]
 
             for (v, idx, l) in visits:
                 voyage_end_idx = self.get_temp_voyage_end_idx(vessel=v, start_idx=idx)
@@ -809,6 +810,12 @@ class Solution:
                 voyage_start_idxs_for_vessels.pop(v, None)
         return voyage_start_idxs_for_vessels
 
+    def get_order_vessel_idx_for_factory(self, factory_node_id: str) -> List[Tuple[str, int]]:
+        return [(vessel, idx)
+                for vessel, voyage_start_idx in zip(self.factory_visits[factory_node_id],
+                                                    self.factory_visits_route_index[factory_node_id])
+                for idx in range(voyage_start_idx + 1, self.get_temp_voyage_end_idx(vessel, voyage_start_idx))]
+
     def is_factory_latest_changed_in_temp(self, factory_node_id: str) -> bool:
         if (self.temp_factory_visits[factory_node_id] != self.factory_visits[factory_node_id] or
                 self.temp_factory_visits_route_index[factory_node_id] != self.factory_visits_route_index[
@@ -919,12 +926,8 @@ class Solution:
         return unserved_orders
 
     def get_solution_hash(self) -> str:
-        relevant_sub_hashes = [joblib.hash(self.routes),
-                               joblib.hash(self.e),
-                               joblib.hash(self.l),
-                               joblib.hash(self.factory_visits),
-                               joblib.hash(self.factory_visits_route_index)]
-        return joblib.hash(relevant_sub_hashes)
+        relevant_solution_parts = [self.routes, self.factory_visits]
+        return joblib.hash(relevant_solution_parts)
 
     def print_routes(self, highlight: List[Tuple[str, int]] = None):
         highlight = [] if not highlight else highlight
