@@ -35,6 +35,8 @@ class Alns:
     weight_min_threshold: float
     temperature: float
     cooling_rate: float
+    max_iter_same_solution: int
+    iter_same_solution: int
     determinism_param: int
     relatedness_precedence: Dict[Tuple[str, str], int]
     related_removal_weight_param: Dict[str, List[float]]
@@ -54,6 +56,7 @@ class Alns:
                  start_temperature_controlparam: float,
                  cooling_rate: float,
                  max_iter_seg: int,
+                 max_iter_same_solution: int,
                  remove_percentage: float,
                  remove_num_percentage_adjust: float,
                  determinism_param: int,
@@ -73,6 +76,8 @@ class Alns:
         self.remove_num_adjust = math.ceil(self.remove_num * remove_num_percentage_adjust)
         self.determinism_param = determinism_param
         self.noise_param = noise_param
+        self.max_iter_same_solution = max_iter_same_solution
+        self.iter_same_solution = 0
 
         # Solutions
         self.current_sol = self.repair_kregret(2, Solution(problem_data))
@@ -170,6 +175,8 @@ class Alns:
         if update_type == -1:
             return
         elif update_type == -2:  # New global best routing, but not production feasible
+            return
+        elif update_type == -3:  # Solution was updated because max_iter_same_solution was reached
             return
         elif not 0 <= update_type < len(self.score_params):
             print("Update type does not exist. Scores not updated.")
@@ -540,6 +547,10 @@ class Alns:
         elif sol_cost < self.current_sol_cost:
             update_type = -1 if sol.get_solution_hash() in self.previous_solutions else 1
             return True, update_type, sol_cost
+        elif self.iter_same_solution >= self.max_iter_same_solution:
+            if sol.get_solution_hash() not in self.previous_solutions:
+                self.record_solution(sol)  # operators not rewarded (negative accept type), even if solution is new
+            return True, -3, sol_cost
         else:
             # Simulated annealing criterion
             prob = pow(math.e, -((sol_cost - self.current_sol_cost) / self.temperature))
@@ -565,12 +576,15 @@ class Alns:
         accept_solution, self.update_type, cost = self.accept_solution(candidate_sol)
 
         if accept_solution:
+            self.iter_same_solution = 0
             self.current_sol = candidate_sol
             self.current_sol_cost = cost
             if self.update_type > -1:  # if we except a solution that has not been accepted before
                 self.record_solution(candidate_sol)
             if self.verbose:
                 print(f'> Solution is accepted as current solution')
+        else:
+            self.iter_same_solution += 1
 
         # Update scores πd of the destroy and repair heuristics - dependent on how good the solution is
         self.update_scores(destroy_op=d_op, repair_op=r_op, update_type=self.update_type)
@@ -625,8 +639,9 @@ if __name__ == '__main__':
                 weight_min_threshold=0.2,
                 reaction_param=0.1,
                 score_params=[5, 3, 1],  # corresponding to sigma_1, sigma_2, sigma_3 in R&P and L&N
-                start_temperature_controlparam=0.4,  # solution 50% worse than best solution is accepted with 50% prob.
+                start_temperature_controlparam=0.4,  # solution 40% worse than best solution is accepted with 50% prob.
                 cooling_rate=0.995,
+                max_iter_same_solution=50,
                 max_iter_seg=40,
                 remove_percentage=0.4,
                 remove_num_percentage_adjust=0.2,
