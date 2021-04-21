@@ -548,16 +548,17 @@ class Alns:
         elif sol_cost < self.current_sol_cost:
             update_type = -1 if sol.get_solution_hash() in self.previous_solutions else 1
             return True, update_type, sol_cost
-        elif self.iter_same_solution >= self.max_iter_same_solution:
-            if sol.get_solution_hash() not in self.previous_solutions:
-                self.record_solution(sol)  # operators not rewarded (negative accept type), even if solution is new
-            return True, -3, sol_cost
-        else:
+        elif self.iter_same_solution < self.max_iter_same_solution:
             # Simulated annealing criterion
             prob = pow(math.e, -((sol_cost - self.current_sol_cost) / self.temperature))
             accept = np.random.choice(np.array([True, False]), p=(np.array([prob, (1 - prob)])))
             update_type = -1 if sol.get_solution_hash() in self.previous_solutions else -1 + 3 * accept
             return accept, update_type, sol_cost
+        else:  # maximum number of iterations from same current solution is reached, solution is accepted
+            print("Solution is accepted because maximum was reached,", self.iter_same_solution)
+            if sol.get_solution_hash() not in self.previous_solutions:
+                self.record_solution(sol)  # operators not rewarded (negative accept type), even if solution is new
+            return True, -3, sol_cost
 
     def record_solution(self, sol: Solution) -> None:
         if self.verbose:
