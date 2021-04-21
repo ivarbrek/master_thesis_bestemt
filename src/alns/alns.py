@@ -146,9 +146,10 @@ class Alns:
         :return: exact production feasible solution
         """
         sol = sol if sol else self.current_sol
-        while not self.production_heuristic.is_feasible(sol):
-            sol = self.destroy_random(sol, remove_num)
-            # print(self.production_model.is_feasible(sol))
+        prod_feasible, infeasible_factory = self.production_heuristic.is_feasible(sol)
+        while not prod_feasible:
+            sol = self.remove_from_factory(sol, infeasible_factory, remove_num)
+            prod_feasible, infeasible_factory = self.production_heuristic.is_feasible(sol)
         return sol
 
     def adjust_sol_ppfc(self, sol: Solution = None, remove_num: int = None) -> Solution:
@@ -162,7 +163,7 @@ class Alns:
         prod_feasible, infeasible_factory = sol.check_production_feasibility()
         self.ppfc_infeasible_count += int(not prod_feasible)
         while not prod_feasible:
-            sol = self.remove_from_factory(sol, infeasible_factory, remove_num=remove_num)
+            sol = self.remove_from_factory(sol, infeasible_factory, remove_num)
             prod_feasible, infeasible_factory = sol.check_production_feasibility()
         return sol
 
