@@ -12,6 +12,7 @@ tabulate = "*"
 matplotlib = "*"
 function = "*"
 joblib = "*"
+requests = "*"
 
 [dev-packages]
 
