@@ -24,7 +24,7 @@ class ProblemData:
         self.inventory_unit_costs_rewards_df = pd.read_excel(file_path, sheet_name='inventory_cost', index_col=0,
                                                              skiprows=[0])
         self.transport_unit_costs_df = pd.read_excel(file_path, sheet_name='transport_cost', index_col=0, skiprows=[0])
-        self.transport_times_df = pd.read_excel(file_path, sheet_name='transport_time', index_col=0, skiprows=[0])
+        self.transport_times_df = pd.read_excel(file_path, sheet_name='transport_time', index_col=[0, 1], skiprows=[0])
         self.loading_unloading_times_df = pd.read_excel(file_path, sheet_name='loading_unloading_time', index_col=0,
                                                         skiprows=[0])
         self.demands_df = pd.read_excel(file_path, sheet_name='demand', index_col=0, skiprows=[0])
@@ -76,7 +76,8 @@ class ProblemData:
         self.factory_initial_inventories = self.get_initial_inventories_dict()
         self.inventory_unit_costs = self.get_inventory_unit_costs_dict()
         self.transport_unit_costs = self.get_transport_costs_dict()
-        self.transport_times = self.get_transport_times_dict()
+        # self.transport_times = self.get_transport_times_dict()  # depreciated
+        self.transport_times = self.get_transport_times_per_vessel_dict()
         self.loading_unloading_times = self.get_loading_unloading_times_dict()
         self.demands = self.get_demands_dict()
         self.production_stops = self.get_production_stops_dict()
@@ -136,7 +137,7 @@ class ProblemData:
 
         # All nodes
         assert set(self.get_nodes()) == set(self.nodes_for_vessels_df.columns)
-        assert set(self.get_nodes()) == set(self.transport_times_df.index)
+        assert set(self.get_nodes()) == set(self.transport_times_df.index.levels[0])
         assert set(self.get_nodes()) == set(self.transport_times_df.columns)
         assert set(self.get_nodes()) == set(self.loading_unloading_times_df.index)
 
@@ -256,25 +257,36 @@ class ProblemData:
         return {vessel: self.transport_unit_costs_df.loc[vessel, 'unit_transport_cost'] for vessel in
                 self.transport_unit_costs_df.index}
 
-    def get_transport_times_dict(self) -> Dict[Tuple[str, str], int]:
-        d = {**{(node1, node2): min([self.transport_times_df.loc[node1, node2]] +
-                                    [self.transport_times_df.loc[node1, intermediate]
-                                     + self.transport_times_df.loc[intermediate, node2]
-                                     for intermediate in self.transport_times_df.index])
-                for node1 in self.transport_times_df.index
-                for node2 in self.transport_times_df.columns},
-             **{('d_0', node): 1 for node in self.transport_times_df.index},
-             **{(node, 'd_-1'): 1 for node in self.transport_times_df.index}}
-        validity = False
-        while not validity:
-            try:
-                self._validate_transport_time_triangle_inequality(d)
-                validity = True
-            except AssertionError:
-                for orig in self.transport_times_df.index:
-                    for dest in self.transport_times_df.index:
-                        d[orig, dest] = min([d[orig, dest]] + [(d[orig, intermediate] + d[intermediate, dest])
-                                                               for intermediate in self.transport_times_df.index])
+    # def get_transport_times_dict(self) -> Dict[Tuple[str, str], int]:
+    #     d = {**{(node1, node2): min([self.transport_times_df.loc[node1, node2]] +
+    #                                 [self.transport_times_df.loc[node1, intermediate]
+    #                                  + self.transport_times_df.loc[intermediate, node2]
+    #                                  for intermediate in self.transport_times_df.index])
+    #             for node1 in self.transport_times_df.index
+    #             for node2 in self.transport_times_df.columns},
+    #          **{('d_0', node): 1 for node in self.transport_times_df.index},
+    #          **{(node, 'd_-1'): 1 for node in self.transport_times_df.index}}
+    #     validity = False
+    #     while not validity:
+    #         try:
+    #             self._validate_transport_time_triangle_inequality(d)
+    #             validity = True
+    #         except AssertionError:
+    #             for orig in self.transport_times_df.index:
+    #                 for dest in self.transport_times_df.index:
+    #                     d[orig, dest] = min([d[orig, dest]] + [(d[orig, intermediate] + d[intermediate, dest])
+    #                                                            for intermediate in self.transport_times_df.index])
+    #     return d
+
+    def get_transport_times_per_vessel_dict(self) -> Dict[Tuple[str, str, str], int]:
+        d = {**{(vessel, orig, dest): self.transport_times_df.loc[(orig, vessel), dest]
+                for orig in self.transport_times_df.index.levels[0]
+                for dest in self.transport_times_df.columns
+                for vessel in self.transport_times_df.index.levels[1]},
+             **{(vessel, 'd_0', node): 1 for node in self.transport_times_df.index.levels[0]
+                for vessel in self.transport_times_df.index.levels[1]},
+             **{(vessel, node, 'd_-1'): 1 for node in self.transport_times_df.index.levels[0]
+                for vessel in self.transport_times_df.index.levels[1]}}
         return d
 
     def get_loading_unloading_times_dict(self) -> Dict[Tuple[str, str], int]:
@@ -325,20 +337,23 @@ class ProblemData:
 
     def get_min_wait_if_sick_dict(self) -> Dict:
         orders_for_zones = self.get_zone_orders_dict()
-        transport_times = self.get_transport_times_dict()
+        transport_times = self.get_transport_times_per_vessel_dict()
         min_wait = int(self.get_key_value('min_wait_if_sick'))
+        vessels = self.get_vessels()
 
         # Find wait time periods from red/yellow to green
-        min_wait_times_if_sick = {(i, j): min_wait - transport_times[i, j]
+        min_wait_times_if_sick = {(v, i, j): min_wait - transport_times[v, i, j]
                                   for i in orders_for_zones['red'] + orders_for_zones['yellow']
                                   for j in orders_for_zones['green']
-                                  if min_wait - transport_times[i, j] > 0}
+                                  for v in vessels
+                                  if min_wait - transport_times[v, i, j] > 0}
 
         # Add wait time periods from red to yellow
-        min_wait_times_if_sick.update({(i, j): max(0, min_wait - transport_times[i, j])
+        min_wait_times_if_sick.update({(v, i, j): max(0, min_wait - transport_times[v, i, j])
                                        for i in orders_for_zones['red']
                                        for j in orders_for_zones['yellow']
-                                       if min_wait - transport_times[i, j] > 0})
+                                       for v in vessels
+                                       if min_wait - transport_times[v, i, j] > 0})
         return min_wait_times_if_sick
 
     def get_max_time_window_violation(self) -> int:
@@ -409,7 +424,7 @@ class ProblemData:
             extra_violation = 2 * self.get_max_time_window_violation() if self.soft_tw else 0
             return (self.get_time_window_start(i)
                     + self.get_loading_unloading_times_dict()[v, i]
-                    + self.get_transport_times_dict()[i, j]
+                    + self.get_transport_times_per_vessel_dict()[v, i, j]
                     >
                     self.get_time_window_end(j)
                     + extra_violation)
@@ -417,7 +432,7 @@ class ProblemData:
     def _get_cached_file_name_for_arcs(self):
         relevant_sub_hashes = [joblib.hash(self.time_windows_for_orders_df),
                                joblib.hash(self.get_loading_unloading_times_dict()),
-                               joblib.hash(self.get_transport_times_dict()),
+                               joblib.hash(self.get_transport_times_per_vessel_dict()),
                                self.get_max_time_window_violation(),
                                joblib.hash(self.get_nodes_for_vessels_dict2())]
         file_name = joblib.hash(relevant_sub_hashes) + '.json'

@@ -7,7 +7,6 @@ from src.read_problem_data import ProblemData
 
 # TODO IN THIS FILE
 # ----------------------------------------------------------------------------------------------------------------------------
-# TODO: Have not made any difference between different start/end time periods (so for now, not possible to have different time period lengths)
 # TODO: Check code marked with TODO
 
 
@@ -111,35 +110,40 @@ class BasicModel:
         self.m.PRODUCTS_WITHIN_SAME_PRODUCT_GROUP_TUP = pyo.Set(dimen=2,
                                                                 initialize=products_within_same_product_group_tup)
 
+        self.m.ZONES = pyo.Set(initialize=prbl.orders_for_zones.keys())
+
+        orders_for_zones_tup = [(zone, order)
+                                for zone, li in prbl.orders_for_zones.items()
+                                for order in li]
+        self.m.ORDERS_FOR_ZONES_TUP = pyo.Set(dimen=2, initialize=orders_for_zones_tup)
+
+        green_nodes_for_vessel_tup = [(vessel, node)
+                                      for vessel, node in nodes_for_vessels_tup
+                                      if node in prbl.orders_for_zones['green']]
+        self.m.GREEN_NODES_FOR_VESSEL_TUP = pyo.Set(dimen=2, initialize=green_nodes_for_vessel_tup)
+
+        green_and_yellow_nodes_for_vessel_tup = [(vessel, node)
+                                                 for vessel, node in nodes_for_vessels_tup
+                                                 if node in prbl.orders_for_zones['green'] + prbl.orders_for_zones[
+                                                     'yellow']]
+        self.m.GREEN_AND_YELLOW_NODES_FOR_VESSEL_TUP = pyo.Set(initialize=green_and_yellow_nodes_for_vessel_tup)
+
+        # sick_arcs_tup = list(set([(orig, dest)
+        #                           for (v, orig, dest) in prbl.min_wait_if_sick.keys()
+        #                           if prbl.min_wait_if_sick[v, orig, dest] > 0]))
+        # self.m.WAIT_EDGES = pyo.Set(dimen=2,
+        #                             initialize=sick_arcs_tup)  # prbl.min_wait_if_sick.keys())
+
+        wait_edges_for_vessels_trip = [(v, i, j)
+                                       for v in self.m.VESSELS
+                                       for i, j in [(i, j) for (u, i, j) in prbl.min_wait_if_sick.keys() if u == v]
+                                       # self.m.WAIT_EDGES
+                                       if (i, j) in self.m.ARCS[v]]
+
+        self.m.WAIT_EDGES_FOR_VESSEL_TRIP = pyo.Set(dimen=3, initialize=wait_edges_for_vessels_trip)
+
         # Extension
         if extended_model:
-            self.m.ZONES = pyo.Set(initialize=prbl.orders_for_zones.keys())
-
-            orders_for_zones_tup = [(zone, order)
-                                    for zone, li in prbl.orders_for_zones.items()
-                                    for order in li]
-            self.m.ORDERS_FOR_ZONES_TUP = pyo.Set(dimen=2, initialize=orders_for_zones_tup)
-
-            green_nodes_for_vessel_tup = [(vessel, node)
-                                          for vessel, node in nodes_for_vessels_tup
-                                          if node in prbl.orders_for_zones['green']]
-            self.m.GREEN_NODES_FOR_VESSEL_TUP = pyo.Set(dimen=2, initialize=green_nodes_for_vessel_tup)
-
-            green_and_yellow_nodes_for_vessel_tup = [(vessel, node)
-                                                     for vessel, node in nodes_for_vessels_tup
-                                                     if node in prbl.orders_for_zones['green'] + prbl.orders_for_zones[
-                                                         'yellow']]
-            self.m.GREEN_AND_YELLOW_NODES_FOR_VESSEL_TUP = pyo.Set(initialize=green_and_yellow_nodes_for_vessel_tup)
-
-            self.m.WAIT_EDGES = pyo.Set(dimen=2, initialize=prbl.min_wait_if_sick.keys())
-
-            wait_edges_for_vessels_trip = [(v, i, j)
-                                           for v in self.m.VESSELS
-                                           for i, j in self.m.WAIT_EDGES
-                                           if (i, j) in self.m.ARCS[v]]
-
-            self.m.WAIT_EDGES_FOR_VESSEL_TRIP = pyo.Set(dimen=3, initialize=wait_edges_for_vessels_trip)
-
             self.m.TIME_WINDOW_VIOLATIONS = pyo.Set(
                 initialize=[i for i in range(-prbl.max_tw_violation, prbl.max_tw_violation + 1)])
 
@@ -183,7 +187,8 @@ class BasicModel:
         self.m.transport_unit_costs = pyo.Param(self.m.VESSELS,
                                                 initialize=prbl.transport_unit_costs)
 
-        self.m.transport_times = pyo.Param(self.m.NODES_INCLUDING_DUMMY_START,
+        self.m.transport_times = pyo.Param(self.m.VESSELS,
+                                           self.m.NODES_INCLUDING_DUMMY_START,
                                            self.m.NODES_INCLUDING_DUMMY_END,
                                            initialize=prbl.transport_times)
 
@@ -216,6 +221,9 @@ class BasicModel:
         self.m.external_delivery_penalties = pyo.Param(self.m.ORDER_NODES,
                                                        initialize=prbl.external_delivery_penalties)
 
+        self.m.min_wait_if_sick = pyo.Param(self.m.WAIT_EDGES_FOR_VESSEL_TRIP,
+                                            initialize=prbl.min_wait_if_sick)
+
         # Extension
         if extended_model:
             tw_violation_unit_cost = {k: prbl.tw_violation_unit_cost * abs(k) for k in self.m.TIME_WINDOW_VIOLATIONS}
@@ -230,9 +238,6 @@ class BasicModel:
 
             self.m.tw_min = pyo.Param(self.m.ORDER_NODES, initialize=tw_min)
             self.m.tw_max = pyo.Param(self.m.ORDER_NODES, initialize=tw_max)
-
-            self.m.min_wait_if_sick = pyo.Param(self.m.WAIT_EDGES,
-                                                initialize=prbl.min_wait_if_sick)
 
             self.m.inventory_targets = pyo.Param(self.m.FACTORY_NODES,
                                                  self.m.PRODUCTS,
@@ -331,7 +336,7 @@ class BasicModel:
                         for t in model.TIME_PERIODS
                         for p in model.PRODUCTS
                         for i in model.FACTORY_NODES)
-                    + sum(model.transport_unit_costs[v] * model.transport_times[i, j] * model.x[v, i, j, t]
+                    + sum(model.transport_unit_costs[v] * model.transport_times[v, i, j] * model.x[v, i, j, t]
                           for t in model.TIME_PERIODS
                           for v in model.VESSELS
                           for i, j in model.ARCS[v]
@@ -381,7 +386,7 @@ class BasicModel:
                             for tau in range(max(0, t - model.loading_unloading_times[v, i] + 1), t + 1))
                         + sum(model.x[v, i, j, tau]
                               for i, j in model.ARCS[v]
-                              for tau in range(max(0, t - model.transport_times[i, j] + 1), t + 1))
+                              for tau in range(max(0, t - model.transport_times[v, i, j] + 1), t + 1))
                         + sum(model.w[v, i, t]
                               for v2, i in model.NODES_FOR_VESSELS_TUP if v2 == v)
                         == 1)
@@ -428,15 +433,17 @@ class BasicModel:
         def constr_wait_load_unload_after_sailing(model, v, i, t):
             relevant_nodes = [j for j, i2 in model.ARCS[v]
                               if i2 == i
-                              and model.transport_times[j, i] <= t]
+                              and model.transport_times[v, j, i] <= t]
             # Only allow sailing from i to dummy end node if arc is defined
             x_to_dummy_end = model.x[v, i, 'd_-1', t] if (i, 'd_-1') in model.ARCS[v] else 0
             if t == 0:  # exclude w_t-1
-                return (sum(model.x[v, j, i, (t - model.transport_times[j, i])] for j in relevant_nodes)
+                return (sum(
+                    model.x[v, j, i, (t - model.transport_times[v, j, i])] for j in relevant_nodes)
                         ==
                         model.y[v, i, t] + model.w[v, i, t] + x_to_dummy_end)
             else:
-                return (sum(model.x[v, j, i, (t - model.transport_times[j, i])] for j in relevant_nodes)
+                return (sum(
+                    model.x[v, j, i, (t - model.transport_times[v, j, i])] for j in relevant_nodes)
                         + model.w[v, i, (t - 1)]
                         ==
                         model.y[v, i, t] + model.w[v, i, t] + x_to_dummy_end)
@@ -641,6 +648,18 @@ class BasicModel:
                                                         self.m.TIME_PERIODS,
                                                         rule=constr_production_shift)
 
+        def constr_wait_if_visit_sick_farm(model, v, i, j, t):
+            if model.transport_times[v, i, j] <= t <= len(model.TIME_PERIODS) - model.min_wait_if_sick[v, i, j]:
+                return (model.min_wait_if_sick[v, i, j] * model.x[v, i, j, t - model.transport_times[v, i, j]]
+                        <=
+                        sum(model.w[v, j, tau] for tau in range(t, t + model.min_wait_if_sick[v, i, j])))
+            else:
+                return Constraint.Feasible
+
+        self.m.constr_wait_if_visit_sick_farm = pyo.Constraint(self.m.WAIT_EDGES_FOR_VESSEL_TRIP,
+                                                               self.m.TIME_PERIODS,
+                                                               rule=constr_wait_if_visit_sick_farm)
+
         # Extension
         if extended_model:
             def constr_delivery_no_tw_violation(model, i):
@@ -690,18 +709,6 @@ class BasicModel:
 
             self.m.constr_choose_one_tw_violation = pyo.Constraint(self.m.ORDER_NODES,
                                                                    rule=constr_choose_one_tw_violation)
-
-            def constr_wait_if_visit_sick_farm(model, v, i, j, t):
-                if model.transport_times[i, j] <= t <= len(model.TIME_PERIODS) - model.min_wait_if_sick[i, j]:
-                    return (model.min_wait_if_sick[i, j] * model.x[v, i, j, t - model.transport_times[i, j]]
-                            <=
-                            sum(model.w[v, j, tau] for tau in range(t, t + model.min_wait_if_sick[i, j])))
-                else:
-                    return Constraint.Feasible
-
-            self.m.constr_wait_if_visit_sick_farm = pyo.Constraint(self.m.WAIT_EDGES_FOR_VESSEL_TRIP,
-                                                                   self.m.TIME_PERIODS,
-                                                                   rule=constr_wait_if_visit_sick_farm)
 
             def constr_rewarded_inventory_below_inventory_level(model, i, p):
                 return model.s_plus[i, p] <= model.s[i, p, max(model.TIME_PERIODS)]
@@ -1031,7 +1038,7 @@ class BasicModel:
                                   for p in self.m.PRODUCTS
                                   for i in self.m.FACTORY_NODES))
             transport_cost = (
-                sum(self.m.transport_unit_costs[v] * self.m.transport_times[i, j] * pyo.value(self.m.x[v, i, j, t])
+                sum(self.m.transport_unit_costs[v] * self.m.transport_times[v, i, j] * pyo.value(self.m.x[v, i, j, t])
                     for t in self.m.TIME_PERIODS
                     for v in self.m.VESSELS
                     for i, j in self.m.ARCS[v]

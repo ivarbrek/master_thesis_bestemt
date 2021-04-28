@@ -1,8 +1,9 @@
 import openpyxl
 import pandas as pd
-from typing import List, Dict
+from typing import List, Dict, Tuple
 import requests
 from time import time
+import math
 
 
 def get_distances(temp_df: pd.DataFrame, ids: List[int], to_id: int) -> Dict[int, int]:
@@ -44,9 +45,32 @@ def make_distance_matrix_sheet(locations: List[int], file_path: str, to_sheet: s
     excel_writer.close()
 
 
+def _validate_transport_time_triangle_inequality(distance_matrix: pd.DataFrame) -> None:
+    nodes = list(n for n in distance_matrix.index if (n != 11771 and n != 11772))
+    for origin in nodes:
+        for intermediate in nodes:
+            for destination in nodes:
+                if origin != intermediate and intermediate != destination:
+                    try:
+                        assert (math.floor(distance_matrix.loc[origin, destination]) <=
+                                math.floor(distance_matrix.loc[origin, intermediate] +
+                                distance_matrix.loc[intermediate, destination]))
+                    except ValueError:
+                        print(f"Value not found for origin {origin}, intermediate {intermediate} and destination {destination}")
+                    except AssertionError:
+                        print(f"{origin} -> {intermediate} -> {destination}: "
+                              f"{distance_matrix.loc[origin, intermediate] + distance_matrix.loc[intermediate, destination]}")
+                        print(f"{origin} -> {destination}: {distance_matrix.loc[origin, destination]}")
+
+
 if __name__ == '__main__':
-    locations = list(pd.read_excel("../data/locations.xlsx", index_col=[0])["location id"])
-    print(f"Investigating {len(locations)} locations...")
+    pass
+    # locations = list(pd.read_excel("../data/locations.xlsx", index_col=[0])["location id"])
+    # print(f"Investigating {len(locations)} locations...")
 
     # Init
-    make_distance_matrix_sheet(locations=locations, file_path="../data/old/distance_matrix_OLD.xlsx", to_sheet="distances")
+    # make_distance_matrix_sheet(locations=locations, file_path="../data/old/distance_matrix_OLD.xlsx", to_sheet="distances")
+
+    # Triangle inequality check
+    # distance_matrix = pd.read_excel("../data/distance_matrix.xlsx", sheet_name="distances", index_col=[0])
+    # _validate_transport_time_triangle_inequality(distance_matrix=distance_matrix)
