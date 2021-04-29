@@ -81,9 +81,23 @@ class TestDataGenerator:
                                            time_period_length=time_period_length)
         self.write_loading_times_to_file(relevant_vessels=vessels, relevant_nodes=self.nlm.get_nodes(),
                                          time_period_length=time_period_length)
-
-        self.excel_writer.save()
+        self.write_time_windows_to_file(time_periods, tw_length=20, earliest_tw_start=5)
         self.excel_writer.close()
+
+    def write_time_windows_to_file(self, time_periods: int, tw_length: int, earliest_tw_start: int) -> None:
+        tw_df = self.generate_random_time_windows(time_periods, tw_length, earliest_tw_start)
+        tw_df.to_excel(self.excel_writer, sheet_name="time_windows_for_order", startrow=1)
+
+    def generate_random_time_windows(self, time_periods: int, tw_length: int, earliest_tw_start: int) -> pd.DataFrame:
+        data = []
+        for order in self.nlm.get_order_nodes():
+            tw_start = random.randint(earliest_tw_start, time_periods - tw_length)  # pick random tw start
+            tw_end = tw_start + tw_length
+            data.append((order, tw_start, tw_end))
+        df = pd.DataFrame(data)
+        df.columns = ['orders', 'tw_start', 'tw_end']
+        df = df.set_index(0)
+        return df
 
     def get_all_loading_times(self, relevant_vessels: List[str], relevant_nodes: List[str],
                               time_period_length: int) -> pd.DataFrame:

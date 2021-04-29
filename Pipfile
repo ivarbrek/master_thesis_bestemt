@@ -13,6 +13,7 @@ matplotlib = "*"
 function = "*"
 joblib = "*"
 requests = "*"
+jsondatetime = "*"
 
 [dev-packages]
 
