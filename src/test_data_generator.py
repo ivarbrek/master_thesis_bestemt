@@ -67,6 +67,7 @@ class TestDataGenerator:
         self.write_loading_times_to_file(lnm=lnm, out_sheetname="loading_unloading_time",
                                          relevant_vessels=relevant_vessels, relevant_nodes=lnm.get_all_nodes(),
                                          time_period_length=time_period_length)
+        self.write_transport_costs_to_file(relevant_vessels=relevant_vessels)
 
         self.excel_writer.save()
         self.excel_writer.close()
@@ -109,6 +110,15 @@ class TestDataGenerator:
                                                                                      time_period_length=time_period_length)
         return transport_times_df
 
+    def get_vessel_transport_costs(self, relevant_vessels: List[str]) -> pd.DataFrame:
+        vessels_df = self.vessels_df.loc[relevant_vessels]
+        transport_costs_df = pd.DataFrame(relevant_vessels, columns=["vessel"]).set_index("vessel", drop=True)
+        d = {}
+        for v in relevant_vessels:
+            d[v] = vessels_df.loc[v, 'unit_transport_cost']
+        transport_costs_df['unit_transport_cost'] = transport_costs_df.index.to_series().map(d)
+        return transport_costs_df
+
     def get_vessel_name(self, vessel_id: str) -> str:
         return self.vessels_df.loc[vessel_id, "vessel_name"]
 
@@ -126,6 +136,10 @@ class TestDataGenerator:
         loading_times_df.to_excel(self.excel_writer, sheet_name=out_sheetname,
                                   startrow=1)  # startrow=1 because of skiprows in read
 
+    def write_transport_costs_to_file(self, relevant_vessels: List[str]) -> None:
+        transport_costs_df = self.get_vessel_transport_costs(relevant_vessels=relevant_vessels)
+        transport_costs_df.to_excel(self.excel_writer, sheet_name="transport_cost", startrow=1)
+
 
 if __name__ == '__main__':
     lnm = LocationNodeMapping(factory_locations=["2022", "482"],
@@ -135,4 +149,3 @@ if __name__ == '__main__':
                                     out_filepath="../data/testoutputfile.xlsx",
                                     relevant_vessels=["v_1", "v_2", "v_3"],
                                     time_period_length=2)
-    print(tdg.get_vessel_transport_times(lnm=lnm, relevant_vessels=["v_1", "v_2", "v_3"],relevant_nodes=lnm.get_all_nodes(),time_period_length=2))
