@@ -129,7 +129,7 @@ class TestDataGenerator:
                 for dest in relevant_nodes:
                     hours = (int(math.floor(distances_df.loc[int(self.nlm.get_location_from_node(orig)),
                                                              int(self.nlm.get_location_from_node(dest))]) / 1000) / speed)
-                    transport_times_df.loc[(orig, v), dest] = _hours_to_time_periods(hours, time_period_length)
+                    transport_times_df.loc[(orig, v), dest] = 0 if orig == dest else _hours_to_time_periods(hours, time_period_length)
         return transport_times_df
 
     def get_vessel_transport_costs(self, relevant_vessels: List[str]) -> pd.DataFrame:
@@ -172,7 +172,7 @@ class TestDataGenerator:
 if __name__ == '__main__':
     tdg = TestDataGenerator()
     tdg.write_test_instance_to_file(out_filepath="../../data/testoutputfile.xlsx",
-                                    vessels=["v_1", "v_2", "v_3", "v_4"],
+                                    vessels=["v_1", "v_2", "v_3"],
                                     factory_locations=["2022", "482"],
                                     no_orders=12,
                                     no_products=8,
