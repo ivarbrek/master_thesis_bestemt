@@ -2,6 +2,8 @@ import math
 from typing import List, Dict
 import pandas as pd
 
+# This is an old version - new version in directory generate_data
+
 
 def _hours_to_time_periods(hours: float, time_period_length: float) -> int:
     if hours % time_period_length < 0.25:  # TODO: Is this OK? Rounding down if less than 0.25 over time period threshold
@@ -146,6 +148,6 @@ if __name__ == '__main__':
                               order_locations=["12003","13055","14035","26435","39197","11736","37357","13518","21336","2213","29816","27315","30236","30757","36797","11338"])
     tdg = TestDataGenerator()
     tdg.write_test_instance_to_file(lnm=lnm,
-                                    out_filepath="../data/testoutputfile.xlsx",
+                                    out_filepath="../../data/testoutputfile.xlsx",
                                     relevant_vessels=["v_1", "v_2", "v_3"],
                                     time_period_length=2)

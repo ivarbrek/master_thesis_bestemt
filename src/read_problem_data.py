@@ -142,7 +142,7 @@ class ProblemData:
         assert set(self.get_nodes()) == set(self.loading_unloading_times_df.index)
 
         # Time periods
-        assert set(self.get_time_periods()) == set(self.time_windows_for_orders_df.columns)
+        assert set(self.get_time_periods()).issubset(set(self.get_time_periods()))
         assert set(self.get_time_periods()) == set(self.factory_max_vessels_loading_df.index)
         assert set(self.get_time_periods()) == set(self.production_stop_df.index)
 
@@ -194,18 +194,20 @@ class ProblemData:
         return self.get_order_nodes() + self.get_factory_nodes()
 
     def get_time_periods(self) -> List[int]:
-        return list(int(time_period) for time_period in self.time_windows_for_orders_df.columns)
+        return list(self.factory_max_vessels_loading_df.index)
 
     def get_time_windows_for_orders_dict(self) -> Dict[Tuple[str, int], int]:
-        return {(order_node, int(time_period)): self.time_windows_for_orders_df.loc[order_node, time_period]
+        return {(order_node, int(time_period)): int(self.get_time_window_start(order_node)
+                                                    <= time_period
+                                                    <= self.get_time_window_end(order_node))
                 for order_node in self.time_windows_for_orders_df.index
-                for time_period in self.time_windows_for_orders_df.columns}
+                for time_period in self.get_time_periods()}
 
-    def get_time_window_start(self, order_node):  # TODO: Change tw representation to start-end
-        return min(t for (i, t), val in self.get_time_windows_for_orders_dict().items() if i == order_node and val == 1)
+    def get_time_window_start(self, order_node):
+        return self.time_windows_for_orders_df.loc[order_node, 'tw_start']
 
     def get_time_window_end(self, order_node):
-        return max(t for (i, t), val in self.get_time_windows_for_orders_dict().items() if i == order_node and val == 1)
+        return self.time_windows_for_orders_df.loc[order_node, 'tw_end']
 
     def get_start_times_for_vessels_dict(self) -> Dict[str, int]:
         return {vessel: int(self.vessel_availability_df.loc[vessel, 'time_period'])
