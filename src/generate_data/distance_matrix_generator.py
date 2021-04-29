@@ -1,4 +1,3 @@
-import openpyxl
 import pandas as pd
 from typing import List, Dict
 import requests

@@ -11,11 +11,10 @@ from src.read_problem_data import ProblemData
 # TODO: Check code marked with TODO
 
 
-class BasicModel:
+class FfprpModel:
     def __init__(self,
                  prbl: ProblemData,
                  extended_model: bool = False,
-
                  ) -> None:
 
         # GENERAL MODEL SETUP
@@ -1068,3 +1067,18 @@ class BasicModel:
         print_result_variablewise()
         print_result_eventwise()
         print_objective_function_components()
+
+
+if __name__ == '__main__':
+    # problem_data = ProblemData('../../data/input_data/small_testcase_one_vessel.xlsx')
+    # problem_data = ProblemData('../../data/input_data/small_testcase.xlsx')
+    # problem_data = ProblemData('../../data/input_data/medium_testcase.xlsx')
+    # problem_data = ProblemData('../../data/input_data/large_testcase.xlsx')
+    # problem_data = ProblemData('../../data/input_data/larger_testcase.xlsx')
+    problem_data = ProblemData('../../data/input_data/larger_testcase_4vessels.xlsx')
+
+    extensions = False
+    problem_data.soft_tw = extensions
+    model = FfprpModel(problem_data, extended_model=extensions)
+    model.solve(time_limit=40)
+    model.print_result()
