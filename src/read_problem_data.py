@@ -67,17 +67,16 @@ class ProblemData:
         self.tw_end = {i: self.get_time_window_end(i) for i in self.order_nodes}
         # self.max_tw_violation = self.get_max_time_window_violation()
         # self.tw_violation_unit_cost = self.get_tw_violation_cost()
-        self.min_wait_if_sick = self.get_min_wait_if_sick_dict()
-        self.min_wait_if_sick_abs = self.get_min_wait_if_sick()
         self.vessel_ton_capacities = self.get_vessel_ton_capacities_dict()
         self.vessel_nprod_capacities = self.get_vessel_nprod_capacities_dict()
         self.factory_inventory_capacities = self.get_inventory_capacities_dict()
         self.factory_initial_inventories = self.get_initial_inventories_dict()
         self.inventory_unit_costs = self.get_inventory_unit_costs_dict()
-        self.transport_unit_costs = self.get_transport_costs_dict()
-        # self.transport_times = self.get_transport_times_dict()  # depreciated
-        self.transport_times = self.get_transport_times_per_vessel_dict()
         self.loading_unloading_times = self.get_loading_unloading_times_dict()
+        self.transport_unit_costs = self.get_transport_costs_dict()
+        self.transport_times = self.get_transport_times_per_vessel_dict()
+        # self.transport_times = self.get_transport_times_dict()  # depreciated
+        self.arcs_for_vessels = self.generate_arcs_for_vessels()
         self.demands = self.get_demands_dict()
         self.production_stops = self.get_production_stops_dict()
         self.production_start_costs = self.get_production_start_costs_dict()
@@ -91,6 +90,8 @@ class ProblemData:
         # self.inventory_targets = self.get_inventory_targets()  # depreciated
         # self.inventory_unit_rewards = self.get_inventory_unit_rewards_dict()  # depreciated
         # self.external_delivery_penalty = self.get_key_value("external_delivery_penalty")  # depreciated
+        self.min_wait_if_sick = self.get_min_wait_if_sick_dict()
+        self.min_wait_if_sick_abs = self.get_min_wait_if_sick()
         self.external_delivery_penalties = self.get_external_delivery_penalties_dict()
 
     def _validate_set_consistency(self) -> None:
@@ -308,26 +309,28 @@ class ProblemData:
 
     def get_min_wait_if_sick_dict(self) -> Dict:
         orders_for_zones = self.get_zone_orders_dict()
-        transport_times = self.get_transport_times_per_vessel_dict()
         min_wait = int(self.get_key_value('min_wait_if_sick'))
         vessels = self.get_vessels()
 
         # Find wait time periods from red/yellow to green
-        min_wait_times_if_sick = {(v, i, j): min_wait - transport_times[v, i, j]
+        min_wait_times_if_sick = {(v, i, j): min_wait - self.transport_times[v, i, j]
                                   for i in orders_for_zones['red'] + orders_for_zones['yellow']
                                   for j in orders_for_zones['green']
                                   for v in vessels
-                                  if min_wait - transport_times[v, i, j] > 0
+                                  if min_wait - self.transport_times[v, i, j] > 0
                                   and (i, j) in self.arcs_for_vessels[v]}
 
         # Add wait time periods from red to yellow
-        min_wait_times_if_sick.update({(v, i, j): max(0, min_wait - transport_times[v, i, j])
+        min_wait_times_if_sick.update({(v, i, j): max(0, min_wait - self.transport_times[v, i, j])
                                        for i in orders_for_zones['red']
                                        for j in orders_for_zones['yellow']
                                        for v in vessels
-                                       if min_wait - transport_times[v, i, j] > 0
+                                       if min_wait - self.transport_times[v, i, j] > 0
                                        and (i, j) in self.arcs_for_vessels[v]})
         return min_wait_times_if_sick
+
+    def _is_legal_arc(self, i, j, v):
+        return (i, j) in self.arcs_for_vessels[v]
 
     def get_max_time_window_violation(self) -> int:
         return 0 if not self.soft_tw else int(self.get_key_value('max_tw_violation'))
@@ -364,13 +367,7 @@ class ProblemData:
     #             for product in self.inventory_targets_df.index
     #             for factory in self.inventory_targets_df.columns}
 
-    @property
-    def arcs_for_vessels(self) -> Dict[str, List[Tuple[str, str]]]:
-        # Return cached arcs if they exist
-        cache_file_name = self._get_cached_file_name_for_arcs()
-        if cache_file_name in os.listdir('../../cache/'):
-            return json.load(open('../../cache/' + cache_file_name))
-
+    def generate_arcs_for_vessels(self) -> Dict[str, List[Tuple[str, str]]]:
         dummy_start_arc = {v: [('d_0', i)] for v, i in self.get_vessel_first_location().items()}
         dummy_end_arcs = {v: [(i, 'd_-1') for i in self.get_factory_nodes(v)] for v in self.get_vessels()}
         all_other_arcs = {v: [(i, j)
@@ -380,9 +377,6 @@ class ProblemData:
                               and not self._has_tw_conflict(v, i, j)]
                           for v in self.get_vessels()}
         arcs = {v: dummy_start_arc[v] + dummy_end_arcs[v] + all_other_arcs[v] for v in self.get_vessels()}
-
-        # Save arcs to cache
-        json.dump(arcs, open('../../cache/' + self._get_cached_file_name_for_arcs(), 'w'))
         return arcs
 
     def _has_tw_conflict(self, v, i, j):
@@ -396,17 +390,9 @@ class ProblemData:
         else:
             extra_violation = 2 * self.get_max_time_window_violation() if self.soft_tw else 0
             return (self.get_time_window_start(i)
-                    + self.get_loading_unloading_times_dict()[v, i]
-                    + self.get_transport_times_per_vessel_dict()[v, i, j]
+                    + self.loading_unloading_times[v, i]
+                    + self.transport_times[v, i, j]
                     >
                     self.get_time_window_end(j)
                     + extra_violation)
 
-    def _get_cached_file_name_for_arcs(self):
-        relevant_sub_hashes = [joblib.hash(self.time_windows_for_orders_df),
-                               joblib.hash(self.get_loading_unloading_times_dict()),
-                               joblib.hash(self.get_transport_times_per_vessel_dict()),
-                               self.get_max_time_window_violation(),
-                               joblib.hash(self.get_nodes_for_vessels_dict2())]
-        file_name = joblib.hash(relevant_sub_hashes) + '.json'
-        return file_name
