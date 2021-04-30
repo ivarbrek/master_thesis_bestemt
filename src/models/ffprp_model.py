@@ -7,7 +7,6 @@ from src.read_problem_data import ProblemData
 
 # TODO IN THIS FILE
 # ----------------------------------------------------------------------------------------------------------------------------
-# TODO: Have not made any difference between different start/end time periods (so for now, not possible to have different time period lengths)
 # TODO: Check code marked with TODO
 
 
@@ -110,35 +109,40 @@ class FfprpModel:
         self.m.PRODUCTS_WITHIN_SAME_PRODUCT_GROUP_TUP = pyo.Set(dimen=2,
                                                                 initialize=products_within_same_product_group_tup)
 
+        self.m.ZONES = pyo.Set(initialize=prbl.orders_for_zones.keys())
+
+        orders_for_zones_tup = [(zone, order)
+                                for zone, li in prbl.orders_for_zones.items()
+                                for order in li]
+        self.m.ORDERS_FOR_ZONES_TUP = pyo.Set(dimen=2, initialize=orders_for_zones_tup)
+
+        green_nodes_for_vessel_tup = [(vessel, node)
+                                      for vessel, node in nodes_for_vessels_tup
+                                      if node in prbl.orders_for_zones['green']]
+        self.m.GREEN_NODES_FOR_VESSEL_TUP = pyo.Set(dimen=2, initialize=green_nodes_for_vessel_tup)
+
+        green_and_yellow_nodes_for_vessel_tup = [(vessel, node)
+                                                 for vessel, node in nodes_for_vessels_tup
+                                                 if node in prbl.orders_for_zones['green'] + prbl.orders_for_zones[
+                                                     'yellow']]
+        self.m.GREEN_AND_YELLOW_NODES_FOR_VESSEL_TUP = pyo.Set(initialize=green_and_yellow_nodes_for_vessel_tup)
+
+        # sick_arcs_tup = list(set([(orig, dest)
+        #                           for (v, orig, dest) in prbl.min_wait_if_sick.keys()
+        #                           if prbl.min_wait_if_sick[v, orig, dest] > 0]))
+        # self.m.WAIT_EDGES = pyo.Set(dimen=2,
+        #                             initialize=sick_arcs_tup)  # prbl.min_wait_if_sick.keys())
+
+        wait_edges_for_vessels_trip = [(v, i, j)
+                                       for v in self.m.VESSELS
+                                       for i, j in [(i, j) for (u, i, j) in prbl.min_wait_if_sick.keys() if u == v]
+                                       # self.m.WAIT_EDGES
+                                       if (i, j) in self.m.ARCS[v]]
+
+        self.m.WAIT_EDGES_FOR_VESSEL_TRIP = pyo.Set(dimen=3, initialize=wait_edges_for_vessels_trip)
+
         # Extension
         if extended_model:
-            self.m.ZONES = pyo.Set(initialize=prbl.orders_for_zones.keys())
-
-            orders_for_zones_tup = [(zone, order)
-                                    for zone, li in prbl.orders_for_zones.items()
-                                    for order in li]
-            self.m.ORDERS_FOR_ZONES_TUP = pyo.Set(dimen=2, initialize=orders_for_zones_tup)
-
-            green_nodes_for_vessel_tup = [(vessel, node)
-                                          for vessel, node in nodes_for_vessels_tup
-                                          if node in prbl.orders_for_zones['green']]
-            self.m.GREEN_NODES_FOR_VESSEL_TUP = pyo.Set(dimen=2, initialize=green_nodes_for_vessel_tup)
-
-            green_and_yellow_nodes_for_vessel_tup = [(vessel, node)
-                                                     for vessel, node in nodes_for_vessels_tup
-                                                     if node in prbl.orders_for_zones['green'] + prbl.orders_for_zones[
-                                                         'yellow']]
-            self.m.GREEN_AND_YELLOW_NODES_FOR_VESSEL_TUP = pyo.Set(initialize=green_and_yellow_nodes_for_vessel_tup)
-
-            self.m.WAIT_EDGES = pyo.Set(dimen=2, initialize=prbl.min_wait_if_sick.keys())
-
-            wait_edges_for_vessels_trip = [(v, i, j)
-                                           for v in self.m.VESSELS
-                                           for i, j in self.m.WAIT_EDGES
-                                           if (i, j) in self.m.ARCS[v]]
-
-            self.m.WAIT_EDGES_FOR_VESSEL_TRIP = pyo.Set(dimen=3, initialize=wait_edges_for_vessels_trip)
-
             self.m.TIME_WINDOW_VIOLATIONS = pyo.Set(
                 initialize=[i for i in range(-prbl.max_tw_violation, prbl.max_tw_violation + 1)])
 
@@ -153,9 +157,9 @@ class FfprpModel:
         self.m.vessel_nprod_capacities = pyo.Param(self.m.VESSELS,
                                                    initialize=prbl.vessel_nprod_capacities)
 
-        self.m.production_min_capacities = pyo.Param(self.m.PRODUCTION_LINES,
-                                                     self.m.PRODUCTS,
-                                                     initialize=prbl.production_min_capacities)
+        # self.m.production_min_capacities = pyo.Param(self.m.PRODUCTION_LINES,
+        #                                              self.m.PRODUCTS,
+        #                                              initialize=prbl.production_min_capacities)
 
         self.m.production_max_capacities = pyo.Param(self.m.PRODUCTION_LINES,
                                                      self.m.PRODUCTS,
@@ -182,7 +186,8 @@ class FfprpModel:
         self.m.transport_unit_costs = pyo.Param(self.m.VESSELS,
                                                 initialize=prbl.transport_unit_costs)
 
-        self.m.transport_times = pyo.Param(self.m.NODES_INCLUDING_DUMMY_START,
+        self.m.transport_times = pyo.Param(self.m.VESSELS,
+                                           self.m.NODES_INCLUDING_DUMMY_START,
                                            self.m.NODES_INCLUDING_DUMMY_END,
                                            initialize=prbl.transport_times)
 
@@ -215,6 +220,9 @@ class FfprpModel:
         self.m.external_delivery_penalties = pyo.Param(self.m.ORDER_NODES,
                                                        initialize=prbl.external_delivery_penalties)
 
+        self.m.min_wait_if_sick = pyo.Param(self.m.WAIT_EDGES_FOR_VESSEL_TRIP,
+                                            initialize=prbl.min_wait_if_sick)
+
         # Extension
         if extended_model:
             tw_violation_unit_cost = {k: prbl.tw_violation_unit_cost * abs(k) for k in self.m.TIME_WINDOW_VIOLATIONS}
@@ -230,12 +238,9 @@ class FfprpModel:
             self.m.tw_min = pyo.Param(self.m.ORDER_NODES, initialize=tw_min)
             self.m.tw_max = pyo.Param(self.m.ORDER_NODES, initialize=tw_max)
 
-            self.m.min_wait_if_sick = pyo.Param(self.m.WAIT_EDGES,
-                                                initialize=prbl.min_wait_if_sick)
-
-            self.m.inventory_targets = pyo.Param(self.m.FACTORY_NODES,
-                                                 self.m.PRODUCTS,
-                                                 initialize=prbl.inventory_targets)
+            # self.m.inventory_targets = pyo.Param(self.m.FACTORY_NODES,
+            #                                      self.m.PRODUCTS,
+            #                                      initialize=prbl.inventory_targets)
 
             self.m.inventory_unit_rewards = pyo.Param(self.m.FACTORY_NODES,
                                                       initialize=prbl.inventory_unit_rewards)
@@ -276,11 +281,11 @@ class FfprpModel:
                            domain=pyo.Boolean,
                            initialize=0)
 
-        self.m.q = pyo.Var(self.m.PRODUCTION_LINES,
-                           self.m.PRODUCTS,
-                           self.m.TIME_PERIODS,
-                           domain=pyo.NonNegativeReals,
-                           initialize=0)
+        # self.m.q = pyo.Var(self.m.PRODUCTION_LINES,
+        #                    self.m.PRODUCTS,
+        #                    self.m.TIME_PERIODS,
+        #                    domain=pyo.NonNegativeReals,
+        #                    initialize=0)
 
         self.m.g = pyo.Var(self.m.PRODUCTION_LINES,
                            self.m.PRODUCTS,
@@ -330,7 +335,7 @@ class FfprpModel:
                         for t in model.TIME_PERIODS
                         for p in model.PRODUCTS
                         for i in model.FACTORY_NODES)
-                    + sum(model.transport_unit_costs[v] * model.transport_times[i, j] * model.x[v, i, j, t]
+                    + sum(model.transport_unit_costs[v] * model.transport_times[v, i, j] * model.x[v, i, j, t]
                           for t in model.TIME_PERIODS
                           for v in model.VESSELS
                           for i, j in model.ARCS[v]
@@ -380,7 +385,7 @@ class FfprpModel:
                             for tau in range(max(0, t - model.loading_unloading_times[v, i] + 1), t + 1))
                         + sum(model.x[v, i, j, tau]
                               for i, j in model.ARCS[v]
-                              for tau in range(max(0, t - model.transport_times[i, j] + 1), t + 1))
+                              for tau in range(max(0, t - model.transport_times[v, i, j] + 1), t + 1))
                         + sum(model.w[v, i, t]
                               for v2, i in model.NODES_FOR_VESSELS_TUP if v2 == v)
                         == 1)
@@ -427,15 +432,17 @@ class FfprpModel:
         def constr_wait_load_unload_after_sailing(model, v, i, t):
             relevant_nodes = [j for j, i2 in model.ARCS[v]
                               if i2 == i
-                              and model.transport_times[j, i] <= t]
+                              and model.transport_times[v, j, i] <= t]
             # Only allow sailing from i to dummy end node if arc is defined
             x_to_dummy_end = model.x[v, i, 'd_-1', t] if (i, 'd_-1') in model.ARCS[v] else 0
             if t == 0:  # exclude w_t-1
-                return (sum(model.x[v, j, i, (t - model.transport_times[j, i])] for j in relevant_nodes)
+                return (sum(
+                    model.x[v, j, i, (t - model.transport_times[v, j, i])] for j in relevant_nodes)
                         ==
                         model.y[v, i, t] + model.w[v, i, t] + x_to_dummy_end)
             else:
-                return (sum(model.x[v, j, i, (t - model.transport_times[j, i])] for j in relevant_nodes)
+                return (sum(
+                    model.x[v, j, i, (t - model.transport_times[v, j, i])] for j in relevant_nodes)
                         + model.w[v, i, (t - 1)]
                         ==
                         model.y[v, i, t] + model.w[v, i, t] + x_to_dummy_end)
@@ -566,10 +573,12 @@ class FfprpModel:
             if t == 0:
                 return Constraint.Feasible
             return (model.s[i, p, t] == model.s[i, p, (t - 1)] +
-                    sum(model.q[l, p, t - 1] for (ii, l) in model.PRODUCTION_LINES_FOR_FACTORIES_TUP if ii == i) +
+                    sum(model.production_max_capacities[l, p] * model.g[l, p, (t - 1)]
+                        for (ii, l) in model.PRODUCTION_LINES_FOR_FACTORIES_TUP if ii == i) -
                     sum(model.demands[i, j, p] * model.z[v, i, j, t]
                         for v, i2, j in model.ORDER_NODES_RELEVANT_NODES_FOR_VESSELS_TRIP
                         if i2 == i))
+        # sum(model.q[l, p, t - 1] for (ii, l) in model.PRODUCTION_LINES_FOR_FACTORIES_TUP if ii == i) +
 
         self.m.constr_inventory_balance = pyo.Constraint(self.m.FACTORY_NODES,
                                                          self.m.PRODUCTS,
@@ -577,21 +586,22 @@ class FfprpModel:
                                                          rule=constr_inventory_balance)
 
         def constr_production_below_max_capacity(model, i, l, p, t):
-            return (model.q[l, p, t]
-                    <= model.production_stops[i, t] * model.production_max_capacities[l, p] * model.g[l, p, t])
+            # return (model.q[l, p, t]
+            #         == model.production_stops[i, t] * model.production_max_capacities[l, p] * model.g[l, p, t])
+            return model.g[l, p, t] <= model.production_stops[i, t]
 
         self.m.constr_production_below_max_capacity = pyo.Constraint(self.m.PRODUCTION_LINES_FOR_FACTORIES_TUP,
                                                                      self.m.PRODUCTS,
                                                                      self.m.TIME_PERIODS,
                                                                      rule=constr_production_below_max_capacity)
 
-        def constr_production_above_min_capacity(model, l, p, t):
-            return model.q[l, p, t] >= model.production_min_capacities[l, p] * model.g[l, p, t]
-
-        self.m.constr_production_above_min_capacity = pyo.Constraint(self.m.PRODUCTION_LINES,
-                                                                     self.m.PRODUCTS,
-                                                                     self.m.TIME_PERIODS,
-                                                                     rule=constr_production_above_min_capacity)
+        # def constr_production_above_min_capacity(model, l, p, t):
+        #     return model.q[l, p, t] >= model.production_min_capacities[l, p] * model.g[l, p, t]
+        #
+        # self.m.constr_production_above_min_capacity = pyo.Constraint(self.m.PRODUCTION_LINES,
+        #                                                              self.m.PRODUCTS,
+        #                                                              self.m.TIME_PERIODS,
+        #                                                              rule=constr_production_above_min_capacity)
 
         def constr_activate_delta(model, l, p, t):
             if t == 0:
@@ -639,6 +649,18 @@ class FfprpModel:
                                                         self.m.PRODUCTS,
                                                         self.m.TIME_PERIODS,
                                                         rule=constr_production_shift)
+
+        def constr_wait_if_visit_sick_farm(model, v, i, j, t):
+            if model.transport_times[v, i, j] <= t <= len(model.TIME_PERIODS) - model.min_wait_if_sick[v, i, j]:
+                return (model.min_wait_if_sick[v, i, j] * model.x[v, i, j, t - model.transport_times[v, i, j]]
+                        <=
+                        sum(model.w[v, j, tau] for tau in range(t, t + model.min_wait_if_sick[v, i, j])))
+            else:
+                return Constraint.Feasible
+
+        self.m.constr_wait_if_visit_sick_farm = pyo.Constraint(self.m.WAIT_EDGES_FOR_VESSEL_TRIP,
+                                                               self.m.TIME_PERIODS,
+                                                               rule=constr_wait_if_visit_sick_farm)
 
         # Extension
         if extended_model:
@@ -689,18 +711,6 @@ class FfprpModel:
 
             self.m.constr_choose_one_tw_violation = pyo.Constraint(self.m.ORDER_NODES,
                                                                    rule=constr_choose_one_tw_violation)
-
-            def constr_wait_if_visit_sick_farm(model, v, i, j, t):
-                if model.transport_times[i, j] <= t <= len(model.TIME_PERIODS) - model.min_wait_if_sick[i, j]:
-                    return (model.min_wait_if_sick[i, j] * model.x[v, i, j, t - model.transport_times[i, j]]
-                            <=
-                            sum(model.w[v, j, tau] for tau in range(t, t + model.min_wait_if_sick[i, j])))
-                else:
-                    return Constraint.Feasible
-
-            self.m.constr_wait_if_visit_sick_farm = pyo.Constraint(self.m.WAIT_EDGES_FOR_VESSEL_TRIP,
-                                                                   self.m.TIME_PERIODS,
-                                                                   rule=constr_wait_if_visit_sick_farm)
 
             def constr_rewarded_inventory_below_inventory_level(model, i, p):
                 return model.s_plus[i, p] <= model.s[i, p, max(model.TIME_PERIODS)]
@@ -768,8 +778,8 @@ class FfprpModel:
                 for t in self.m.TIME_PERIODS:
                     for l in self.m.PRODUCTION_LINES:
                         for p in self.m.PRODUCTS:
-                            if pyo.value(self.m.q[l, p, t]) >= 0.5:
-                                print("Production line", l, "produces", pyo.value(self.m.q[l, p, t]), "tons of product",
+                            if pyo.value(self.m.g[l, p, t]) >= 0.5:
+                                print("Production line", l, "produces", pyo.value(self.m.production_max_capacities[l, p]), "tons of product",
                                       p,
                                       "in time period", t)
                                 production = True
@@ -829,7 +839,7 @@ class FfprpModel:
                                 if pyo.value(self.m.delta[l, p, t]) >= 0.5:
                                     print(t, ": production of product ", p, " is started, imposing a cost of ",
                                           pyo.value(self.m.production_start_costs[i, p]), ", and ",
-                                          pyo.value(self.m.q[l, p, t]), " is produced", sep="")
+                                          pyo.value(self.m.production_max_capacities[l, p]), " is produced", sep="")
                         print()
 
             def print_production_happens():
@@ -876,7 +886,7 @@ class FfprpModel:
 
             # PRINTING
             print()
-            # print_factory_production()
+            print_factory_production()
             # print_factory_inventory()
             # print_vessel_routing()
             print_order_delivery_and_pickup()
@@ -968,7 +978,7 @@ class FfprpModel:
                     for t in self.m.TIME_PERIODS:
                         relevant_production_lines = {l for (ii, l) in self.m.PRODUCTION_LINES_FOR_FACTORIES_TUP if
                                                      ii == i}
-                        production = [round(sum(self.m.q[l, p, t]() for l in relevant_production_lines))
+                        production = [round(sum(self.m.g[l, p, t]() * self.m.production_max_capacities[l, p] for l in relevant_production_lines))
                                       for p in sorted(self.m.PRODUCTS)]
                         inventory = [round(self.m.s[i, p, t]()) for p in sorted(self.m.PRODUCTS)]
                         if sum(production) > 0.5:
@@ -1000,7 +1010,7 @@ class FfprpModel:
                         row = [p, "prod"]
                         for t in self.m.TIME_PERIODS:
                             if sum(self.m.g[l, p, t]() for l in relevant_production_lines) > 0.5:
-                                row.append(round(sum(self.m.q[l, p, t]() for l in
+                                row.append(round(sum(self.m.g[l, p, t]() * self.m.production_max_capacities[l, p] for l in
                                                      relevant_production_lines)))  # + " [" + str(self.m.s[i, p, t]()) + "]")
                             else:
                                 row.append(" ")
@@ -1020,7 +1030,7 @@ class FfprpModel:
 
             print_routing(include_loads=False)
             # print_vessel_load()
-            # print_production_and_inventory()
+            print_production_and_inventory()
             print_production_simple()
             print_routes_simple()
 
@@ -1030,7 +1040,7 @@ class FfprpModel:
                                   for p in self.m.PRODUCTS
                                   for i in self.m.FACTORY_NODES))
             transport_cost = (
-                sum(self.m.transport_unit_costs[v] * self.m.transport_times[i, j] * pyo.value(self.m.x[v, i, j, t])
+                sum(self.m.transport_unit_costs[v] * self.m.transport_times[v, i, j] * pyo.value(self.m.x[v, i, j, t])
                     for t in self.m.TIME_PERIODS
                     for v in self.m.VESSELS
                     for i, j in self.m.ARCS[v]
@@ -1073,11 +1083,11 @@ if __name__ == '__main__':
     # problem_data = ProblemData('../../data/input_data/small_testcase_one_vessel.xlsx')
     # problem_data = ProblemData('../../data/input_data/small_testcase.xlsx')
     # problem_data = ProblemData('../../data/input_data/medium_testcase.xlsx')
-    # problem_data = ProblemData('../../data/input_data/large_testcase.xlsx')
+    problem_data = ProblemData('../../data/input_data/large_testcase.xlsx')
     # problem_data = ProblemData('../../data/input_data/larger_testcase.xlsx')
-    problem_data = ProblemData('../../data/input_data/larger_testcase_4vessels.xlsx')
+    # problem_data = ProblemData('../../data/input_data/larger_testcase_4vessels.xlsx')
 
-    extensions = False
+    extensions = False  # extensions _not_ supported in generated test files
     problem_data.soft_tw = extensions
     model = FfprpModel(problem_data, extended_model=extensions)
     model.solve(time_limit=40)

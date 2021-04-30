@@ -379,7 +379,7 @@ class Alns:
         sol.recompute_solution_variables()
         return sol
 
-    def _relatedness_location_time(self, order1: str, order2: str) -> float:
+    def _relatedness_location_time(self, order1: str, order2: str, vessel: str) -> float:
         w_0 = self.related_removal_weight_param['relatedness_location_time'][0]
         w_1 = self.related_removal_weight_param['relatedness_location_time'][1]
 
@@ -388,13 +388,13 @@ class Alns:
                                   abs(self.current_sol.prbl.nodes[order1].tw_end
                                       - self.current_sol.prbl.nodes[order2].tw_end))
 
-        return w_0 * self.current_sol.prbl.transport_times[order1, order2] + w_1 * time_window_difference
+        return w_0 * self.current_sol.prbl.transport_times[vessel, order1, order2] + w_1 * time_window_difference
 
-    def _relatedness_location_precedence(self, order1: str, order2: str) -> float:
+    def _relatedness_location_precedence(self, order1: str, order2: str, vessel: str) -> float:
         w_0 = self.related_removal_weight_param['relatedness_location_precedence'][0]
         w_1 = self.related_removal_weight_param['relatedness_location_precedence'][1]
 
-        return (w_0 * self.current_sol.prbl.transport_times[order1, order2] +
+        return (w_0 * self.current_sol.prbl.transport_times[vessel, order1, order2] +
                 w_1 * self.relatedness_precedence[(self.current_sol.prbl.nodes[order1].zone,
                                                    self.current_sol.prbl.nodes[order2].zone)])
 
@@ -412,7 +412,7 @@ class Alns:
 
         while len(similar_orders) < self.remove_num and served_orders:
             base_order = similar_orders[random.randint(0, len(similar_orders) - 1)][0]
-            candidates = [(order, idx, vessel, rel_measure(base_order, order))
+            candidates = [(order, idx, vessel, rel_measure(base_order, order, vessel))
                           for vessel in sol.prbl.vessels
                           for idx, order in enumerate(sol.routes[vessel])
                           if (order, idx, vessel) in served_orders]
@@ -621,9 +621,9 @@ class Alns:
 
 
 if __name__ == '__main__':
-    precedence: bool = False
+    precedence: bool = True
 
-    prbl = ProblemDataExtended('../../data/input_data/largest_testcase.xlsx', precedence=precedence)
+    prbl = ProblemDataExtended('../../data/input_data/large_testcase.xlsx', precedence=precedence)
     destroy_op = ['d_random',
                   'd_worst',
                   'd_voyage_random',
@@ -660,6 +660,7 @@ if __name__ == '__main__':
 
     print("Route after initialization")
     alns.current_sol.print_routes()
+    print("Factory visits:", alns.current_sol.factory_visits)
     print("\nRemove num:", alns.remove_num, "\n")
 
     iterations = 1000
@@ -683,7 +684,8 @@ if __name__ == '__main__':
             _stat_operator_weights[op].append(score)
         print()
 
-    alns.best_sol_production_cost = alns.production_model.get_production_cost(alns.best_sol, verbose=True, time_limit=10)
+    alns.best_sol_production_cost = alns.production_model.get_production_cost(alns.best_sol, verbose=True,
+                                                                              time_limit=10)
 
     print()
     print(f"...ALNS terminating  ({round(time() - t0)}s)")

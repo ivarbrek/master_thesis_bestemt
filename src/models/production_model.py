@@ -42,9 +42,9 @@ class ProductionModel:
         ################################################################################################################
         # PARAMETERS ###################################################################################################
 
-        self.m.production_min_capacities = pyo.Param(self.m.PRODUCTION_LINES,
-                                                     self.m.PRODUCTS,
-                                                     initialize=prbl.production_min_capacities)
+        # self.m.production_min_capacities = pyo.Param(self.m.PRODUCTION_LINES,
+        #                                              self.m.PRODUCTS,
+        #                                              initialize=prbl.production_min_capacities)
 
         self.m.production_max_capacities = pyo.Param(self.m.PRODUCTION_LINES,
                                                      self.m.PRODUCTS,
@@ -89,11 +89,11 @@ class ProductionModel:
         ################################################################################################################
         # VARIABLES ####################################################################################################
 
-        self.m.q = pyo.Var(self.m.PRODUCTION_LINES,
-                           self.m.PRODUCTS,
-                           self.m.TIME_PERIODS,
-                           domain=pyo.NonNegativeReals,
-                           initialize=0)
+        # self.m.q = pyo.Var(self.m.PRODUCTION_LINES,
+        #                    self.m.PRODUCTS,
+        #                    self.m.TIME_PERIODS,
+        #                    domain=pyo.NonNegativeReals,
+        #                    initialize=0)
 
         self.m.g = pyo.Var(self.m.PRODUCTION_LINES,
                            self.m.PRODUCTS,
@@ -170,7 +170,8 @@ class ProductionModel:
             if t == 0:
                 return pyo.Constraint.Feasible
             return (model.s[i, p, t] == (model.s[i, p, (t - 1)] +
-                    sum(model.q[l, p, t - 1] for (ii, l) in model.PRODUCTION_LINES_FOR_FACTORIES_TUP if ii == i) -
+                    sum(model.production_max_capacities[l, p] * model.g[l, p, (t-1)]
+                        for (ii, l) in model.PRODUCTION_LINES_FOR_FACTORIES_TUP if ii == i) -
                     model.demands[i, p, t]))
 
         self.m.constr_inventory_balance = pyo.Constraint(self.m.FACTORY_NODES,
@@ -179,21 +180,20 @@ class ProductionModel:
                                                          rule=constr_inventory_balance)
 
         def constr_production_below_max_capacity(model, i, l, p, t):
-            return (model.q[l, p, t]
-                    <= model.production_stops[i, t] * model.production_max_capacities[l, p] * model.g[l, p, t])
+            return model.g[l, p, t] <= model.production_stops[i, t]
 
         self.m.constr_production_below_max_capacity = pyo.Constraint(self.m.PRODUCTION_LINES_FOR_FACTORIES_TUP,
                                                                      self.m.PRODUCTS,
                                                                      self.m.TIME_PERIODS,
                                                                      rule=constr_production_below_max_capacity)
 
-        def constr_production_above_min_capacity(model, l, p, t):
-            return model.q[l, p, t] >= model.production_min_capacities[l, p] * model.g[l, p, t]
-
-        self.m.constr_production_above_min_capacity = pyo.Constraint(self.m.PRODUCTION_LINES,
-                                                                     self.m.PRODUCTS,
-                                                                     self.m.TIME_PERIODS,
-                                                                     rule=constr_production_above_min_capacity)
+        # def constr_production_above_min_capacity(model, l, p, t):
+        #     return model.q[l, p, t] >= model.production_min_capacities[l, p] * model.g[l, p, t]
+        #
+        # self.m.constr_production_above_min_capacity = pyo.Constraint(self.m.PRODUCTION_LINES,
+        #                                                              self.m.PRODUCTS,
+        #                                                              self.m.TIME_PERIODS,
+        #                                                              rule=constr_production_above_min_capacity)
 
         def constr_activate_delta(model, l, p, t):
             if t == 0:
@@ -277,7 +277,7 @@ class ProductionModel:
                 row = [p, "prod"]
                 for t in self.m.TIME_PERIODS:
                     if sum(self.m.g[l, p, t]() for l in relevant_production_lines) > 0.5:
-                        row.append(round(sum(self.m.q[l, p, t]() for l in
+                        row.append(round(sum(self.m.production_max_capacities[l, p] * self.m.g[l, p, t]() for l in
                                              relevant_production_lines)))  # + " [" + str(self.m.s[i, p, t]()) + "]")
                     else:
                         row.append(" ")
