@@ -577,9 +577,13 @@ class Solution:
                 production_capacity_max = max(
                     [self.prbl.production_max_capacities[l, self.prbl.products[p]] for l in production_lines])
                 for k in range(np.shape(production_requirement_cum)[0]):
-                    activity_requirement_cum[k][p] = max(
-                        [0, np.ceil((production_requirement_cum[k, p] - initial_inventory) / production_capacity_max)])
-
+                    try:
+                        activity_requirement_cum[k][p] = max(
+                            [0, np.ceil((production_requirement_cum[k, p] - initial_inventory) / production_capacity_max)])
+                    except ZeroDivisionError:  # if zero production capacity for p
+                        if production_requirement_cum[k, p] > initial_inventory:
+                            return False, factory_node_id
+                        activity_requirement_cum[k][p] = 0
             for k in range(len(activity_requirement_cum) - 1, 0, -1):
                 production_time_periods = len(production_lines) * sum([self.prbl.production_stops[factory_node_id, t]
                                                                        for t in range(latest_loading_times[k - 1],

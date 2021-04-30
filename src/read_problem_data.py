@@ -30,8 +30,7 @@ class ProblemData:
         self.demands_df = pd.read_excel(file_path, sheet_name='demand', index_col=0, skiprows=[0])
         self.production_max_capacities_df = pd.read_excel(file_path, sheet_name='production_max_capacity', index_col=0,
                                                           skiprows=[0])
-        self.production_min_capacities_df = pd.read_excel(file_path, sheet_name='production_min_capacity', index_col=0,
-                                                          skiprows=[0])
+        # self.production_min_capacities_df = pd.read_excel(file_path, sheet_name='production_min_capacity', index_col=0, skiprows=[0])  # depreciated
         self.production_lines_for_factories_df = pd.read_excel(file_path, sheet_name='production_lines_for_factory',
                                                                index_col=0, skiprows=[0])
         self.production_line_min_times_df = pd.read_excel(file_path, sheet_name='production_line_min_time',
@@ -43,7 +42,7 @@ class ProblemData:
         self.factory_max_vessel_destination_df = pd.read_excel(file_path, sheet_name='factory_max_vessel_destination',
                                                                index_col=0, skiprows=[0])
         self.order_zones_df = pd.read_excel(file_path, sheet_name='order_zones', index_col=0, skiprows=[0])
-        self.inventory_targets_df = pd.read_excel(file_path, sheet_name='inventory_target', index_col=0, skiprows=[0])
+        # self.inventory_targets_df = pd.read_excel(file_path, sheet_name='inventory_target', index_col=0, skiprows=[0])
         self.production_stop_df = pd.read_excel(file_path, sheet_name='production_stop', index_col=0, skiprows=[0])
         self.production_start_costs_df = pd.read_excel(file_path, sheet_name='production_start_cost', index_col=0,
                                                        skiprows=[0])
@@ -66,8 +65,8 @@ class ProblemData:
         self.time_windows_for_orders = self.get_time_windows_for_orders_dict()
         self.tw_start = {i: self.get_time_window_start(i) for i in self.order_nodes}
         self.tw_end = {i: self.get_time_window_end(i) for i in self.order_nodes}
-        self.max_tw_violation = self.get_max_time_window_violation()
-        self.tw_violation_unit_cost = self.get_tw_violation_cost()
+        # self.max_tw_violation = self.get_max_time_window_violation()
+        # self.tw_violation_unit_cost = self.get_tw_violation_cost()
         self.min_wait_if_sick = self.get_min_wait_if_sick_dict()
         self.min_wait_if_sick_abs = self.get_min_wait_if_sick()
         self.vessel_ton_capacities = self.get_vessel_ton_capacities_dict()
@@ -82,7 +81,6 @@ class ProblemData:
         self.demands = self.get_demands_dict()
         self.production_stops = self.get_production_stops_dict()
         self.production_start_costs = self.get_production_start_costs_dict()
-        self.production_min_capacities = self.get_production_min_capacities_dict()
         self.production_max_capacities = self.get_production_max_capacities_dict()
         self.production_lines = self.get_production_lines()
         self.production_lines_for_factories = self.get_production_lines_for_factories_list()
@@ -90,7 +88,7 @@ class ProblemData:
         self.product_groups = self.get_product_groups_dict()
         self.factory_max_vessels_destination = self.get_factory_max_vessels_destination_dict()
         self.factory_max_vessels_loading = self.get_factory_max_vessels_loading_dict()
-        self.inventory_targets = self.get_inventory_targets()
+        # self.inventory_targets = self.get_inventory_targets()  # depreciated
         self.inventory_unit_rewards = self.get_inventory_unit_rewards_dict()
         # self.external_delivery_penalty = self.get_key_value("external_delivery_penalty")  # depreciated
         self.external_delivery_penalties = self.get_external_delivery_penalties_dict()
@@ -100,15 +98,13 @@ class ProblemData:
         assert set(self.get_products()) == set(self.initial_inventories_df.columns)
         assert set(self.get_products()) == set(self.demands_df.columns)
         assert set(self.get_products()) == set(self.production_max_capacities_df.index)
-        assert set(self.get_products()) == set(self.production_min_capacities_df.index)
         assert set(self.get_products()) == set(self.production_line_min_times_df.index)
         assert set(self.get_products()) == set(self.product_groups_df.index)
-        assert set(self.get_products()) == set(self.inventory_targets_df.index)
+        # assert set(self.get_products()) == set(self.inventory_targets_df.index)  # depreciated
         assert set(self.get_products()) == set(self.production_start_costs_df.index)
 
         # Production lines
         assert set(self.get_production_lines()) == set(self.production_max_capacities_df.columns)
-        assert set(self.get_production_lines()) == set(self.production_min_capacities_df.columns)
         assert set(self.get_production_lines()) == set(self.production_lines_for_factories_df.index)
         assert set(self.get_production_lines()) == set(self.production_line_min_times_df.columns)
 
@@ -128,7 +124,7 @@ class ProblemData:
             self.production_lines_for_factories_df['factory'])  # At least 1 production line per factory
         assert set(self.get_factory_nodes()) == set(self.factory_max_vessels_loading_df.columns)
         assert set(self.get_factory_nodes()) == set(self.factory_max_vessel_destination_df.index)
-        assert set(self.get_factory_nodes()) == set(self.inventory_targets_df.columns)
+        # assert set(self.get_factory_nodes()) == set(self.inventory_targets_df.columns)  # depreciated
         assert set(self.get_factory_nodes()) == set(self.production_start_costs_df.columns)
 
         # Order nodes
@@ -259,28 +255,8 @@ class ProblemData:
         return {vessel: self.transport_unit_costs_df.loc[vessel, 'unit_transport_cost'] for vessel in
                 self.transport_unit_costs_df.index}
 
-    # def get_transport_times_dict(self) -> Dict[Tuple[str, str], int]:
-    #     d = {**{(node1, node2): min([self.transport_times_df.loc[node1, node2]] +
-    #                                 [self.transport_times_df.loc[node1, intermediate]
-    #                                  + self.transport_times_df.loc[intermediate, node2]
-    #                                  for intermediate in self.transport_times_df.index])
-    #             for node1 in self.transport_times_df.index
-    #             for node2 in self.transport_times_df.columns},
-    #          **{('d_0', node): 1 for node in self.transport_times_df.index},
-    #          **{(node, 'd_-1'): 1 for node in self.transport_times_df.index}}
-    #     validity = False
-    #     while not validity:
-    #         try:
-    #             self._validate_transport_time_triangle_inequality(d)
-    #             validity = True
-    #         except AssertionError:
-    #             for orig in self.transport_times_df.index:
-    #                 for dest in self.transport_times_df.index:
-    #                     d[orig, dest] = min([d[orig, dest]] + [(d[orig, intermediate] + d[intermediate, dest])
-    #                                                            for intermediate in self.transport_times_df.index])
-    #     return d
-
     def get_transport_times_per_vessel_dict(self) -> Dict[Tuple[str, str, str], int]:
+        # Triangle inequality holds for all distances in original distance matrix
         d = {**{(vessel, orig, dest): self.transport_times_df.loc[(orig, vessel), dest]
                 for orig in self.transport_times_df.index.levels[0]
                 for dest in self.transport_times_df.columns
@@ -321,11 +297,6 @@ class ProblemData:
                 for product in self.production_max_capacities_df.index
                 for production_line in self.production_max_capacities_df.columns}
 
-    def get_production_min_capacities_dict(self) -> Dict[Tuple[str, str], int]:
-        return {(production_line, product): int(self.production_min_capacities_df.loc[product, production_line])
-                for product in self.production_min_capacities_df.index
-                for production_line in self.production_min_capacities_df.columns}
-
     def get_production_lines_for_factories_list(self) -> List[Tuple[str, str]]:
         return [(self.production_lines_for_factories_df.at[production_line, 'factory'], production_line) for
                 production_line
@@ -358,11 +329,11 @@ class ProblemData:
                                        if min_wait - transport_times[v, i, j] > 0})
         return min_wait_times_if_sick
 
-    def get_max_time_window_violation(self) -> int:
-        return int(self.get_key_value('max_tw_violation'))
+    # def get_max_time_window_violation(self) -> int:
+    #     return int(self.get_key_value('max_tw_violation'))
 
-    def get_tw_violation_cost(self) -> float:
-        return float(self.get_key_value('tw_violation_unit_cost'))
+    # def get_tw_violation_cost(self) -> float:
+    #     return float(self.get_key_value('tw_violation_unit_cost'))
 
     def get_product_groups_dict(self) -> Dict[str, List[str]]:
         # Create dict on form (product : product group)
@@ -388,10 +359,10 @@ class ProblemData:
         return {factory: int(self.factory_max_vessel_destination_df.loc[factory])
                 for factory in self.factory_max_vessel_destination_df.index}
 
-    def get_inventory_targets(self) -> Dict[Tuple[str, str], int]:
-        return {(factory, product): int(self.inventory_targets_df.loc[product, factory])
-                for product in self.inventory_targets_df.index
-                for factory in self.inventory_targets_df.columns}
+    # def get_inventory_targets(self) -> Dict[Tuple[str, str], int]:
+    #     return {(factory, product): int(self.inventory_targets_df.loc[product, factory])
+    #             for product in self.inventory_targets_df.index
+    #             for factory in self.inventory_targets_df.columns}
 
     @property
     def arcs_for_vessels(self) -> Dict[str, List[Tuple[str, str]]]:

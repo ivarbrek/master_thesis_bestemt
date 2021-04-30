@@ -157,9 +157,9 @@ class FfprpModel:
         self.m.vessel_nprod_capacities = pyo.Param(self.m.VESSELS,
                                                    initialize=prbl.vessel_nprod_capacities)
 
-        self.m.production_min_capacities = pyo.Param(self.m.PRODUCTION_LINES,
-                                                     self.m.PRODUCTS,
-                                                     initialize=prbl.production_min_capacities)
+        # self.m.production_min_capacities = pyo.Param(self.m.PRODUCTION_LINES,
+        #                                              self.m.PRODUCTS,
+        #                                              initialize=prbl.production_min_capacities)
 
         self.m.production_max_capacities = pyo.Param(self.m.PRODUCTION_LINES,
                                                      self.m.PRODUCTS,
@@ -238,9 +238,9 @@ class FfprpModel:
             self.m.tw_min = pyo.Param(self.m.ORDER_NODES, initialize=tw_min)
             self.m.tw_max = pyo.Param(self.m.ORDER_NODES, initialize=tw_max)
 
-            self.m.inventory_targets = pyo.Param(self.m.FACTORY_NODES,
-                                                 self.m.PRODUCTS,
-                                                 initialize=prbl.inventory_targets)
+            # self.m.inventory_targets = pyo.Param(self.m.FACTORY_NODES,
+            #                                      self.m.PRODUCTS,
+            #                                      initialize=prbl.inventory_targets)
 
             self.m.inventory_unit_rewards = pyo.Param(self.m.FACTORY_NODES,
                                                       initialize=prbl.inventory_unit_rewards)
@@ -281,11 +281,11 @@ class FfprpModel:
                            domain=pyo.Boolean,
                            initialize=0)
 
-        self.m.q = pyo.Var(self.m.PRODUCTION_LINES,
-                           self.m.PRODUCTS,
-                           self.m.TIME_PERIODS,
-                           domain=pyo.NonNegativeReals,
-                           initialize=0)
+        # self.m.q = pyo.Var(self.m.PRODUCTION_LINES,
+        #                    self.m.PRODUCTS,
+        #                    self.m.TIME_PERIODS,
+        #                    domain=pyo.NonNegativeReals,
+        #                    initialize=0)
 
         self.m.g = pyo.Var(self.m.PRODUCTION_LINES,
                            self.m.PRODUCTS,
@@ -573,10 +573,12 @@ class FfprpModel:
             if t == 0:
                 return Constraint.Feasible
             return (model.s[i, p, t] == model.s[i, p, (t - 1)] +
-                    sum(model.q[l, p, t - 1] for (ii, l) in model.PRODUCTION_LINES_FOR_FACTORIES_TUP if ii == i) +
+                    sum(model.production_max_capacities[l, p] * model.g[l, p, (t - 1)]
+                        for (ii, l) in model.PRODUCTION_LINES_FOR_FACTORIES_TUP if ii == i) -
                     sum(model.demands[i, j, p] * model.z[v, i, j, t]
                         for v, i2, j in model.ORDER_NODES_RELEVANT_NODES_FOR_VESSELS_TRIP
                         if i2 == i))
+        # sum(model.q[l, p, t - 1] for (ii, l) in model.PRODUCTION_LINES_FOR_FACTORIES_TUP if ii == i) +
 
         self.m.constr_inventory_balance = pyo.Constraint(self.m.FACTORY_NODES,
                                                          self.m.PRODUCTS,
@@ -584,21 +586,22 @@ class FfprpModel:
                                                          rule=constr_inventory_balance)
 
         def constr_production_below_max_capacity(model, i, l, p, t):
-            return (model.q[l, p, t]
-                    <= model.production_stops[i, t] * model.production_max_capacities[l, p] * model.g[l, p, t])
+            # return (model.q[l, p, t]
+            #         == model.production_stops[i, t] * model.production_max_capacities[l, p] * model.g[l, p, t])
+            return model.g[l, p, t] <= model.production_stops[i, t]
 
         self.m.constr_production_below_max_capacity = pyo.Constraint(self.m.PRODUCTION_LINES_FOR_FACTORIES_TUP,
                                                                      self.m.PRODUCTS,
                                                                      self.m.TIME_PERIODS,
                                                                      rule=constr_production_below_max_capacity)
 
-        def constr_production_above_min_capacity(model, l, p, t):
-            return model.q[l, p, t] >= model.production_min_capacities[l, p] * model.g[l, p, t]
-
-        self.m.constr_production_above_min_capacity = pyo.Constraint(self.m.PRODUCTION_LINES,
-                                                                     self.m.PRODUCTS,
-                                                                     self.m.TIME_PERIODS,
-                                                                     rule=constr_production_above_min_capacity)
+        # def constr_production_above_min_capacity(model, l, p, t):
+        #     return model.q[l, p, t] >= model.production_min_capacities[l, p] * model.g[l, p, t]
+        #
+        # self.m.constr_production_above_min_capacity = pyo.Constraint(self.m.PRODUCTION_LINES,
+        #                                                              self.m.PRODUCTS,
+        #                                                              self.m.TIME_PERIODS,
+        #                                                              rule=constr_production_above_min_capacity)
 
         def constr_activate_delta(model, l, p, t):
             if t == 0:
@@ -775,8 +778,8 @@ class FfprpModel:
                 for t in self.m.TIME_PERIODS:
                     for l in self.m.PRODUCTION_LINES:
                         for p in self.m.PRODUCTS:
-                            if pyo.value(self.m.q[l, p, t]) >= 0.5:
-                                print("Production line", l, "produces", pyo.value(self.m.q[l, p, t]), "tons of product",
+                            if pyo.value(self.m.g[l, p, t]) >= 0.5:
+                                print("Production line", l, "produces", pyo.value(self.m.production_max_capacities[l, p]), "tons of product",
                                       p,
                                       "in time period", t)
                                 production = True
@@ -836,7 +839,7 @@ class FfprpModel:
                                 if pyo.value(self.m.delta[l, p, t]) >= 0.5:
                                     print(t, ": production of product ", p, " is started, imposing a cost of ",
                                           pyo.value(self.m.production_start_costs[i, p]), ", and ",
-                                          pyo.value(self.m.q[l, p, t]), " is produced", sep="")
+                                          pyo.value(self.m.production_max_capacities[l, p]), " is produced", sep="")
                         print()
 
             def print_production_happens():
@@ -883,7 +886,7 @@ class FfprpModel:
 
             # PRINTING
             print()
-            # print_factory_production()
+            print_factory_production()
             # print_factory_inventory()
             # print_vessel_routing()
             print_order_delivery_and_pickup()
@@ -975,7 +978,7 @@ class FfprpModel:
                     for t in self.m.TIME_PERIODS:
                         relevant_production_lines = {l for (ii, l) in self.m.PRODUCTION_LINES_FOR_FACTORIES_TUP if
                                                      ii == i}
-                        production = [round(sum(self.m.q[l, p, t]() for l in relevant_production_lines))
+                        production = [round(sum(self.m.g[l, p, t]() * self.m.production_max_capacities[l, p] for l in relevant_production_lines))
                                       for p in sorted(self.m.PRODUCTS)]
                         inventory = [round(self.m.s[i, p, t]()) for p in sorted(self.m.PRODUCTS)]
                         if sum(production) > 0.5:
@@ -1007,7 +1010,7 @@ class FfprpModel:
                         row = [p, "prod"]
                         for t in self.m.TIME_PERIODS:
                             if sum(self.m.g[l, p, t]() for l in relevant_production_lines) > 0.5:
-                                row.append(round(sum(self.m.q[l, p, t]() for l in
+                                row.append(round(sum(self.m.g[l, p, t]() * self.m.production_max_capacities[l, p] for l in
                                                      relevant_production_lines)))  # + " [" + str(self.m.s[i, p, t]()) + "]")
                             else:
                                 row.append(" ")
@@ -1027,7 +1030,7 @@ class FfprpModel:
 
             print_routing(include_loads=False)
             # print_vessel_load()
-            # print_production_and_inventory()
+            print_production_and_inventory()
             print_production_simple()
             print_routes_simple()
 
@@ -1084,7 +1087,7 @@ if __name__ == '__main__':
     # problem_data = ProblemData('../../data/input_data/larger_testcase.xlsx')
     # problem_data = ProblemData('../../data/input_data/larger_testcase_4vessels.xlsx')
 
-    extensions = False
+    extensions = False  # extensions _not_ supported in generated test files
     problem_data.soft_tw = extensions
     model = FfprpModel(problem_data, extended_model=extensions)
     model.solve(time_limit=40)
