@@ -7,6 +7,11 @@ import numpy as np
 from time import time
 from src.alns.solution import Solution, ProblemDataExtended
 
+# TODO:
+#  - Require more than one period production series
+#  - Incorporate production stops
+#  -
+
 
 class ProductionProblem:
 

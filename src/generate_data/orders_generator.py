@@ -55,7 +55,7 @@ def sample_orders_df(n: int = None, company: str = None, no_products: int = 10) 
 
     sample_shipment_supplierNo = order_sample['shipment_supplierNo'].values
 
-    products = [f'p_{i}' for i in range(1, no_products + 1)]
+    products = [f'p_{i}' for i in range(no_products)]
     data = {'supplierNo': []}
     data.update({product: [] for product in products})
     for shipment_supplier in sample_shipment_supplierNo:
