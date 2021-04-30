@@ -575,7 +575,7 @@ class Solution:
             for p in range(len(self.prbl.products)):  # for all columns in the matrix
                 initial_inventory = self.prbl.factory_initial_inventories[(factory_node_id, self.prbl.products[p])]
                 production_capacity_max = max(
-                    [self.prbl.production_max_capacities[l, self.prbl.products[p]] for l in production_lines])
+                    [self.prbl.production_max_capacities[l, self.prbl.products[p]] for l in production_lines] + [0])
                 for k in range(np.shape(production_requirement_cum)[0]):
                     try:
                         activity_requirement_cum[k][p] = max(

@@ -135,9 +135,8 @@ class FfprpModel:
 
         wait_edges_for_vessels_trip = [(v, i, j)
                                        for v in self.m.VESSELS
-                                       for i, j in [(i, j) for (u, i, j) in prbl.min_wait_if_sick.keys() if u == v]
-                                       # self.m.WAIT_EDGES
-                                       if (i, j) in self.m.ARCS[v]]
+                                       for u, i, j in prbl.min_wait_if_sick.keys()
+                                       if u == v and (i, j) in self.m.ARCS[v]]
 
         self.m.WAIT_EDGES_FOR_VESSEL_TRIP = pyo.Set(dimen=3, initialize=wait_edges_for_vessels_trip)
 
@@ -220,6 +219,8 @@ class FfprpModel:
         self.m.external_delivery_penalties = pyo.Param(self.m.ORDER_NODES,
                                                        initialize=prbl.external_delivery_penalties)
 
+        self.m.WAIT_EDGES_FOR_VESSEL_TRIP.pprint()
+        print(prbl.min_wait_if_sick)
         self.m.min_wait_if_sick = pyo.Param(self.m.WAIT_EDGES_FOR_VESSEL_TRIP,
                                             initialize=prbl.min_wait_if_sick)
 
@@ -1083,9 +1084,10 @@ if __name__ == '__main__':
     # problem_data = ProblemData('../../data/input_data/small_testcase_one_vessel.xlsx')
     # problem_data = ProblemData('../../data/input_data/small_testcase.xlsx')
     # problem_data = ProblemData('../../data/input_data/medium_testcase.xlsx')
-    problem_data = ProblemData('../../data/input_data/large_testcase.xlsx')
+    # problem_data = ProblemData('../../data/input_data/large_testcase.xlsx')
     # problem_data = ProblemData('../../data/input_data/larger_testcase.xlsx')
     # problem_data = ProblemData('../../data/input_data/larger_testcase_4vessels.xlsx')
+    problem_data = ProblemData('../../data/testoutputfile.xlsx')
 
     extensions = False  # extensions _not_ supported in generated test files
     problem_data.soft_tw = extensions

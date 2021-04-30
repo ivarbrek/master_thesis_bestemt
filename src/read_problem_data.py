@@ -89,7 +89,7 @@ class ProblemData:
         self.factory_max_vessels_destination = self.get_factory_max_vessels_destination_dict()
         self.factory_max_vessels_loading = self.get_factory_max_vessels_loading_dict()
         # self.inventory_targets = self.get_inventory_targets()  # depreciated
-        self.inventory_unit_rewards = self.get_inventory_unit_rewards_dict()
+        # self.inventory_unit_rewards = self.get_inventory_unit_rewards_dict()  # depreciated
         # self.external_delivery_penalty = self.get_key_value("external_delivery_penalty")  # depreciated
         self.external_delivery_penalties = self.get_external_delivery_penalties_dict()
 
@@ -120,8 +120,6 @@ class ProblemData:
         assert set(self.get_factory_nodes()) == set(self.initial_inventories_df.index)
         assert set(self.get_factory_nodes()) == set(self.inventory_unit_costs_rewards_df.index)
         assert set(self.get_factory_nodes()) == set(self.production_stop_df.columns)
-        assert set(self.get_factory_nodes()) == set(
-            self.production_lines_for_factories_df['factory'])  # At least 1 production line per factory
         assert set(self.get_factory_nodes()) == set(self.factory_max_vessels_loading_df.columns)
         assert set(self.get_factory_nodes()) == set(self.factory_max_vessel_destination_df.index)
         # assert set(self.get_factory_nodes()) == set(self.inventory_targets_df.columns)  # depreciated
@@ -240,7 +238,7 @@ class ProblemData:
                 for product in self.initial_inventories_df.columns}
 
     def get_inventory_capacities_dict(self) -> Dict[Tuple[str, str], int]:
-        return {factory_node: self.inventory_capacities_df.loc[factory_node, 'capacity [t]'] for factory_node in
+        return {factory_node: self.inventory_capacities_df.loc[factory_node, 'capacity'] for factory_node in
                 self.inventory_capacities_df.index}
 
     def get_inventory_unit_costs_dict(self) -> Dict[str, int]:
@@ -319,14 +317,16 @@ class ProblemData:
                                   for i in orders_for_zones['red'] + orders_for_zones['yellow']
                                   for j in orders_for_zones['green']
                                   for v in vessels
-                                  if min_wait - transport_times[v, i, j] > 0}
+                                  if min_wait - transport_times[v, i, j] > 0
+                                  and (i, j) in self.arcs_for_vessels[v]}
 
         # Add wait time periods from red to yellow
         min_wait_times_if_sick.update({(v, i, j): max(0, min_wait - transport_times[v, i, j])
                                        for i in orders_for_zones['red']
                                        for j in orders_for_zones['yellow']
                                        for v in vessels
-                                       if min_wait - transport_times[v, i, j] > 0})
+                                       if min_wait - transport_times[v, i, j] > 0
+                                       and (i, j) in self.arcs_for_vessels[v]})
         return min_wait_times_if_sick
 
     def get_max_time_window_violation(self) -> int:

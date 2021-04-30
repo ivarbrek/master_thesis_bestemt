@@ -623,7 +623,8 @@ class Alns:
 if __name__ == '__main__':
     precedence: bool = True
 
-    prbl = ProblemDataExtended('../../data/input_data/large_testcase.xlsx', precedence=precedence)
+    # prbl = ProblemDataExtended('../../data/input_data/large_testcase.xlsx', precedence=precedence)
+    prbl = ProblemDataExtended('../../data/testoutputfile.xlsx', precedence=precedence)
     destroy_op = ['d_random',
                   'd_worst',
                   'd_voyage_random',
@@ -646,7 +647,7 @@ if __name__ == '__main__':
                 max_iter_same_solution=50,
                 max_iter_seg=40,
                 remove_percentage=0.4,
-                remove_num_percentage_adjust=0.2,
+                remove_num_percentage_adjust=0.1,
                 determinism_param=5,
                 noise_param=150,
                 relatedness_precedence={('green', 'yellow'): 6, ('green', 'red'): 10, ('yellow', 'red'): 4},
@@ -658,12 +659,14 @@ if __name__ == '__main__':
                 verbose=False
                 )
 
+    iterations = 1000
+
     print("Route after initialization")
     alns.current_sol.print_routes()
-    print("Factory visits:", alns.current_sol.factory_visits)
+    print(f"Obj: {alns.current_sol_cost:n}   Not served: {alns.current_sol.get_orders_not_served()}")
+
     print("\nRemove num:", alns.remove_num, "\n")
 
-    iterations = 1000
 
     _stat_solution_cost = []
     _stat_operator_weights = defaultdict(list)
@@ -673,7 +676,7 @@ if __name__ == '__main__':
         alns.run_alns_iteration()
 
         alns.current_sol.print_routes()
-        print(f"Obj: {alns.current_sol_cost}   Not served: {alns.current_sol.get_orders_not_served()}")
+        print(f"Obj: {alns.current_sol_cost:n}   Not served: {alns.current_sol.get_orders_not_served()}")
         print("Slack factor:", round(alns.current_sol.ppfc_slack_factor, 2),
               "  Infeasible strike:", alns.production_infeasibility_strike)
 

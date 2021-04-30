@@ -81,11 +81,10 @@ class TestDataGenerator:
 
     def __init__(self):
         self.vessels_df = pd.read_excel("../../data/vessels.xlsx", sheet_name="vessels", index_col=[0])
-        self.distances_df = pd.read_excel("../../data/distance_matrix_2.xlsx", sheet_name="distances", index_col=[0])
+        self.distances_df = pd.read_excel("../../data/distance_matrix.xlsx", sheet_name="distances", index_col=[0])
         self.factories_df = pd.read_excel("../../data/factories.xlsx", sheet_name="factories", index_col=[0],
                                           skiprows=[0])
         self.factories_df.index = self.factories_df.index.astype('str')
-        self.distances_df = pd.read_excel("../../data/distance_matrix.xlsx", sheet_name="distances", index_col=[0])
 
     def write_test_instance_to_file(self, out_filepath: str,
                                     vessel_names: List[str],
@@ -104,6 +103,7 @@ class TestDataGenerator:
                                     radius_yellow: int,
                                     share_bag_locations: float,
                                     share_small_fjord_locations: float,
+                                    share_time_periods_availability: float,
                                     small_fjord_radius: int,
                                     delivery_delay_unit_penalty: int,
                                     min_wait_if_sick_hours: int,
@@ -139,8 +139,8 @@ class TestDataGenerator:
         self.write_production_lines_for_factory_to_file()
         self.write_production_max_capacity_to_file(no_products)
         self.write_prod_line_min_time_to_file(time_period_length, no_products)
+        self.write_vessel_availability_to_file(vessels, share_time_periods_availability, time_periods)
         self.write_vessel_capacities_to_file(relevant_vessels=vessels)
-        self.write_vessel_availability_to_file(relevant_vessels=vessels)
         self.write_order_zones_to_file(share_red=share_red_nodes, radius_red=radius_red, radius_yellow=radius_yellow)
         self.write_nodes_for_vessels_to_file(relevant_vessels=vessels, share_bag_locations=share_bag_locations,
                                              share_small_fjord_locations=share_small_fjord_locations,
@@ -165,6 +165,7 @@ class TestDataGenerator:
         return df
 
     def generate_initial_inventory(self, factory_level: float, ext_depot_level: float, orders: pd.DataFrame):
+        # TODO: Change ext_depot_usage
         """
         :param factory_level: percentage of total demand stored on factories (excl. external depots)
         :param ext_depot_level: percentage of inventory capacity stored on external depots
@@ -211,7 +212,8 @@ class TestDataGenerator:
 
     def get_factory_max_vessel_destination(self, vessels: List[str]) -> pd.DataFrame:
         no_vessels = len(vessels)
-        no_factories = len(self.factories_df)
+        no_factories = len([factory for factory in self.nlm.get_factory_nodes()
+                            if not self._is_external_depot_node(factory)])
         # no_vessels // no_factories + 1 for factories, 0 for external depots
         data = [(node, (no_vessels // no_factories + 1) * (not self._is_external_depot_node(node)))
                 for node in self.nlm.get_factory_nodes()]
@@ -224,6 +226,7 @@ class TestDataGenerator:
                                         time_period_length: int) -> pd.DataFrame:
         # Note: In this function we distinguish factories form external depots
         factories = [node for node in self.nlm.get_factory_nodes() if not self._is_external_depot_node(node)]
+        ext_depots = [node for node in self.nlm.get_factory_nodes() if self._is_external_depot_node(node)]
 
         # rm = raw material
         rm_loading_time = 12   # 12 hours
@@ -242,6 +245,10 @@ class TestDataGenerator:
                 insert_t = random.choice(possible_inserts)
                 for t in range(insert_t, insert_t + rm_loading_periods):
                     max_vessels_loading[factory][t] -= 1
+
+        # Assume ext. depots always have one spot for loading
+        for ext_dep in ext_depots:
+            max_vessels_loading.update({ext_dep: [1] * time_periods})
 
         return pd.DataFrame(max_vessels_loading)
 
@@ -378,19 +385,28 @@ class TestDataGenerator:
     def get_vessel_name(self, vessel_id: str) -> str:
         return self.vessels_df.loc[vessel_id, "vessel_name"]
 
-    def get_vessel_availability(self, relevant_vessels: List[str]) -> pd.DataFrame:
-        vessels_df = self.vessels_df.loc[relevant_vessels]
-        vessel_availability_df: pd.DataFrame = pd.DataFrame(relevant_vessels, columns=["vessel"]).set_index("vessel",
-                                                                                                            drop=True)
-        d_time = {}
-        d_loc = {}
-        for v in relevant_vessels:
-            d_time[v] = vessels_df.loc[v, 'availability_time']
-            loc = vessels_df.loc[v, 'availability_factoryname']
-            d_loc[v] = self.factories_df.loc[self.factories_df['factory_location'] == loc, 'location_id'].iloc[0]
-        vessel_availability_df['time_period'] = vessel_availability_df.index.to_series().map(d_time)
-        vessel_availability_df['location'] = vessel_availability_df.index.to_series().map(d_loc)
-        return vessel_availability_df
+    def get_vessel_availability(self, relevant_vessels: List[str], share_time: float,
+                                time_periods: int) -> pd.DataFrame:
+        """
+        :param relevant_vessels: relevant vessels
+        :param share_time: Availability time period is drawn random from {0, share_time * time_periods}
+        :param time_periods: number of time periods
+        :return:
+        """
+        factories = [node for node in self.nlm.get_factory_nodes() if not self._is_external_depot_node(node)]
+        data = []
+        factory_assignments = {f: 0 for f in factories}
+        max_vessels_destination_df = self.get_factory_max_vessel_destination(relevant_vessels)
+        for vessel in relevant_vessels:
+            available_factories = [f for f in factories
+                                   if factory_assignments[f] < max_vessels_destination_df.loc[f, 'vessel_number']]
+            chosen_factory = random.choice(available_factories)
+            chosen_time_period = int(random.triangular(0, int(share_time * time_periods), 0))
+            data.append((vessel, chosen_time_period, chosen_factory))
+        df = pd.DataFrame(data)
+        df.columns = ['vessel', 'time_period', 'location']
+        df = df.set_index('vessel')
+        return df
 
     def generate_order_zones(self, share_red: float, radius_red: int, radius_yellow: int) -> pd.DataFrame:
         orders = self.nlm.get_order_locations()
@@ -504,15 +520,17 @@ class TestDataGenerator:
             production_stops_df[f] = [d[(f, t)] for t in range(time_periods)]
         return production_stops_df
 
-    def get_key_values(self, delivery_delay_unit_penalty: int, min_wait_if_sick_hours: int, time_period_length: int) -> pd.DataFrame:
-        key_values_df: pd.DataFrame = pd.DataFrame(['min_wait_if_sick' 'external_delivery_unit_penalty'],
-                                                   columns=["key"]).set_index("key", drop=True)
-        key_values_df['min_wait_if_sick'] = _hours_to_time_periods(min_wait_if_sick_hours, time_period_length)
-        key_values_df['external_delivery_unit_penalty'] = delivery_delay_unit_penalty
-        return key_values_df
+    def get_key_values(self, delivery_delay_unit_penalty: int, min_wait_if_sick_hours: int,
+                       time_period_length: int) -> pd.DataFrame:
+        key_values = []
+        key_values.append(('min_wait_if_sick', _hours_to_time_periods(min_wait_if_sick_hours, time_period_length)))
+        key_values.append(('external_delivery_unit_penalty', delivery_delay_unit_penalty))
+        df = pd.DataFrame(key_values)
+        df.columns = ['key', 'value']
+        df = df.set_index('key')
+        return df
 
-    def write_transport_times_to_file(self, relevant_vessels: List[str],
-                                      time_period_length: int) -> None:
+    def write_transport_times_to_file(self, relevant_vessels: List[str], time_period_length: int) -> None:
         transport_times_df = self.get_vessel_transport_times(relevant_vessels, time_period_length)
         transport_times_df.to_excel(self.excel_writer, sheet_name="transport_time", startrow=1)
 
@@ -534,8 +552,9 @@ class TestDataGenerator:
         vessel_capacities_df = self.get_vessel_capacities(relevant_vessels=relevant_vessels)
         vessel_capacities_df.to_excel(self.excel_writer, sheet_name="vessel_capacity", startrow=1)
 
-    def write_vessel_availability_to_file(self, relevant_vessels: List[str]) -> None:
-        vessel_availability_df = self.get_vessel_availability(relevant_vessels=relevant_vessels)
+    def write_vessel_availability_to_file(self, relevant_vessels: List[str], share_time: float,
+                                          time_periods: int) -> None:
+        vessel_availability_df = self.get_vessel_availability(relevant_vessels, share_time, time_periods)
         vessel_availability_df.to_excel(self.excel_writer, sheet_name="vessel_availability", startrow=1)
 
     def write_order_zones_to_file(self, share_red: float, radius_red: int, radius_yellow: int) -> None:
@@ -599,7 +618,7 @@ class TestDataGenerator:
 
     def write_prod_line_min_time_to_file(self, time_period_length: int, no_products: int) -> None:
         df = self.get_production_line_min_time(time_period_length, no_products)
-        df.to_excel(self.excel_writer, sheet_name="prod_line_min_time", startrow=1)
+        df.to_excel(self.excel_writer, sheet_name="production_line_min_time", startrow=1)
 
     def write_factory_max_vessel_destination_to_file(self, vessels: List[str]) -> None:
         df = self.get_factory_max_vessel_destination(vessels)
@@ -618,12 +637,12 @@ if __name__ == '__main__':
     tdg = TestDataGenerator()
     tdg.write_test_instance_to_file(out_filepath="../../data/testoutputfile.xlsx",
                                     vessel_names=["Ripnes", "Vågsund", "Pirholm"],
-                                    factory_locations=["2022", "482", "2015"],
+                                    factory_locations=["2022", "482"],
                                     no_orders=12,
                                     no_products=8,
                                     no_product_groups=3,
                                     factory_level=0.3,
-                                    ext_depot_level=0.4,
+                                    ext_depot_level=0.1,
                                     quay_activity_level=0.1,
                                     orders_from_company=None,
                                     time_periods=100,
@@ -634,6 +653,7 @@ if __name__ == '__main__':
                                     radius_yellow=300000,
                                     share_bag_locations=0.25,
                                     share_small_fjord_locations=0.25,
+                                    share_time_periods_availability=0.5,
                                     small_fjord_radius=50000,
                                     min_wait_if_sick_hours=12,
                                     delivery_delay_unit_penalty=1000)
