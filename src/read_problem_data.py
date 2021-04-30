@@ -329,8 +329,8 @@ class ProblemData:
                                        if min_wait - transport_times[v, i, j] > 0})
         return min_wait_times_if_sick
 
-    # def get_max_time_window_violation(self) -> int:
-    #     return int(self.get_key_value('max_tw_violation'))
+    def get_max_time_window_violation(self) -> int:
+        return 0 if not self.soft_tw else int(self.get_key_value('max_tw_violation'))
 
     # def get_tw_violation_cost(self) -> float:
     #     return float(self.get_key_value('tw_violation_unit_cost'))
