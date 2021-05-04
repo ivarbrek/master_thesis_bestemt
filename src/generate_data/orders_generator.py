@@ -65,7 +65,7 @@ def sample_orders_df(n: int = None, company: str = None, no_products: int = 10) 
             data[product].append(0)
 
         relevant_orders = orders[orders['shipment_supplierNo'] == shipment_supplier]
-        random_products = get_random_products(len(relevant_orders), products)
+        random_products = get_random_products(len(relevant_orders), products, 'triangular')
         quantities = relevant_orders['qty kg'].values
         for product, qty in zip(random_products, quantities):
             data[product][-1] += qty // 1000
