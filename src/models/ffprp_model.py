@@ -265,7 +265,8 @@ class FfprpModel:
                            initialize=0)
 
         def y_init(m, v, i, t):
-            return y_init_dict[(v, i, t)] if y_init_dict is not None else 0
+            return y_init_dict[(v, i, t)] if (y_init_dict is not None and prbl.is_order_node(i)) else 0
+
         self.m.y = pyo.Var(self.m.NODES_FOR_VESSELS_TUP,
                            self.m.TIME_PERIODS,
                            domain=pyo.Boolean,
@@ -373,12 +374,16 @@ class FfprpModel:
         ################################################################################################################
         # CONSTRAINTS ##################################################################################################
 
-        # def constr_test_alns_solution_feasible(model, v, i, t):
-        #     return model.y[v, i, t] == y_init_dict[v, i, t]
-        # self.m.constr_test = pyo.Constraint(self.m.NODES_FOR_VESSELS_TUP,
-        #                                     self.m.TIME_PERIODS,
-        #                                     rule=constr_test_alns_solution_feasible,
-        #                                     name="test_constraint")
+        def constr_y_heuristic_flying_start(model, v, i, t):
+            if prbl.is_factory_node(node_id=i):
+                return Constraint.Feasible
+            return model.y[v, i, t] == int(y_init_dict[v, i, t])
+
+        self.m.constr_y_heuristic_flying_start = pyo.Constraint(self.m.NODES_FOR_VESSELS_TUP,
+                                                                self.m.TIME_PERIODS,
+                                                                rule=constr_y_heuristic_flying_start,
+                                                                name="constr_y_heuristic_flying_start")
+        self.m.constr_y_heuristic_flying_start.deactivate()  # activated if running ffprp with warm-start
 
         # def constr_max_one_activity(model, v, t):
         #     relevant_nodes = {n for (vessel, n) in model.NODES_FOR_VESSELS_TUP if vessel == v}
@@ -406,7 +411,8 @@ class FfprpModel:
 
         self.m.constr_max_one_activity = pyo.Constraint(self.m.VESSELS,
                                                         self.m.TIME_PERIODS,
-                                                        rule=constr_max_one_activity)
+                                                        rule=constr_max_one_activity,
+                                                        name="constr_max_one_activity")
 
         def constr_max_m_vessels_loading(model, i, t):
             return (sum(model.y[v, i, tau]
@@ -416,7 +422,8 @@ class FfprpModel:
 
         self.m.constr_max_m_vessels_loading = pyo.Constraint(self.m.FACTORY_NODES,
                                                              self.m.TIME_PERIODS,
-                                                             rule=constr_max_m_vessels_loading)
+                                                             rule=constr_max_m_vessels_loading,
+                                                             name="constr_max_m_vessels_loading")
 
         def constr_delivery_within_time_window(model, i):
             relevant_vessels = {vessel for (vessel, j) in model.ORDER_NODES_FOR_VESSELS_TUP if j == i}
@@ -425,7 +432,8 @@ class FfprpModel:
                     == 1)
 
         self.m.constr_delivery_within_time_window = pyo.Constraint(self.m.ORDER_NODES,
-                                                                   rule=constr_delivery_within_time_window)
+                                                                   rule=constr_delivery_within_time_window,
+                                                                   name="constr_delivery_within_time_window")
 
         def constr_sailing_after_loading_unloading(model, v, i, t):
             loading_unloading_time = pyo.value(model.loading_unloading_times[v, i])
@@ -441,7 +449,8 @@ class FfprpModel:
 
         self.m.constr_sailing_after_loading_unloading = pyo.Constraint(self.m.NODES_FOR_VESSELS_TUP,
                                                                        self.m.TIME_PERIODS,
-                                                                       rule=constr_sailing_after_loading_unloading)
+                                                                       rule=constr_sailing_after_loading_unloading,
+                                                                       name="constr_sailing_after_loading_unloading")
 
         def constr_wait_load_unload_after_sailing(model, v, i, t):
             relevant_nodes = [j for j, i2 in model.ARCS[v]
@@ -463,12 +472,14 @@ class FfprpModel:
 
         self.m.constr_wait_load_unload_after_sailing = pyo.Constraint(self.m.NODES_FOR_VESSELS_TUP,
                                                                       self.m.TIME_PERIODS,
-                                                                      rule=constr_wait_load_unload_after_sailing)
+                                                                      rule=constr_wait_load_unload_after_sailing,
+                                                                      name="constr_wait_load_unload_after_sailing")
 
         def constr_start_route(model, v):
             return model.x[v, 'd_0', model.vessel_initial_locations[v], model.start_time_for_vessels[v]] == 1
 
-        self.m.constr_start_route = pyo.Constraint(self.m.VESSELS, rule=constr_start_route)
+        self.m.constr_start_route = pyo.Constraint(self.m.VESSELS, rule=constr_start_route,
+                                                   name="constr_start_route")
 
         def constr_start_route_once(model, v):
             return (sum(model.x[v, 'd_0', j, t]
@@ -476,7 +487,8 @@ class FfprpModel:
                         for t in model.TIME_PERIODS)
                     == 1)
 
-        self.m.constr_start_route_once = pyo.Constraint(self.m.VESSELS, rule=constr_start_route_once)
+        self.m.constr_start_route_once = pyo.Constraint(self.m.VESSELS, rule=constr_start_route_once,
+                                                        name="constr_start_route_once")
 
         def constr_end_route_once(model, v):
             return (sum(model.x[v, i, 'd_-1', t]
@@ -485,7 +497,8 @@ class FfprpModel:
                         if vessel == v)
                     == 1)
 
-        self.m.constr_end_route_once = pyo.Constraint(self.m.VESSELS, rule=constr_end_route_once)
+        self.m.constr_end_route_once = pyo.Constraint(self.m.VESSELS, rule=constr_end_route_once,
+                                                      name="constr_end_route_once")
 
         def constr_maximum_vessels_at_end_destination(model, i):
             return (sum(model.x[v, i, 'd_-1', t]
@@ -494,21 +507,24 @@ class FfprpModel:
                     <= model.factory_max_vessels_destination[i])
 
         self.m.constr_maximum_vessels_at_end_destination = pyo.Constraint(self.m.FACTORY_NODES,
-                                                                          rule=constr_maximum_vessels_at_end_destination)
+                                                                          rule=constr_maximum_vessels_at_end_destination,
+                                                                          name="constr_maximum_vessels_at_end_destination")
 
         def constr_pickup_requires_factory_visit(model, v, i, j, t):
             return model.z[v, i, j, t] <= model.y[v, i, t]
 
         self.m.constr_pickup_requires_factory_visit = pyo.Constraint(self.m.ORDER_NODES_FACTORY_NODES_FOR_VESSELS_TRIP,
                                                                      self.m.TIME_PERIODS,
-                                                                     rule=constr_pickup_requires_factory_visit)
+                                                                     rule=constr_pickup_requires_factory_visit,
+                                                                     name="constr_pickup_requires_factory_visit")
 
         def constr_delivery_requires_order_visit(model, v, i, t):
             return model.z[v, i, i, t] == model.y[v, i, t]
 
         self.m.constr_delivery_requires_order_visit = pyo.Constraint(self.m.ORDER_NODES_FOR_VESSELS_TUP,
                                                                      self.m.TIME_PERIODS,
-                                                                     rule=constr_delivery_requires_order_visit)
+                                                                     rule=constr_delivery_requires_order_visit,
+                                                                     name="constr_delivery_requires_order_visit")
 
         def constr_vessel_initial_load(model, v, p):
             return (model.l[v, p, 0] ==
@@ -518,7 +534,8 @@ class FfprpModel:
 
         self.m.constr_vessel_initial_load = pyo.Constraint(self.m.VESSELS,
                                                            self.m.PRODUCTS,
-                                                           rule=constr_vessel_initial_load)
+                                                           rule=constr_vessel_initial_load,
+                                                           name="constr_vessel_initial_load")
 
         def constr_load_balance(model, v, p, t):
             if t == 0:
@@ -531,7 +548,8 @@ class FfprpModel:
         self.m.constr_load_balance = pyo.Constraint(self.m.VESSELS,
                                                     self.m.PRODUCTS,
                                                     self.m.TIME_PERIODS,
-                                                    rule=constr_load_balance)
+                                                    rule=constr_load_balance,
+                                                    name="constr_load_balance")
 
         def constr_product_load_binary_activator(model, v, p, t):
             return model.l[v, p, t] <= model.vessel_ton_capacities[v] * model.h[v, p, t]
@@ -539,7 +557,8 @@ class FfprpModel:
         self.m.constr_product_load_binary_activator = pyo.Constraint(self.m.VESSELS,
                                                                      self.m.PRODUCTS,
                                                                      self.m.TIME_PERIODS,
-                                                                     rule=constr_product_load_binary_activator)
+                                                                     rule=constr_product_load_binary_activator,
+                                                                     name="constr_product_load_binary_activator")
 
         def constr_load_below_vessel_ton_capacity(model, v, t):
             if t == 0:
@@ -550,14 +569,16 @@ class FfprpModel:
 
         self.m.constr_load_below_vessel_ton_capacity = pyo.Constraint(self.m.VESSELS,
                                                                       self.m.TIME_PERIODS,
-                                                                      rule=constr_load_below_vessel_ton_capacity)
+                                                                      rule=constr_load_below_vessel_ton_capacity,
+                                                                      name="constr_load_below_vessel_ton_capacity")
 
         def constr_load_below_vessel_nprod_capacity(model, v, t):
             return sum(model.h[v, p, t] for p in model.PRODUCTS) <= model.vessel_nprod_capacities[v]
 
         self.m.constr_load_below_vessel_nprod_capacity = pyo.Constraint(self.m.VESSELS,
                                                                         self.m.TIME_PERIODS,
-                                                                        rule=constr_load_below_vessel_nprod_capacity)
+                                                                        rule=constr_load_below_vessel_nprod_capacity,
+                                                                        name="constr_load_below_vessel_nprod_capacity")
 
         # def constr_zero_final_load(model, v, p):
         #     return model.l[v, p, max(model.TIME_PERIODS)] == 0
@@ -571,7 +592,8 @@ class FfprpModel:
 
         self.m.constr_inventory_below_capacity = pyo.Constraint(self.m.FACTORY_NODES,
                                                                 self.m.TIME_PERIODS,
-                                                                rule=constr_inventory_below_capacity)
+                                                                rule=constr_inventory_below_capacity,
+                                                                name="constr_inventory_below_capacity")
 
         def constr_initial_inventory(model, i, p):
             return (model.s[i, p, 0] == model.factory_initial_inventories[i, p] +
@@ -581,7 +603,8 @@ class FfprpModel:
 
         self.m.constr_initial_inventory = pyo.Constraint(self.m.FACTORY_NODES,
                                                          self.m.PRODUCTS,
-                                                         rule=constr_initial_inventory)
+                                                         rule=constr_initial_inventory,
+                                                         name="constr_initial_inventory")
 
         def constr_inventory_balance(model, i, p, t):
             if t == 0:
@@ -598,7 +621,8 @@ class FfprpModel:
         self.m.constr_inventory_balance = pyo.Constraint(self.m.FACTORY_NODES,
                                                          self.m.PRODUCTS,
                                                          self.m.TIME_PERIODS,
-                                                         rule=constr_inventory_balance)
+                                                         rule=constr_inventory_balance,
+                                                         name="constr_inventory_balance")
 
         def constr_production_below_max_capacity(model, i, l, p, t):
             # return (model.q[l, p, t]
@@ -608,7 +632,8 @@ class FfprpModel:
         self.m.constr_production_below_max_capacity = pyo.Constraint(self.m.PRODUCTION_LINES_FOR_FACTORIES_TUP,
                                                                      self.m.PRODUCTS,
                                                                      self.m.TIME_PERIODS,
-                                                                     rule=constr_production_below_max_capacity)
+                                                                     rule=constr_production_below_max_capacity,
+                                                                     name="constr_production_below_max_capacity")
 
         # def constr_production_above_min_capacity(model, l, p, t):
         #     return model.q[l, p, t] >= model.production_min_capacities[l, p] * model.g[l, p, t]
@@ -626,14 +651,16 @@ class FfprpModel:
         self.m.constr_activate_delta = pyo.Constraint(self.m.PRODUCTION_LINES,
                                                       self.m.PRODUCTS,
                                                       self.m.TIME_PERIODS,
-                                                      rule=constr_activate_delta)
+                                                      rule=constr_activate_delta,
+                                                      name="constr_activate_delta")
 
         def constr_initial_production_start(model, l, p):
             return model.delta[l, p, 0] == model.g[l, p, 0]
 
         self.m.constr_initial_production_start = pyo.Constraint(self.m.PRODUCTION_LINES,
                                                                 self.m.PRODUCTS,
-                                                                rule=constr_initial_production_start)
+                                                                rule=constr_initial_production_start,
+                                                                name="constr_initial_production_start")
 
         def constr_produce_minimum_number_of_periods(model, l, p, t):
             relevant_time_periods = {tau for tau in model.TIME_PERIODS if
@@ -645,14 +672,16 @@ class FfprpModel:
         self.m.constr_produce_minimum_number_of_periods = pyo.Constraint(self.m.PRODUCTION_LINES,
                                                                          self.m.PRODUCTS,
                                                                          self.m.TIME_PERIODS,
-                                                                         rule=constr_produce_minimum_number_of_periods)
+                                                                         rule=constr_produce_minimum_number_of_periods,
+                                                                         name="constr_produce_minimum_number_of_periods")
 
         def constr_production_line_availability(model, l, t):
             return model.a[l, t] + sum(model.g[l, p, t] for p in model.PRODUCTS) == 1
 
         self.m.constr_production_line_availability = pyo.Constraint(self.m.PRODUCTION_LINES,
                                                                     self.m.TIME_PERIODS,
-                                                                    rule=constr_production_line_availability)
+                                                                    rule=constr_production_line_availability,
+                                                                    name="constr_production_line_availability")
 
         def constr_production_shift(model, l, p, t):
             if t == 0:
@@ -663,7 +692,8 @@ class FfprpModel:
         self.m.constr_production_shift = pyo.Constraint(self.m.PRODUCTION_LINES,
                                                         self.m.PRODUCTS,
                                                         self.m.TIME_PERIODS,
-                                                        rule=constr_production_shift)
+                                                        rule=constr_production_shift,
+                                                        name="constr_production_shift")
 
         def constr_wait_if_visit_sick_farm(model, v, i, j, t):
             if model.transport_times[v, i, j] <= t <= len(model.TIME_PERIODS) - model.min_wait_if_sick[v, i, j]:
@@ -675,7 +705,8 @@ class FfprpModel:
 
         self.m.constr_wait_if_visit_sick_farm = pyo.Constraint(self.m.WAIT_EDGES_FOR_VESSEL_TRIP,
                                                                self.m.TIME_PERIODS,
-                                                               rule=constr_wait_if_visit_sick_farm)
+                                                               rule=constr_wait_if_visit_sick_farm,
+                                                               name="constr_wait_if_visit_sick_farm")
 
         # Extension
         if extended_model:
@@ -688,7 +719,8 @@ class FfprpModel:
 
             self.m.constr_delivery_within_time_window.deactivate()  # Deactivate the current delivery constraint
             self.m.constr_delivery_no_tw_violation = pyo.Constraint(self.m.ORDER_NODES,
-                                                                    rule=constr_delivery_no_tw_violation)
+                                                                    rule=constr_delivery_no_tw_violation,
+                                                                    name="constr_delivery_no_tw_violation")
 
             def constr_delivery_tw_violation_earlier(model, i, k):
                 if k < 0 and self.m.tw_min[i] + k in model.TIME_PERIODS:
@@ -701,7 +733,8 @@ class FfprpModel:
 
             self.m.constr_delivery_tw_violation_earlier = pyo.Constraint(self.m.ORDER_NODES,
                                                                          self.m.TIME_WINDOW_VIOLATIONS,
-                                                                         rule=constr_delivery_tw_violation_earlier)
+                                                                         rule=constr_delivery_tw_violation_earlier,
+                                                                         name="constr_delivery_tw_violation_earlier")
 
             def constr_delivery_tw_violation_later(model, i, k):
                 if k > 0 and self.m.tw_max[i] + k in model.TIME_PERIODS:
@@ -714,7 +747,8 @@ class FfprpModel:
 
             self.m.constr_delivery_tw_violation_later = pyo.Constraint(self.m.ORDER_NODES,
                                                                        self.m.TIME_WINDOW_VIOLATIONS,
-                                                                       rule=constr_delivery_tw_violation_later)
+                                                                       rule=constr_delivery_tw_violation_later,
+                                                                       name="constr_delivery_tw_violation_later")
 
             def constr_choose_one_tw_violation(model, i):
                 return (sum(model.lambd[i, k]
@@ -725,21 +759,24 @@ class FfprpModel:
                         == 1)
 
             self.m.constr_choose_one_tw_violation = pyo.Constraint(self.m.ORDER_NODES,
-                                                                   rule=constr_choose_one_tw_violation)
+                                                                   rule=constr_choose_one_tw_violation,
+                                                                   name="constr_choose_one_tw_violation")
 
             def constr_rewarded_inventory_below_inventory_level(model, i, p):
                 return model.s_plus[i, p] <= model.s[i, p, max(model.TIME_PERIODS)]
 
             self.m.constr_rewarded_inventory_below_inventory_level = pyo.Constraint(self.m.FACTORY_NODES,
                                                                                     self.m.PRODUCTS,
-                                                                                    rule=constr_rewarded_inventory_below_inventory_level)
+                                                                                    rule=constr_rewarded_inventory_below_inventory_level,
+                                                                                    name="constr_rewarded_inventory_below_inventory_level")
 
             def constr_rewarded_inventory_below_inventory_target(model, i, p):
                 return model.s_plus[i, p] <= model.inventory_targets[i, p]
 
             self.m.constr_rewarded_inventory_below_inventory_target = pyo.Constraint(self.m.FACTORY_NODES,
                                                                                      self.m.PRODUCTS,
-                                                                                     rule=constr_rewarded_inventory_below_inventory_target)
+                                                                                     rule=constr_rewarded_inventory_below_inventory_target,
+                                                                                     name="constr_rewarded_inventory_below_inventory_target")
 
         print("Done setting constraints!")
 
@@ -748,9 +785,22 @@ class FfprpModel:
         if time_limit:
             self.solver_factory.options['TimeLimit'] = time_limit  # time limit in seconds
         t = time()
+        if warm_start:
+            print(f"Preparing for warm-start...")
+            self.m.constr_y_heuristic_flying_start.activate()
+            self.solver_factory.options['SolutionLimit'] = 1
+            self.results = self.solver_factory.solve(self.m, tee=verbose)
+
+            print(f"...warm-start model completed!")
+            self.m.constr_y_heuristic_flying_start.deactivate()
+            self.solver_factory.options['SolutionLimit'] = 2000000000  # Gurobi's default value
+
         try:
-            self.results = self.solver_factory.solve(self.m,
-                                                     tee=verbose) #, warmstart=True)  # logfile=f'../../log_files/console_output_{log_name}.log'
+            print(f"Solving model...")
+            self.results = self.solver_factory.solve(self.m, tee=verbose, warmstart=warm_start)
+            # logfile=f'../../log_files/console_output_{log_name}.log'
+            print(f"...model solved!")
+            print("Termination condition", self.results.solver.termination_condition)
             if self.results.solver.termination_condition != pyo.TerminationCondition.optimal:
                 print("Not optimal termination condition: ", self.results.solver.termination_condition)
                 # log_infeasible_constraints(self.m, log_variables=True, log_expression=True)
@@ -1110,7 +1160,7 @@ if __name__ == '__main__':
     # problem_data = ProblemData('../../data/input_data/larger_testcase_4vessels.xlsx')
 
     # PARAMETERS TO CHANGE ###
-    file_path = '../../data/input_data/test03.xlsx'
+    file_path = '../../data/input_data/test02.xlsx'
     partial_warm_start = True
     num_alns_iterations = 10  # only used if partial_warm_start = True
     extensions = False  # extensions _not_ supported in generated test files
@@ -1121,7 +1171,7 @@ if __name__ == '__main__':
 
     y_init_dict = None
     if partial_warm_start:
-        problem_data_ext = ProblemDataExtended(file_path)
+        problem_data_ext = ProblemDataExtended(file_path)  # TODO: Fix to avoid to prbl reads (problem with nodes field)
         problem_data_ext.soft_tw = extensions
         t = time()
         y_init_dict = src.alns.alns.run_alns(prbl=problem_data_ext, num_alns_iterations=num_alns_iterations,
@@ -1129,9 +1179,5 @@ if __name__ == '__main__':
         print(f"ALNS warmup time {round(time() - t, 1)}")
 
     model = FfprpModel(problem_data, extended_model=extensions, y_init_dict=y_init_dict)
-    for (v, i) in model.m.NODES_FOR_VESSELS_TUP:
-        for t in model.m.TIME_PERIODS:
-            if y_init_dict[v, i, t] > 0.5:
-                print(f"y[{v},{i},{t}]: {y_init_dict[v, i, t]}")
-    model.solve(time_limit=90)
+    model.solve(time_limit=300, warm_start=partial_warm_start)
     model.print_result()
