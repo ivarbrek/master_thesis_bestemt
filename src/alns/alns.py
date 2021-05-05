@@ -68,6 +68,7 @@ class Alns:
                  inventory_reward: bool,
                  production_infeasibility_strike_max: int,
                  ppfc_slack_increment: float,
+                 reinsert_with_ppfc: bool,
                  verbose: bool = False) -> None:
 
         self.verbose = verbose
@@ -81,6 +82,7 @@ class Alns:
         self.noise_param = noise_param
         self.max_iter_same_solution = max_iter_same_solution
         self.iter_same_solution = 0
+        self.reinsert_with_ppfc = reinsert_with_ppfc
 
         # Solutions
         self.current_sol = self.repair_kregret(2, Solution(problem_data))
@@ -164,19 +166,28 @@ class Alns:
             prod_feasible, infeasible_factory = self.production_heuristic.is_feasible(sol)
         return sol
 
-    def adjust_sol_ppfc(self, sol: Solution = None, remove_num: int = None) -> Solution:
+    def adjust_sol_ppfc(self, sol: Solution = None, remove_num: int = None, repair_op: str = None) -> Solution:
         """
         :param sol: solution to be adjusted, default is self.current_sol
         :param remove_num: number of order nodes to be removed before checking for prod feasibility,
                 default is self.remove_num
+        :param repair_op: repair operator
         :return: production feasible solution according to ppfc
         """
         sol = sol if sol else self.current_sol
         prod_feasible, infeasible_factory = sol.check_production_feasibility()
         self.ppfc_infeasible_count += int(not prod_feasible)
+        infeasible = [infeasible_factory]
         while not prod_feasible:
             sol = self.remove_from_factory(sol, infeasible_factory, remove_num)
             prod_feasible, infeasible_factory = sol.check_production_feasibility()
+            infeasible.append(infeasible_factory)
+
+        print("Infeasible:", infeasible)
+        orders_not_served = len(sol.get_orders_not_served())
+        if repair_op and self.reinsert_with_ppfc:  # Reinsert nodes using the ppfc check
+            sol = self.repair(repair_op, sol, apply_noise=True, use_ppfc=True)
+            print(orders_not_served - len(sol.get_orders_not_served()), "orders reinserted")
         return sol
 
     def update_scores(self, destroy_op: str, repair_op: str, noise_op: bool, update_type: int) -> None:
@@ -278,16 +289,23 @@ class Alns:
             return None
 
     def remove_from_factory(self, sol: Solution, factory_node_id: str, remove_num: int = 1):
-        candidates = True  # dummy initialization
+        # Compute removal candidates
+        candidates = [(vessel, idx, sol.get_removal_utility(vessel, idx))
+                      for vessel, idx in sol.get_order_vessel_idx_for_factory(factory_node_id)]
+        candidates.sort(key=lambda tup: tup[2], reverse=True)
+
         removals = 0
         while removals < remove_num and candidates:
-            candidates = [(vessel, idx, sol.get_removal_utility(vessel, idx))
-                          for vessel, idx in sol.get_order_vessel_idx_for_factory(factory_node_id)]
-            candidates.sort(key=lambda tup: tup[2], reverse=True)
             chosen_idx = int(pow(random.random(), self.determinism_param) * len(candidates))
             vessel, idx, _ = candidates.pop(chosen_idx)
             sol.remove_node(vessel, idx)
             removals += 1
+
+            # Recompute removal candidates
+            candidates = [(vessel, idx, sol.get_removal_utility(vessel, idx))
+                          for vessel, idx in sol.get_order_vessel_idx_for_factory(factory_node_id)]
+            candidates.sort(key=lambda tup: tup[2], reverse=True)
+
         sol.recompute_solution_variables()
         return sol
 
@@ -449,25 +467,23 @@ class Alns:
         sol.recompute_solution_variables()
         return sol
 
-    def repair(self, repair_op: str, sol: Solution, apply_noise: bool) -> Union[None, Solution]:
+    def repair(self, repair_op: str, sol: Solution, apply_noise: bool, use_ppfc: bool = False) -> Union[None, Solution]:
         if repair_op == "r_greedy":
-            repaired_sol = self.repair_greedy(sol, apply_noise)
+            repaired_sol = self.repair_greedy(sol, apply_noise, use_ppfc)
         elif repair_op == "r_2regret":
-            repaired_sol = self.repair_kregret(2, sol, apply_noise)
+            repaired_sol = self.repair_kregret(2, sol, apply_noise, use_ppfc)
         elif repair_op == 'r_3regret':
-            repaired_sol = self.repair_kregret(3, sol, apply_noise)
+            repaired_sol = self.repair_kregret(3, sol, apply_noise, use_ppfc)
         else:
             print("Repair operator does not exist")
             return None
 
-        # If PPFC run for each insertion:
-        # return repaired_sol
+        if not use_ppfc:  # If PPFC was not used during repair, we remove orders until PPFC is satisfied
+            repaired_sol = self.adjust_sol_ppfc(repaired_sol, self.remove_num_adjust, repair_op)
 
-        # Else:
-        repaired_sol = self.adjust_sol_ppfc(repaired_sol, remove_num=self.remove_num_adjust)
         return repaired_sol
 
-    def repair_greedy(self, sol: Solution, apply_noise: bool = False) -> Solution:
+    def repair_greedy(self, sol: Solution, apply_noise: bool = False, ppfc: bool = False) -> Solution:
         insertion_cand = sol.get_orders_not_served()
         insertions = [(node_id, vessel, idx, sol.get_insertion_utility(sol.prbl.nodes[node_id], vessel, idx,
                                                                        apply_noise * self.noise_param))
@@ -478,7 +494,8 @@ class Alns:
 
         while len(insertion_cand) > 0:  # try all possible insertions
             insert_node_id, vessel, idx, _ = insertions[-1]
-            if sol.check_insertion_feasibility(insert_node_id, vessel, idx):
+            if sol.check_insertion_feasibility(insert_node_id, vessel, idx,
+                                               noise_factor=apply_noise * self.noise_param, ppfc=ppfc):
                 sol.insert_last_checked()
                 insertion_cand.remove(insert_node_id)
                 # recalculate profit gain and omit other insertions of node_id
@@ -499,7 +516,7 @@ class Alns:
                     insertion_cand.remove(insert_node_id)
         return sol
 
-    def repair_kregret(self, k: int, sol: Solution, apply_noise: bool = False) -> Solution:
+    def repair_kregret(self, k: int, sol: Solution, apply_noise: bool = False, ppfc: bool = False) -> Solution:
         unrouted_orders = sol.get_orders_not_served()
         while unrouted_orders:
             # find the largest regret for each order and insert the largest regret.
@@ -519,7 +536,8 @@ class Alns:
 
                 while num_feasible < k and len(insertions) > 0:
                     idx, vessel, util = insertions.pop()
-                    feasible = sol.check_insertion_feasibility(order, vessel, idx)
+                    feasible = sol.check_insertion_feasibility(order, vessel, idx,
+                                                               noise_factor=apply_noise * self.noise_param, ppfc=ppfc)
                     sol.clear_last_checked()
 
                     if feasible and num_feasible == 0:
@@ -542,7 +560,7 @@ class Alns:
 
             # insert the greatest regret from repair_candidates
             node_id, idx, vessel, _ = max(repair_candidates, key=lambda item: item[3])
-            sol.check_insertion_feasibility(node_id, vessel, idx)
+            sol.check_insertion_feasibility(node_id, vessel, idx, noise_factor=apply_noise * self.noise_param)
             sol.insert_last_checked()
             unrouted_orders.remove(node_id)
 
@@ -676,6 +694,7 @@ if __name__ == '__main__':
                 production_infeasibility_strike_max=0,
                 ppfc_slack_increment=0.05,
                 inventory_reward=False,
+                reinsert_with_ppfc=False,
                 verbose=False
                 )
 
@@ -685,7 +704,7 @@ if __name__ == '__main__':
     alns.current_sol.print_routes()
     print(f"Obj: {alns.current_sol_cost:n}   Not served: {alns.current_sol.get_orders_not_served()}")
 
-    print("\nRemove num:", alns.remove_num, "\n")
+    print("\nRemove num:", alns.remove_num_interval, "\n")
 
     _stat_solution_cost = []
     _stat_repair_weights = defaultdict(list)
