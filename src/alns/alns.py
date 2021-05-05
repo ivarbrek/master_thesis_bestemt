@@ -59,7 +59,7 @@ class Alns:
                  cooling_rate: float,
                  max_iter_seg: int,
                  max_iter_same_solution: int,
-                 remove_percentage: float,
+                 remove_percentage_interval: Tuple[float, float],
                  remove_num_percentage_adjust: float,
                  determinism_param: int,
                  noise_param: float,
@@ -74,8 +74,9 @@ class Alns:
 
         # ALNS  parameters
         self.max_iter_seg = max_iter_seg
-        self.remove_num = round(remove_percentage * len(problem_data.order_nodes))
-        self.remove_num_adjust = math.ceil(self.remove_num * remove_num_percentage_adjust)
+        self.remove_num_interval = [round(remove_percentage_interval[0] * len(problem_data.order_nodes)),
+                                    round(remove_percentage_interval[1] * len(problem_data.order_nodes))]
+        self.remove_num_adjust = math.ceil(remove_num_percentage_adjust * len(problem_data.order_nodes))
         self.determinism_param = determinism_param
         self.noise_param = noise_param
         self.max_iter_same_solution = max_iter_same_solution
@@ -255,23 +256,23 @@ class Alns:
         return candidate_sol
 
     def destroy(self, destroy_op: str, sol: Solution) -> Union[Solution, None]:
-        # Run function based on operator "ID"
+        remove_num = random.randint(*self.remove_num_interval)
         if destroy_op == "d_random":
-            return self.destroy_random(sol)
+            return self.destroy_random(sol, remove_num)
         elif destroy_op == "d_worst":
-            return self.destroy_worst(sol)
+            return self.destroy_worst(sol, remove_num)
         elif destroy_op == "d_related_location_time":
-            return self.destroy_related(sol, rel_measure=self._relatedness_location_time)
+            return self.destroy_related(sol, remove_num, rel_measure=self._relatedness_location_time)
         elif destroy_op == "d_related_location_precedence":
-            return self.destroy_related(sol, rel_measure=self._relatedness_location_precedence)
+            return self.destroy_related(sol, remove_num, rel_measure=self._relatedness_location_precedence)
         elif destroy_op == "d_voyage_random":
-            return self.destroy_voyage_random(sol)
+            return self.destroy_voyage_random(sol, remove_num)
         elif destroy_op == "d_voyage_worst":
-            return self.destroy_voyage_worst(sol)
+            return self.destroy_voyage_worst(sol, remove_num)
         elif destroy_op == "d_route_random":
-            return self.destroy_route_random(sol)
+            return self.destroy_route_random(sol, remove_num)
         elif destroy_op == "d_route_worst":
-            return self.destroy_route_worst(sol)
+            return self.destroy_route_worst(sol, remove_num)
         else:
             print("Destroy operator does not exist")
             return None
@@ -290,8 +291,7 @@ class Alns:
         sol.recompute_solution_variables()
         return sol
 
-    def destroy_random(self, sol: Solution, remove_num: int = None) -> Solution:
-        remove_num = remove_num if remove_num is not None else self.remove_num
+    def destroy_random(self, sol: Solution, remove_num: int) -> Solution:
         served_orders = [(vessel, order)
                          for vessel in sol.prbl.vessels
                          for order in sol.routes[vessel]
@@ -306,7 +306,7 @@ class Alns:
         sol.recompute_solution_variables()
         return sol
 
-    def destroy_voyage_random(self, sol: Solution) -> Solution:
+    def destroy_voyage_random(self, sol: Solution, remove_num: int) -> Solution:
         # voyage: factory visit + orders until next factory visit
         voyage_start_indexes = [(vessel, idx)
                                 for vessel in sol.prbl.vessels
@@ -316,7 +316,7 @@ class Alns:
         random.shuffle(voyage_start_indexes)
         destroy_voyage_vessels = []
         orders_removed = 0
-        while orders_removed < self.remove_num and voyage_start_indexes:
+        while orders_removed < remove_num and voyage_start_indexes:
             vessel, voyage_start_idx = voyage_start_indexes.pop()  # pick one voyage to destroy
             if vessel in destroy_voyage_vessels:
                 # avoid choosing several voyages from the same vessel, as this is messy with the voyage_start_indexes
@@ -332,7 +332,7 @@ class Alns:
         sol.recompute_solution_variables()
         return sol
 
-    def destroy_voyage_worst(self, sol: Solution) -> Solution:
+    def destroy_voyage_worst(self, sol: Solution, remove_num: int) -> Solution:
         # voyage: factory visit + orders until next factory visit
         voyage_start_indexes = [(vessel, idx, sol.get_voyage_profit(vessel, idx))
                                 for vessel in sol.prbl.vessels
@@ -342,7 +342,7 @@ class Alns:
         voyage_start_indexes.sort(key=lambda item: item[2], reverse=True)
         destroy_voyage_vessels = []
         orders_removed = 0
-        while orders_removed < self.remove_num and voyage_start_indexes:
+        while orders_removed < remove_num and voyage_start_indexes:
             chosen_idx = int(pow(random.random(), self.determinism_param) * len(voyage_start_indexes))
             vessel, voyage_start_idx, _ = voyage_start_indexes.pop(chosen_idx)  # pick one voyage to destroy
             if vessel in destroy_voyage_vessels:
@@ -359,7 +359,7 @@ class Alns:
         sol.recompute_solution_variables()
         return sol
 
-    def destroy_route_random(self, sol: Solution) -> Solution:
+    def destroy_route_random(self, sol: Solution, remove_num: int) -> Solution:
         # choose a vessel that has a route
         vessel = random.choice([vessel for vessel in sol.prbl.vessels if len(sol.routes[vessel]) > 1])
         route = sol.routes[vessel]
@@ -368,7 +368,7 @@ class Alns:
         sol.recompute_solution_variables()
         return sol
 
-    def destroy_route_worst(self, sol: Solution) -> Solution:
+    def destroy_route_worst(self, sol: Solution, remove_num: int) -> Solution:
         route_profits = [(vessel, sol.get_route_profit(vessel))
                          for vessel in sol.prbl.vessels
                          if len(sol.routes[vessel]) > 1]
@@ -382,10 +382,10 @@ class Alns:
         sol.recompute_solution_variables()
         return sol
 
-    def destroy_worst(self, sol: Solution) -> Solution:
+    def destroy_worst(self, sol: Solution, remove_num: int) -> Solution:
         candidates = True  # dummy initialization
         removals = 0
-        while removals < self.remove_num and candidates:
+        while removals < remove_num and candidates:
             candidates = [(vessel, idx, sol.get_removal_utility(vessel, idx))
                           for vessel in sol.prbl.vessels
                           for idx, order in enumerate(sol.routes[vessel])
@@ -417,7 +417,7 @@ class Alns:
                 w_1 * self.relatedness_precedence[(self.current_sol.prbl.nodes[order1].zone,
                                                    self.current_sol.prbl.nodes[order2].zone)])
 
-    def destroy_related(self, sol: Solution, rel_measure: function) -> Solution:
+    def destroy_related(self, sol: Solution, remove_num: int, rel_measure: function) -> Solution:
         # Related removal, based on inputted relatedness measure
         similar_orders: List[Tuple[str, int, str]] = []  # (order, index, vessel)
         served_orders = [(sol.routes[v][idx], idx, v)  # (order, index, vessel)
@@ -429,7 +429,7 @@ class Alns:
         random_first_idx = random.randint(0, len(served_orders) - 1)
         similar_orders.append(served_orders.pop(random_first_idx))
 
-        while len(similar_orders) < self.remove_num and served_orders:
+        while len(similar_orders) < remove_num and served_orders:
             base_order = similar_orders[random.randint(0, len(similar_orders) - 1)][0]
             candidates = [(order, idx, vessel, rel_measure(base_order, order, vessel))
                           for vessel in sol.prbl.vessels
@@ -666,8 +666,8 @@ if __name__ == '__main__':
                 cooling_rate=0.995,
                 max_iter_same_solution=50,
                 max_iter_seg=40,
-                remove_percentage=0.2,
-                remove_num_percentage_adjust=0.1,
+                remove_percentage_interval=(0.1, 0.3),
+                remove_num_percentage_adjust=0.05,
                 determinism_param=5,
                 noise_param=0.25,
                 relatedness_precedence={('green', 'yellow'): 6, ('green', 'red'): 10, ('yellow', 'red'): 4},
