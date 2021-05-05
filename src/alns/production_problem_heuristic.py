@@ -1,16 +1,12 @@
 from src.read_problem_data import ProblemData
-from typing import Dict, Tuple, List
+from typing import Dict, Tuple, List, Any
 from collections import defaultdict
 import itertools
+import bisect
 from tabulate import tabulate
 import numpy as np
 from time import time
 from src.alns.solution import Solution, ProblemDataExtended
-
-# TODO:
-#  - Require more than one period production series
-#  - Incorporate production stops
-#  -
 
 
 class ProductionProblem:
@@ -59,9 +55,13 @@ class ProductionProblemSolution:
         self.prbl: ProductionProblem = problem
         self.factory: str = factory
         self.inventory_capacity = self.prbl.base_problem.factory_inventory_capacities[self.factory]
-        self.activities: Dict[str, List[int]] = {prod_line: [None for _ in self.prbl.base_problem.time_periods]  # list with product numbers
-                                                 for f, prod_line in self.prbl.base_problem.production_lines_for_factories
-                                                 if f == self.factory}
+        self.activities: Dict[str, List[int]] = {prod_line: [None if is_producing else 'stop'
+                                                             for (f, t), is_producing in
+                                                             self.prbl.base_problem.production_stops.items()
+                                                             if f == factory]  # list with product numbers
+                                                 for f2, prod_line in
+                                                 self.prbl.base_problem.production_lines_for_factories
+                                                 if f2 == self.factory}
         self.inventory: Dict[int, List[int]] = self._init_inventory()
 
     def _init_inventory(self) -> Dict[int, List[int]]:
@@ -90,7 +90,8 @@ class ProductionProblemSolution:
                       if self.insertion_is_feasible(prod_line, t_insert, product_idx, t_demand)]
         return candidates
 
-    def insertion_is_feasible(self, prod_line: str, t_insert: int, product: int, t_demand: int) -> bool:
+    def insertion_is_feasible(self, prod_line: str, t_insert: int, product: int, t_demand: int,
+                              check_min_periods: bool = True) -> bool:
         if not self.activities[prod_line][t_insert] is None:
             return False
 
@@ -100,25 +101,49 @@ class ProductionProblemSolution:
         if not self.insertion_is_inventory_feasible(prod_line, product, t_demand):
             return False
 
+        if check_min_periods and not self.insertion_is_min_periods_feasible(prod_line, t_insert, product, t_demand):
+            return False
+
         return True
 
     def insertion_is_inventory_feasible(self, prod_line: str, product: int, t_demand: int) -> bool:
+        # Note: This check assumes that insertions are done chronologically (eariest pickup first)
         product_name = self.prbl.index_product_map[product]
         extra_production = self.prbl.base_problem.production_max_capacities[prod_line, product_name]
         return sum(self.inventory[t_demand]) + extra_production <= self.inventory_capacity
 
     def insertion_is_product_group_change_feasible(self, prod_line: str, t_insert: int, product: int) -> bool:
-        activity_before = self.activities[prod_line][t_insert - 1] if t_insert > 0 else None
-        activity_after = self.activities[prod_line][t_insert + 1] if t_insert < len(self.activities[prod_line]) else None
+        activity_before, activity_after = self._get_activity_before_and_after(prod_line, t_insert)
         feasible_before = (self.prbl.is_same_product_group(activity_before, product)
-                           or activity_before is None)
+                           or activity_before is None or activity_before == 'stop')
         feasible_after = (self.prbl.is_same_product_group(product, activity_after)
-                          or activity_after is None)
+                          or activity_after is None or activity_after == 'stop')
         return feasible_before and feasible_after
 
-    def insert_activity(self, prod_line: str, t_insert: int, product: int, t_demand: int):
+    def insertion_is_min_periods_feasible(self, prod_line: str, t_insert: int, product: int, t_demand: int) -> bool:
         product_name = self.prbl.index_product_map[product]
+        min_production_periods = self.prbl.base_problem.production_line_min_times[prod_line, product_name]
+
+        if min_production_periods < 2:  # No need to check
+            return True
+
+        activity_before, activity_after = self._get_activity_before_and_after(prod_line, t_insert)
+        next_t_demand = self._get_next_pickup_time(t_insert + 1)
+
+        if activity_before == product or activity_after == product:
+            return True
+        elif self.insertion_is_feasible(prod_line, t_insert - 1, product, t_demand, check_min_periods=False):
+            return True
+        elif self.insertion_is_feasible(prod_line, t_insert + 1, product, next_t_demand, check_min_periods=False):
+            return True
+
+        return False
+
+    def insert_activity(self, prod_line: str, t_insert: int, product: int, t_demand: int) -> None:
+        product_name = self.prbl.index_product_map[product]
+        min_production_periods = self.prbl.base_problem.production_line_min_times[prod_line, product_name]
         extra_production = self.prbl.base_problem.production_max_capacities[prod_line, product_name]
+        activity_before, activity_after = self._get_activity_before_and_after(prod_line, t_insert)
 
         # Insert activity
         self.activities[prod_line][t_insert] = product
@@ -127,6 +152,25 @@ class ProductionProblemSolution:
         remaining_pickups = [t for t in self.inventory.keys() if t >= t_demand]
         for t in remaining_pickups:
             self.inventory[t][product] += extra_production
+
+        # A new insertion must be made (assumes min_production_periods in [1, 2]
+        if min_production_periods > 1 and not (activity_before == product or activity_after == product):
+            self.insert_min_production_periods(prod_line, t_insert, product, t_demand)
+
+    def insert_min_production_periods(self, prod_line: str, t_insert: int, product: int, t_demand: int) -> None:
+        next_t_demand = self._get_next_pickup_time(t_insert + 1)
+
+        # prioritize insertion before t_insert if demanded for product
+        if self.inventory[t_demand][product] < 0 < t_insert:
+            if self.insertion_is_feasible(prod_line, t_insert - 1, product, t_demand, check_min_periods=False):
+                self.insert_activity(prod_line, t_insert - 1, product, t_demand)
+            elif self.insertion_is_feasible(prod_line, t_insert + 1, product, next_t_demand, check_min_periods=False):
+                self.insert_activity(prod_line, t_insert + 1, product, next_t_demand)
+        else: # else, insert after, as this gives lower inventory costs
+            if self.insertion_is_feasible(prod_line, t_insert + 1, product, next_t_demand, check_min_periods=False):
+                self.insert_activity(prod_line, t_insert + 1, product, next_t_demand)
+            elif self.insertion_is_feasible(prod_line, t_insert - 1, product, t_demand, check_min_periods=False):
+                self.insert_activity(prod_line, t_insert - 1, product, t_demand)
 
     def get_insertion_cost(self, prod_line: str, t_insert: int, product: int, t_demand: int) -> int:
         product_name = self.prbl.index_product_map[product]
@@ -155,27 +199,40 @@ class ProductionProblemSolution:
 
         production_start_cost = (sum(prod_start_costs[self.factory, product_name[activities[0]]]
                                      for prod_line, activities in self.activities.items()
-                                     if activities[0] is not None)
+                                     if activities[0] not in [None, 'stop'])
                                  + sum(int(activities[t - 1] != activities[t])
                                        * prod_start_costs[self.factory, product_name[activities[t]]]
                                        for prod_line, activities in self.activities.items()
                                        for t in range(1, len(activities))
-                                       if activities[t] is not None))
+                                       if activities[t] not in [None, 'stop']))
         return production_start_cost + inventory_cost
 
     def _get_produced_amount(self, activity: int, prod_line: str):
         prod_cap = self.prbl.base_problem.production_max_capacities
         product_name = self.prbl.index_product_map
-        if activity is None:
+        if activity is None or activity == 'stop':
             return 0
         else:
             return prod_cap[prod_line, product_name[activity]]
+
+    def _get_next_pickup_time(self, t: int) -> int:
+        """Returns the next time from t (and including t) that is a pickup time period"""
+        pickup_t_list = list(self.inventory.keys())
+        idx = min(bisect.bisect(pickup_t_list, t), len(pickup_t_list) - 1)
+        return pickup_t_list[idx]
+
+    def _get_activity_before_and_after(self, prod_line: str, t_insert: int) -> Tuple[Any, Any]:
+        activity_before = self.activities[prod_line][t_insert - 1] if t_insert > 0 else 'stop'
+        activity_after = self.activities[prod_line][t_insert + 1] if t_insert < len(self.activities[prod_line]) else 'stop'
+        return activity_before, activity_after
 
     def print(self):
 
         def get_print_symbol(activity_symbol):
             if activity_symbol is None:
                 return '-'
+            elif activity_symbol == 'stop':
+                return 'stop'
             else:
                 return self.prbl.index_product_map[activity_symbol]
 
@@ -213,7 +270,7 @@ class ProductionProblemHeuristic:
             is_feasible = self.construct_greedy(sol)
             # sol.print()
             if not is_feasible:
-                print(round(time() - t0, 1), "s (h)", sep="")
+                print(round(time() - t0, 1), "s (h) (infeasible)", sep="")
                 return False, factory
         print(round(time() - t0, 1), "s (h)", sep="")
         return True, ''
@@ -234,31 +291,31 @@ def hardcode_demand_dict(prbl: ProblemData) -> Dict[Tuple[str, str, int], int]:
     #     ('f_1', 'o_4', 10),
     #     ('f_1', 'o_1', 10)
     # ]
-    y_locks = [
-        ('f_1', 'o_6', 4),
-        ('f_1', 'o_7', 4),
-        ('f_1', 'o_8', 4),
-        ('f_1', 'o_10', 4),
-        ('f_1', 'o_11', 4),
-
-        ('f_1', 'o_16', 13),
-        ('f_1', 'o_13', 13),
-        ('f_1', 'o_12', 13),
-        ('f_1', 'o_4',  13),
-        ('f_1', 'o_1',  13),
-        ('f_1', 'o_2',  13),
-        ('f_1', 'o_3',  13),
-
-        ('f_1', 'o_14', 20),
-        ('f_1', 'o_15', 20),
-        ('f_1', 'o_5', 20),
-        ('f_1', 'o_9', 20),
+    orders_demand = [
+        ('f_0', 'o_1', 45),
+        ('f_0', 'o_2', 45),
+        ('f_0', 'o_3', 45),
+        ('f_0', 'o_4', 45),
+        ('f_0', 'o_5', 45),
+        ('f_0', 'o_6', 45),
+        ('f_0', 'o_7', 45),
+        ('f_0', 'o_8', 45),
+        ('f_0', 'o_9', 45),
+        ('f_0', 'o_10', 60),
+        ('f_0', 'o_11', 60),
+        ('f_0', 'o_12', 60),
+        ('f_0', 'o_13', 60),
+        ('f_0', 'o_14', 60),
+        ('f_0', 'o_15', 60),
+        ('f_0', 'o_16', 60),
+        ('f_0', 'o_17', 60),
+        ('f_0', 'o_18', 60),
+        ('f_0', 'o_19', 60),
     ]
-
 
     demands: Dict[Tuple[str, str, int], int] = {(i, p, t): 0 for i in prbl.factory_nodes
                                                 for p in prbl.products for t in prbl.time_periods}
-    for visit in y_locks:
+    for visit in orders_demand:
         for j in range(len(prbl.nodes[visit[1]].demand)):  # index in product list
             if prbl.nodes[visit[1]].demand[j] > 0:
                 demands[visit[0], prbl.products[j], visit[2]] += prbl.nodes[visit[1]].demand[j]
@@ -267,7 +324,7 @@ def hardcode_demand_dict(prbl: ProblemData) -> Dict[Tuple[str, str, int], int]:
 
 
 if __name__ == '__main__':
-    file_path = '../../data/input_data/largester_testcase.xlsx'
+    file_path = '../../data/testoutputfile.xlsx'
     problem_data = ProblemData(file_path)
     problem_data_ext = ProblemDataExtended(file_path)
     demands = hardcode_demand_dict(problem_data_ext)
@@ -276,10 +333,12 @@ if __name__ == '__main__':
     print(production_problem.demands)
     # pprint(production_problem.unmet_demands)
 
-    solution = ProductionProblemSolution(production_problem, 'f_1')
+    solution = ProductionProblemSolution(production_problem, 'f_0')
+
     t0 = time()
     print(ProductionProblemHeuristic.construct_greedy(solution))
     print(round(time() - t0, 8), 's')
     solution.print()
     print(solution.get_cost())
+
 

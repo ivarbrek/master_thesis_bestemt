@@ -103,7 +103,7 @@ class TestDataGenerator:
                                     radius_yellow: int,
                                     share_bag_locations: float,
                                     share_small_fjord_locations: float,
-                                    share_time_periods_availability: float,
+                                    share_time_periods_vessel_availability: float,
                                     small_fjord_radius: int,
                                     delivery_delay_unit_penalty: int,
                                     min_wait_if_sick_hours: int,
@@ -137,9 +137,9 @@ class TestDataGenerator:
         self.write_production_start_cost_to_file(no_products)
         self.write_product_group_to_file(no_product_groups, no_products)
         self.write_production_lines_for_factory_to_file()
-        self.write_production_max_capacity_to_file(no_products)
+        self.write_production_max_capacity_to_file(no_products, time_period_length)
         self.write_prod_line_min_time_to_file(time_period_length, no_products)
-        self.write_vessel_availability_to_file(vessels, share_time_periods_availability, time_periods)
+        self.write_vessel_availability_to_file(vessels, share_time_periods_vessel_availability, time_periods)
         self.write_vessel_capacities_to_file(relevant_vessels=vessels)
         self.write_order_zones_to_file(share_red=share_red_nodes, radius_red=radius_red, radius_yellow=radius_yellow)
         self.write_nodes_for_vessels_to_file(relevant_vessels=vessels, share_bag_locations=share_bag_locations,
@@ -173,22 +173,22 @@ class TestDataGenerator:
         :return: DataFrame with initial inventories
         """
         no_products = len(orders.columns)
-        df = orders.join(self.time_windows_df)
-        df = df.sort_values('tw_start')
-        df = df.drop(columns=['tw_start', 'tw_end'])
+        orders = orders.join(self.time_windows_df)
+        orders = orders.sort_values('tw_start')
+        orders = orders.drop(columns=['tw_start', 'tw_end'])
         # Note: In this function we distinguish factories form external depots
         factories = [node for node in self.nlm.get_factory_nodes() if not self._is_external_depot_node(node)]
         ext_depots = [node for node in self.nlm.get_factory_nodes() if self._is_external_depot_node(node)]
         inv_capacities = {node: self.factories_df.loc[self.nlm.get_location_from_node(node), 'inventory_capacity']
                           for node in factories + ext_depots}
-        total_demand = df.sum().sum()
+        total_demand = orders.sum().sum()
 
         # Initialize inventory with small values
-        init_inventory = {node: np.random.randint(0, 0.1 * total_demand // no_products, no_products)
+        init_inventory = {node: np.zeros(no_products)
                           for node in factories}
 
         # Add a proportion of earliest orders until desired factory_level is reached
-        for idx, row in df.iterrows():
+        for idx, row in orders.iterrows():
             chosen_factory = random.choice(factories)
             init_inventory[chosen_factory] += (row.to_numpy() * 0.8).astype('int64')
             if sum(inventory.sum() for factory, inventory in init_inventory.items()) > factory_level * total_demand:
@@ -200,15 +200,16 @@ class TestDataGenerator:
 
         # Add inventory for external depots
         for depot in ext_depots:
-            capacity = self.factories_df.loc[self.nlm.get_location_from_node(depot), 'inventory_capacity']
             # Linear decrease in initial inventory for products,
-            # where p_0 gets ext_depot_level * capacity and p_n gets 0.
-            init_inventory[depot] = [int((no_products - i)/no_products * ext_depot_level * inv_capacities[depot])
+            # where p_0 gets no_products times more than p_n,
+            # and s.t. total inventory == ext_depot_level * inv_capacities[depot]
+            init_inventory[depot] = [int(2 * ext_depot_level/(no_products + 1) *
+                                         (no_products - i)/no_products * inv_capacities[depot])
                                      for i in range(no_products)]
 
-        df = pd.DataFrame(init_inventory)
-        df.index = [f'p_{i}' for i in range(no_products)]
-        return df.transpose()
+        orders = pd.DataFrame(init_inventory)
+        orders.index = [f'p_{i}' for i in range(no_products)]
+        return orders.transpose()
 
     def get_factory_max_vessel_destination(self, vessels: List[str]) -> pd.DataFrame:
         no_vessels = len(vessels)
@@ -223,15 +224,15 @@ class TestDataGenerator:
         return df
 
     def get_factory_max_vessel_loading(self, quay_activity_level: float, time_periods: int,
-                                        time_period_length: int) -> pd.DataFrame:
+                                       time_period_length: int) -> pd.DataFrame:
         # Note: In this function we distinguish factories form external depots
         factories = [node for node in self.nlm.get_factory_nodes() if not self._is_external_depot_node(node)]
         ext_depots = [node for node in self.nlm.get_factory_nodes() if self._is_external_depot_node(node)]
 
-        # rm = raw material
+        # "rm" denotes raw material
         rm_loading_time = 12   # 12 hours
         rm_loading_periods = rm_loading_time // time_period_length
-        rm_loading_insert_count = int(time_periods * quay_activity_level / rm_loading_periods)
+        rm_loading_insert_count = math.ceil(time_periods * time_period_length * quay_activity_level / rm_loading_time)
 
         max_vessels_loading = {factory: [self.factories_df.loc[location, 'max_vessel_loading']] * time_periods
                                for factory, location in self.nlm.get_factory_items()
@@ -349,12 +350,12 @@ class TestDataGenerator:
         df = df.set_index('product')
         return df
 
-    def get_production_max_capacity(self, no_products: int) -> pd.DataFrame:
+    def get_production_max_capacity(self, no_products: int, time_period_length: int) -> pd.DataFrame:
         data = {'product': [f'p_{i}' for i in range(no_products)]}
         for factory, prod_lines in self.prod_lines_for_factory.items():
             if prod_lines:
-                prod_cap = self.factories_df.loc[self.nlm.get_location_from_node(factory), 'production_capacity']
-                data.update({line: [prod_cap] * no_products for line in prod_lines})
+                prod_cap_hour = self.factories_df.loc[self.nlm.get_location_from_node(factory), 'production_capacity']
+                data.update({line: [prod_cap_hour * time_period_length] * no_products for line in prod_lines})
         df = pd.DataFrame(data)
         df = df.set_index('product')
         return df
@@ -608,8 +609,8 @@ class TestDataGenerator:
         df = self.get_production_start_cost(no_products)
         df.to_excel(self.excel_writer, sheet_name="production_start_cost", startrow=1)
 
-    def write_production_max_capacity_to_file(self, no_products: int) -> None:
-        df = self.get_production_max_capacity(no_products)
+    def write_production_max_capacity_to_file(self, no_products: int, time_period_length: int) -> None:
+        df = self.get_production_max_capacity(no_products, time_period_length)
         df.to_excel(self.excel_writer, sheet_name="production_max_capacity", startrow=1)
 
     def write_production_lines_for_factory_to_file(self) -> None:
@@ -654,9 +655,9 @@ if __name__ == '__main__':
                                     radius_red=10000,
                                     radius_yellow=30000,
                                     share_bag_locations=0.25,
-                                    share_small_fjord_locations=0.25,
-                                    share_time_periods_availability=0.5,
-                                    small_fjord_radius=20000,
+                                    share_small_fjord_locations=0.05,
+                                    share_time_periods_vessel_availability=0.5,
+                                    small_fjord_radius=50000,
                                     min_wait_if_sick_hours=12,
                                     delivery_delay_unit_penalty=1000)
 

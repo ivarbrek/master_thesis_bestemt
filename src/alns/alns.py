@@ -10,6 +10,8 @@ from src.alns.solution import Solution, ProblemDataExtended
 from src.models.production_model import ProductionModel
 import src.util.plot as util
 from src.alns.production_problem_heuristic import ProductionProblemHeuristic, ProductionProblem
+import locale
+locale.setlocale(locale.LC_ALL, '')
 
 int_inf = 999999
 
@@ -94,13 +96,17 @@ class Alns:
         self.record_solution(self.current_sol)
 
         # Operator weights, scores and usage
+        noise_op = [True, False]
         self.weight_min_threshold = weight_min_threshold
         self.destroy_op_weight = {op: self.weight_min_threshold for op in destroy_op}
         self.repair_op_weight = {op: self.weight_min_threshold for op in repair_op}
+        self.noise_op_weight = {op: self.weight_min_threshold for op in noise_op}
         self.destroy_op_score = {op: 0 for op in destroy_op}
         self.repair_op_score = {op: 0 for op in repair_op}
+        self.noise_op_score = {op: 0 for op in noise_op}
         self.destroy_op_segment_usage = {op: 0 for op in destroy_op}
         self.repair_op_segment_usage = {op: 0 for op in repair_op}
+        self.noise_op_segment_usage = {op: 0 for op in noise_op}
         self.reaction_param = reaction_param
         self.score_params = {i: score_params[i] for i in range(len(score_params))}
 
@@ -172,7 +178,7 @@ class Alns:
             prod_feasible, infeasible_factory = sol.check_production_feasibility()
         return sol
 
-    def update_scores(self, destroy_op: str, repair_op: str, update_type: int) -> None:
+    def update_scores(self, destroy_op: str, repair_op: str, noise_op: bool, update_type: int) -> None:
         if update_type == -1:
             return
         elif update_type == -2:  # New global best routing, but not production feasible
@@ -184,6 +190,7 @@ class Alns:
             return
         self.destroy_op_score[destroy_op] += self.score_params[update_type]
         self.repair_op_score[repair_op] += self.score_params[update_type]
+        self.noise_op_score[noise_op] += self.score_params[update_type]
 
     def update_weights(self) -> None:
         # Update weights based on scores, "blank" scores and operator segment usage
@@ -209,30 +216,42 @@ class Alns:
             self.repair_op_score[op] = 0
             self.repair_op_segment_usage[op] = 0
 
+        # Noise
+        for op in self.noise_op_weight:
+            if self.noise_op_segment_usage:
+                self.noise_op_weight[op] = max(((1 - self.reaction_param) * self.noise_op_weight[op] +
+                                                self.reaction_param * self.noise_op_score[op] /
+                                                self.noise_op_segment_usage[op]),
+                                               self.weight_min_threshold)
+
         self.it_seg_count = 0
 
-    def choose_operators(self) -> Tuple[str, str]:
+    def choose_operators(self) -> Tuple[str, str, bool]:
         # Choose operators, probability of choosing an operator is based on current weights
-        destroy_operators = list(zip(*self.destroy_op_weight.items()))
-        destroy_op: str = np.random.choice(
-            np.array([op for op in destroy_operators[0]]),
-            p=(np.array([w for w in destroy_operators[1]]) / np.array(sum(destroy_operators[1]))))
+        destroy_weights_normalized = (np.fromiter(self.destroy_op_weight.values(), float) /
+                                      sum(self.destroy_op_weight.values()))
+        destroy_op = np.random.choice(list(self.destroy_op_weight.keys()), p=destroy_weights_normalized)
         self.destroy_op_segment_usage[destroy_op] += 1
 
-        repair_operators = list(zip(*self.repair_op_weight.items()))
-        repair_op: str = np.random.choice(
-            np.array([op for op in repair_operators[0]]),
-            p=(np.array([w for w in repair_operators[1]]) / np.array(sum(repair_operators[1]))))
-        self.repair_op_segment_usage[repair_op] += 1
-        print(destroy_op, repair_op)
-        return destroy_op, repair_op
+        noise_weights_normalized = (np.fromiter(self.noise_op_weight.values(), float) /
+                                    sum(self.noise_op_weight.values()))
+        noise_op = np.random.choice(list(self.noise_op_weight.keys()), p=noise_weights_normalized)
+        self.noise_op_segment_usage[noise_op] += 1
 
-    def generate_new_solution(self, destroy_op: str, repair_op: str) -> Solution:
+        repair_weights_normalized = (np.fromiter(self.repair_op_weight.values(), float) /
+                                     sum(self.repair_op_weight.values()))
+        repair_op = np.random.choice(list(self.repair_op_weight.keys()), p=repair_weights_normalized)
+        self.repair_op_segment_usage[repair_op] += 1
+
+        print(destroy_op, repair_op, 'noise' if noise_op else 'no noise')
+        return destroy_op, repair_op, noise_op
+
+    def generate_new_solution(self, destroy_op: str, repair_op: str, apply_noise: bool) -> Solution:
         # Generate new feasible solution x' based on given operators
         # Return x'
         candidate_sol = self.current_sol.copy()
         candidate_sol = self.destroy(destroy_op, candidate_sol)
-        candidate_sol = self.repair(repair_op, candidate_sol)
+        candidate_sol = self.repair(repair_op, candidate_sol, apply_noise)
         return candidate_sol
 
     def destroy(self, destroy_op: str, sol: Solution) -> Union[Solution, None]:
@@ -430,13 +449,13 @@ class Alns:
         sol.recompute_solution_variables()
         return sol
 
-    def repair(self, repair_op: str, sol: Solution) -> Union[None, Solution]:
+    def repair(self, repair_op: str, sol: Solution, apply_noise: bool) -> Union[None, Solution]:
         if repair_op == "r_greedy":
-            repaired_sol = self.repair_greedy(sol)
+            repaired_sol = self.repair_greedy(sol, apply_noise)
         elif repair_op == "r_2regret":
-            repaired_sol = self.repair_kregret(2, sol)
+            repaired_sol = self.repair_kregret(2, sol, apply_noise)
         elif repair_op == 'r_3regret':
-            repaired_sol = self.repair_kregret(3, sol)
+            repaired_sol = self.repair_kregret(3, sol, apply_noise)
         else:
             print("Repair operator does not exist")
             return None
@@ -448,24 +467,24 @@ class Alns:
         repaired_sol = self.adjust_sol_ppfc(repaired_sol, remove_num=self.remove_num_adjust)
         return repaired_sol
 
-    def repair_greedy(self, sol: Solution) -> Solution:
+    def repair_greedy(self, sol: Solution, apply_noise: bool = False) -> Solution:
         insertion_cand = sol.get_orders_not_served()
         insertions = [(node_id, vessel, idx, sol.get_insertion_utility(sol.prbl.nodes[node_id], vessel, idx,
-                                                                       self.noise_param))
+                                                                       apply_noise * self.noise_param))
                       for node_id in insertion_cand
                       for vessel in sol.prbl.vessels
                       for idx in range(1, len(sol.routes[vessel]) + 1)]
         insertions.sort(key=lambda tup: tup[3])  # sort by gain
 
         while len(insertion_cand) > 0:  # try all possible insertions
-            insert_node, vessel, idx, _ = insertions[-1]
-            if sol.check_insertion_feasibility(insert_node, vessel, idx):
+            insert_node_id, vessel, idx, _ = insertions[-1]
+            if sol.check_insertion_feasibility(insert_node_id, vessel, idx):
                 sol.insert_last_checked()
-                insertion_cand.remove(insert_node)
+                insertion_cand.remove(insert_node_id)
                 # recalculate profit gain and omit other insertions of node_id
-                insertions = [(node, vessel, idx, sol.get_insertion_utility(sol.prbl.nodes[insert_node], vessel, idx,
-                                                                            self.noise_param))
-                              for node, vessel, idx, utility in insertions if node != insert_node]
+                insertions = [(node_id, vessel, idx, sol.get_insertion_utility(sol.prbl.nodes[node_id], vessel, idx,
+                                                                               apply_noise * self.noise_param))
+                              for node_id, vessel, idx, utility in insertions if node_id != insert_node_id]
                 insertions.sort(key=lambda item: item[3])  # sort by gain
 
                 if self.verbose:
@@ -476,11 +495,11 @@ class Alns:
                 insertions.pop()
 
                 # Remove node_id from insertion candidate list if no insertions left for this node_id
-                if len([insert for insert in insertions if insert[0] == insert_node]) == 0:
-                    insertion_cand.remove(insert_node)
+                if len([insert for insert in insertions if insert[0] == insert_node_id]) == 0:
+                    insertion_cand.remove(insert_node_id)
         return sol
 
-    def repair_kregret(self, k: int, sol: Solution) -> Solution:
+    def repair_kregret(self, k: int, sol: Solution, apply_noise: bool = False) -> Solution:
         unrouted_orders = sol.get_orders_not_served()
         while unrouted_orders:
             # find the largest regret for each order and insert the largest regret.
@@ -489,7 +508,8 @@ class Alns:
 
             for order in unrouted_orders:
                 # Get all insertion utilities
-                insertions = [(idx, v, sol.get_insertion_utility(sol.prbl.nodes[order], v, idx, self.noise_param))
+                insertions = [(idx, v, sol.get_insertion_utility(sol.prbl.nodes[order], v, idx,
+                                                                 apply_noise * self.noise_param))
                               for v in sol.prbl.vessels for idx in range(1, len(sol.routes[v]) + 1)]
                 insertions.sort(key=lambda item: item[2])  # sort by gain
 
@@ -568,11 +588,11 @@ class Alns:
     def run_alns_iteration(self) -> None:
         # Choose a destroy heuristic and a repair heuristic based on adaptive weights wdm
         # for method d in the current segment of iterations m
-        d_op, r_op = self.choose_operators()
+        d_op, r_op, noise_op = self.choose_operators()
 
         # Generate a candidate solution x′ from the current solution x using the chosen destroy and repair heuristics
         candidate_sol: Solution
-        candidate_sol = self.generate_new_solution(destroy_op=d_op, repair_op=r_op)
+        candidate_sol = self.generate_new_solution(destroy_op=d_op, repair_op=r_op, apply_noise=noise_op)
 
         # if x′ is accepted by a simulated annealing–based acceptance criterion then set x = x′
         accept_solution, self.update_type, cost = self.accept_solution(candidate_sol)
@@ -589,7 +609,7 @@ class Alns:
             self.iter_same_solution += 1
 
         # Update scores πd of the destroy and repair heuristics - dependent on how good the solution is
-        self.update_scores(destroy_op=d_op, repair_op=r_op, update_type=self.update_type)
+        self.update_scores(destroy_op=d_op, repair_op=r_op, noise_op=noise_op,  update_type=self.update_type)
 
         # if IS iterations has passed since last weight update then
         # Update the weight wdm+1 for method d for the next segment m + 1 based on
@@ -644,7 +664,7 @@ def run_alns(prbl: ProblemDataExtended, num_alns_iterations: int, warm_start: bo
                 cooling_rate=0.995,
                 max_iter_same_solution=50,
                 max_iter_seg=40,
-                remove_percentage=0.4,
+                remove_percentage=0.2,
                 remove_num_percentage_adjust=0.1,
                 determinism_param=5,
                 noise_param=150,
@@ -666,7 +686,9 @@ def run_alns(prbl: ProblemDataExtended, num_alns_iterations: int, warm_start: bo
         print("\nRemove num:", alns.remove_num, "\n")
 
     _stat_solution_cost = []
-    _stat_operator_weights = defaultdict(list)
+    _stat_repair_weights = defaultdict(list)
+    _stat_destroy_weights = defaultdict(list)
+    _stat_noise_weights = defaultdict(list)
     t0 = time()
     for i in range(iterations):
         if verbose:
@@ -675,15 +697,17 @@ def run_alns(prbl: ProblemDataExtended, num_alns_iterations: int, warm_start: bo
 
         if verbose:
             alns.current_sol.print_routes()
-            print(f"Obj: {alns.current_sol_cost:n}   Not served: {alns.current_sol.get_orders_not_served()}")
+            print(f"Obj: {alns.current_sol_cost:,}   Not served: {alns.current_sol.get_orders_not_served()}")
             print("Slack factor:", round(alns.current_sol.ppfc_slack_factor, 2),
                   "  Infeasible strike:", alns.production_infeasibility_strike)
 
         _stat_solution_cost.append((i, alns.current_sol_cost))
         for op, score in alns.destroy_op_weight.items():
-            _stat_operator_weights[op].append(score)
+            _stat_destroy_weights[op].append(score)
         for op, score in alns.repair_op_weight.items():
-            _stat_operator_weights[op].append(score)
+            _stat_repair_weights[op].append(score)
+        for op, score in alns.noise_op_weight.items():
+            _stat_noise_weights[op].append(score)
         print()
 
     if warm_start:  # do not need to solve the production problem
@@ -691,7 +715,7 @@ def run_alns(prbl: ProblemDataExtended, num_alns_iterations: int, warm_start: bo
         return alns.best_sol.get_y_dict()
 
     alns.best_sol_production_cost = alns.production_model.get_production_cost(alns.best_sol, verbose=True,
-                                                                              time_limit=10)
+                                                                              time_limit=30)
 
     print()
     print(f"...ALNS terminating  ({round(time() - t0)}s)")
@@ -711,7 +735,9 @@ def run_alns(prbl: ProblemDataExtended, num_alns_iterations: int, warm_start: bo
         print(f"Repaired solution rejected {alns.ppfc_infeasible_count} times, because of PPFC infeasibility")
 
         util.plot_alns_history(_stat_solution_cost)
-        util.plot_operator_weights(_stat_operator_weights)
+        util.plot_operator_weights(_stat_destroy_weights)
+        util.plot_operator_weights(_stat_repair_weights)
+        util.plot_operator_weights(_stat_noise_weights)
 
 
 if __name__ == '__main__':
