@@ -5,7 +5,6 @@ import math
 import joblib
 import numpy as np
 import bisect
-import copy
 import random
 from src.read_problem_data import ProblemData
 from src.util.print import bcolors
@@ -144,7 +143,7 @@ class Solution:
                                                 for factory, visit_route_idxs in
                                                 self.factory_visits_route_index.items()}
 
-    def check_insertion_feasibility(self, node_id: str, vessel: str, idx: int) -> bool:
+    def check_insertion_feasibility(self, node_id: str, vessel: str, idx: int, noise_factor: float = 0.0) -> bool:
         node = self.prbl.nodes[node_id]
         idx = len(self.temp_routes[vessel]) if idx > len(self.temp_routes[vessel]) else idx
         # Checks that do NOT assume node is inserted in temp:
@@ -154,7 +153,7 @@ class Solution:
         if not self.check_no_products_feasibility(node, vessel, idx):
             return False
 
-        if not self.check_time_feasibility(node_id, vessel, idx):
+        if not self.check_time_feasibility(node_id, vessel, idx, noise_factor):
             return False
 
         # Checks that do assume that node is inserted in temp:
@@ -421,7 +420,7 @@ class Solution:
                 break  # stop propagation if no overlap between visit i and next arrivals
         return True
 
-    def check_time_feasibility(self, insert_node_id: str, vessel: str, idx: int) -> bool:
+    def check_time_feasibility(self, insert_node_id: str, vessel: str, idx: int, noise_factor: float = 0.0) -> bool:
         route = self.temp_routes[vessel]
         insert_node = self.prbl.nodes[insert_node_id]
         idx = len(route) + idx + 1 if idx < 0 else idx  # transform negative indexes
@@ -483,18 +482,19 @@ class Solution:
 
         # if an order is inserted at the end of the route, insert a new if possible factory destination
         if (idx == len(route) - 1 and not insert_node.is_factory
-                and not self.check_and_set_destination_factory(vessel)):
+                and not self.check_and_set_destination_factory(vessel, noise_factor)):
             return False
 
         return True
 
-    def check_and_set_destination_factory(self, vessel: str) -> bool:
+    def check_and_set_destination_factory(self, vessel: str, noise_factor: float = 0.0) -> bool:
         """Picks a destination factory for the route in a greedy manner"""
         route = self.temp_routes[vessel]
-        factory_destination_options = [(factory_node, self.get_insertion_utility(factory_node, vessel, len(route)))
+        factory_destination_options = [(factory_node, self.get_insertion_utility(factory_node, vessel, len(route),
+                                                                                 noise_factor))
                                        for factory_node in self.prbl.factory_nodes.values()]
         factory_destination_options.sort(key=lambda item: item[1], reverse=True)
-        # TODO: Don't be pure greedy her, but use determinism parameter
+
         # perform changes in a copy, to distinguish temp changes related to factory destination insertion checks from
         # those related to the original insertion
         copy_sol = self.copy()
