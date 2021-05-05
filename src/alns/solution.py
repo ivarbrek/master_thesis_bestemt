@@ -34,7 +34,8 @@ class ProblemDataExtended(ProblemData):
         self.precedence = precedence
         self._init_nodes()
         self._init_quay_capacities()
-        self.max_transport_time = max(self.transport_times.values())
+        self.max_transport_cost = {vessel: max(cost for (v, i, j), cost in self.transport_times.items() if v == vessel)
+                                   for vessel in self.vessels}
 
     def _init_nodes(self) -> None:
         f_nodes = self.factory_nodes[:]
@@ -780,7 +781,8 @@ class Solution:
         else:
             net_sail_change = transport_times[vessel, route[idx - 1], node.id]
         delivery_gain = self.prbl.external_delivery_penalties[node.id] if not node.is_factory else 0
-        noise = noise_factor * random.randrange(-self.prbl.max_transport_time, self.prbl.max_transport_time)
+        noise = noise_factor * random.randrange(-self.prbl.max_transport_cost[vessel],
+                                                self.prbl.max_transport_cost[vessel])
         return delivery_gain - net_sail_change * self.prbl.transport_unit_costs[vessel] + noise
 
     def get_removal_utility(self, vessel: str, idx: int) -> float:  # High utility -> good removal ("remove worst node")
