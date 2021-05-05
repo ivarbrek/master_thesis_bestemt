@@ -213,11 +213,10 @@ class TestDataGenerator:
 
     def get_factory_max_vessel_destination(self, vessels: List[str]) -> pd.DataFrame:
         no_vessels = len(vessels)
-        no_factories = len([factory for factory in self.nlm.get_factory_nodes()
-                            if not self._is_external_depot_node(factory)])
+        no_factories = len(self.nlm.get_factory_nodes())
+
         # no_vessels // no_factories + 1 for factories, 0 for external depots
-        data = [(node, (no_vessels // no_factories + 1) * (not self._is_external_depot_node(node)))
-                for node in self.nlm.get_factory_nodes()]
+        data = [(node, (no_vessels // no_factories + 1)) for node in self.nlm.get_factory_nodes()]
         df = pd.DataFrame(data)
         df.columns = ['factory', 'vessel_number']
         df = df.set_index('factory')
@@ -394,7 +393,7 @@ class TestDataGenerator:
         :param time_periods: number of time periods
         :return:
         """
-        factories = [node for node in self.nlm.get_factory_nodes() if not self._is_external_depot_node(node)]
+        factories = self.nlm.get_factory_nodes()
         data = []
         factory_assignments = {f: 0 for f in factories}
         max_vessels_destination_df = self.get_factory_max_vessel_destination(relevant_vessels)

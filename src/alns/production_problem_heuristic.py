@@ -20,6 +20,7 @@ class ProductionProblem:
                                                 for p1, p2 in itertools.permutations(group_list, 2)}
         self.demands: Dict[str, Dict[int, List[int]]]
         self.pickup_times: Dict[str, List[int]]
+        self.time_periods = len(self.base_problem.time_periods)
         if demand_dict:
             self.set_demands_and_pickup_times(demand_dict)
         self.init_inventory = {factory: [inventory
@@ -71,12 +72,17 @@ class ProductionProblemSolution:
         for t in self.prbl.pickup_times[self.factory]:
             inventory[t] = init_inventory - cumul_demand
             cumul_demand += np.array(self.prbl.demands[self.factory][t])
+        inventory[self.prbl.time_periods] = init_inventory - cumul_demand
         return inventory
 
     def demand_is_satisfied(self, t_demand: int) -> bool:
         # Demand is satisfied if inventory is larger than the demand in t_demand
         return all(demand_p <= inventory_p for inventory_p, demand_p in
                    zip(self.inventory[t_demand], self.prbl.demands[self.factory][t_demand]))
+
+    def demand_is_satisfied_for_product(self, t_demand: int, product: int) -> bool:
+        # Demand is satisfied if inventory is larger than the demand in t_demand for product
+        return self.prbl.demands[self.factory][t_demand][product] <= self.inventory[t_demand][product]
 
     def get_insertion_candidates(self, t_demand: int) -> List[Tuple[str, int, int, int]]:
         unmet_demand_product_idxs = [i for i, (inv, dem) in
@@ -93,6 +99,9 @@ class ProductionProblemSolution:
     def insertion_is_feasible(self, prod_line: str, t_insert: int, product: int, t_demand: int,
                               check_min_periods: bool = True) -> bool:
         if not self.activities[prod_line][t_insert] is None:
+            return False
+
+        if t_insert < 0 or t_insert >= self.prbl.time_periods:
             return False
 
         if not self.insertion_is_product_group_change_feasible(prod_line, t_insert, product):
@@ -160,13 +169,13 @@ class ProductionProblemSolution:
     def insert_min_production_periods(self, prod_line: str, t_insert: int, product: int, t_demand: int) -> None:
         next_t_demand = self._get_next_pickup_time(t_insert + 1)
 
-        # prioritize insertion before t_insert if demanded for product
-        if self.inventory[t_demand][product] < 0 < t_insert:
+        # prioritize insertion before t_insert if demand for product is nt yet satisfied
+        if not self.demand_is_satisfied_for_product(t_demand, product) and t_insert > 0:
             if self.insertion_is_feasible(prod_line, t_insert - 1, product, t_demand, check_min_periods=False):
                 self.insert_activity(prod_line, t_insert - 1, product, t_demand)
             elif self.insertion_is_feasible(prod_line, t_insert + 1, product, next_t_demand, check_min_periods=False):
                 self.insert_activity(prod_line, t_insert + 1, product, next_t_demand)
-        else: # else, insert after, as this gives lower inventory costs
+        else:  # else, insert after, as this gives lower inventory costs
             if self.insertion_is_feasible(prod_line, t_insert + 1, product, next_t_demand, check_min_periods=False):
                 self.insert_activity(prod_line, t_insert + 1, product, next_t_demand)
             elif self.insertion_is_feasible(prod_line, t_insert - 1, product, t_demand, check_min_periods=False):
@@ -175,7 +184,7 @@ class ProductionProblemSolution:
     def get_insertion_cost(self, prod_line: str, t_insert: int, product: int, t_demand: int) -> int:
         product_name = self.prbl.index_product_map[product]
         t_before = max(0, t_insert - 1)
-        t_after = min(len(self.activities[prod_line]), t_insert + 1)
+        t_after = min(self.prbl.time_periods, t_insert + 1)
         new_serie = self.activities[prod_line][t_before] != product and self.activities[prod_line][t_after] != product
 
         production_start_cost = (new_serie * self.prbl.base_problem.production_start_costs[self.factory, product_name])
@@ -218,8 +227,8 @@ class ProductionProblemSolution:
     def _get_next_pickup_time(self, t: int) -> int:
         """Returns the next time from t (and including t) that is a pickup time period"""
         pickup_t_list = list(self.inventory.keys())
-        idx = min(bisect.bisect(pickup_t_list, t), len(pickup_t_list) - 1)
-        return pickup_t_list[idx]
+        idx = min(bisect.bisect_left(pickup_t_list, t), len(pickup_t_list) - 1)
+        return pickup_t_list[idx + 1]
 
     def _get_activity_before_and_after(self, prod_line: str, t_insert: int) -> Tuple[Any, Any]:
         activity_before = self.activities[prod_line][t_insert - 1] if t_insert > 0 else 'stop'
@@ -277,40 +286,41 @@ class ProductionProblemHeuristic:
 
 
 def hardcode_demand_dict(prbl: ProblemData) -> Dict[Tuple[str, str, int], int]:
-    # y_locks = [
-    #     ('f_1', 'o_6', 4),
-    #     ('f_1', 'o_7', 4),
-    #     ('f_1', 'o_8', 4),
-    #     ('f_1', 'o_10', 4),
-    #     ('f_1', 'o_11', 4),
-    #
-    #     ('f_1', 'o_16', 8),
-    #     ('f_1', 'o_13', 8),
-    #     ('f_1', 'o_12', 8),
-    #
-    #     ('f_1', 'o_4', 10),
-    #     ('f_1', 'o_1', 10)
+    # orders_demand = [
+    #     ('f_0', 'o_1', 45),
+    #     ('f_0', 'o_2', 45),
+    #     ('f_0', 'o_3', 45),
+    #     ('f_0', 'o_4', 45),
+    #     ('f_0', 'o_5', 45),
+    #     ('f_0', 'o_6', 45),
+    #     ('f_0', 'o_7', 45),
+    #     ('f_0', 'o_8', 45),
+    #     ('f_0', 'o_9', 45),
+    #     ('f_0', 'o_10', 60),
+    #     ('f_0', 'o_11', 60),
+    #     ('f_0', 'o_12', 60),
+    #     ('f_0', 'o_13', 60),
+    #     ('f_0', 'o_14', 60),
+    #     ('f_0', 'o_15', 60),
+    #     ('f_0', 'o_16', 60),
+    #     ('f_0', 'o_17', 60),
+    #     ('f_0', 'o_18', 60),
+    #     ('f_0', 'o_19', 60),
     # ]
     orders_demand = [
-        ('f_0', 'o_1', 45),
-        ('f_0', 'o_2', 45),
-        ('f_0', 'o_3', 45),
-        ('f_0', 'o_4', 45),
-        ('f_0', 'o_5', 45),
-        ('f_0', 'o_6', 45),
-        ('f_0', 'o_7', 45),
-        ('f_0', 'o_8', 45),
-        ('f_0', 'o_9', 45),
-        ('f_0', 'o_10', 60),
-        ('f_0', 'o_11', 60),
-        ('f_0', 'o_12', 60),
-        ('f_0', 'o_13', 60),
-        ('f_0', 'o_14', 60),
-        ('f_0', 'o_15', 60),
-        ('f_0', 'o_16', 60),
-        ('f_0', 'o_17', 60),
-        ('f_0', 'o_18', 60),
-        ('f_0', 'o_19', 60),
+
+        ('f_0', 'o_23', 4),
+        ('f_0', 'o_20', 4),
+
+        ('f_0', 'o_7', 10),
+        ('f_0', 'o_5', 10),
+
+        ('f_1', 'o_10', 11),
+        ('f_1', 'o_12', 11),
+        ('f_1', 'o_6', 11),
+        ('f_1', 'o_11', 11),
+
+        ('f_1', 'o_15', 54),
     ]
 
     demands: Dict[Tuple[str, str, int], int] = {(i, p, t): 0 for i in prbl.factory_nodes
@@ -329,16 +339,17 @@ if __name__ == '__main__':
     problem_data_ext = ProblemDataExtended(file_path)
     demands = hardcode_demand_dict(problem_data_ext)
     production_problem = ProductionProblem(problem_data_ext, demands)
-    print(production_problem.init_inventory)
-    print(production_problem.demands)
-    # pprint(production_problem.unmet_demands)
 
-    solution = ProductionProblemSolution(production_problem, 'f_0')
+    total_cost = 0
+    for factory in ['f_0', 'f_1', 'f_2']:
+        solution = ProductionProblemSolution(production_problem, factory)
 
-    t0 = time()
-    print(ProductionProblemHeuristic.construct_greedy(solution))
-    print(round(time() - t0, 8), 's')
-    solution.print()
-    print(solution.get_cost())
-
+        t0 = time()
+        print(ProductionProblemHeuristic.construct_greedy(solution))
+        print(round(time() - t0, 8), 's')
+        solution.print()
+        cost = solution.get_cost()
+        print(cost)
+        total_cost += cost
+    print('Total:', total_cost)
 

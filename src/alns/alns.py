@@ -667,7 +667,7 @@ def run_alns(prbl: ProblemDataExtended, num_alns_iterations: int, warm_start: bo
                 remove_percentage=0.2,
                 remove_num_percentage_adjust=0.1,
                 determinism_param=5,
-                noise_param=150,
+                noise_param=0.25,
                 relatedness_precedence={('green', 'yellow'): 6, ('green', 'red'): 10, ('yellow', 'red'): 4},
                 related_removal_weight_param={'relatedness_location_time': [1, 0.9],
                                               'relatedness_location_precedence': [0.25, 1]},

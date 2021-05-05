@@ -5,7 +5,6 @@ import math
 import joblib
 import numpy as np
 import bisect
-import copy
 import random
 from src.read_problem_data import ProblemData
 from src.util.print import bcolors
@@ -35,7 +34,8 @@ class ProblemDataExtended(ProblemData):
         self.precedence = precedence
         self._init_nodes()
         self._init_quay_capacities()
-        self.max_transport_time = max(self.transport_times.values())
+        self.max_transport_cost = {vessel: max(cost for (v, i, j), cost in self.transport_times.items() if v == vessel)
+                                   for vessel in self.vessels}
 
     def _init_nodes(self) -> None:
         f_nodes = self.factory_nodes[:]
@@ -144,7 +144,7 @@ class Solution:
                                                 for factory, visit_route_idxs in
                                                 self.factory_visits_route_index.items()}
 
-    def check_insertion_feasibility(self, node_id: str, vessel: str, idx: int) -> bool:
+    def check_insertion_feasibility(self, node_id: str, vessel: str, idx: int, noise_factor: float = 0.0) -> bool:
         node = self.prbl.nodes[node_id]
         idx = len(self.temp_routes[vessel]) if idx > len(self.temp_routes[vessel]) else idx
         # Checks that do NOT assume node is inserted in temp:
@@ -157,7 +157,7 @@ class Solution:
         if not self.check_no_products_feasibility(node, vessel, idx):
             return False
 
-        if not self.check_time_feasibility(node_id, vessel, idx):
+        if not self.check_time_feasibility(node_id, vessel, idx, noise_factor):
             return False
 
         # Checks that do assume that node is inserted in temp:
@@ -424,7 +424,7 @@ class Solution:
                 break  # stop propagation if no overlap between visit i and next arrivals
         return True
 
-    def check_time_feasibility(self, insert_node_id: str, vessel: str, idx: int) -> bool:
+    def check_time_feasibility(self, insert_node_id: str, vessel: str, idx: int, noise_factor: float = 0.0) -> bool:
         route = self.temp_routes[vessel]
         insert_node = self.prbl.nodes[insert_node_id]
         idx = len(route) + idx + 1 if idx < 0 else idx  # transform negative indexes
@@ -486,18 +486,19 @@ class Solution:
 
         # if an order is inserted at the end of the route, insert a new if possible factory destination
         if (idx == len(route) - 1 and not insert_node.is_factory
-                and not self.check_and_set_destination_factory(vessel)):
+                and not self.check_and_set_destination_factory(vessel, noise_factor)):
             return False
 
         return True
 
-    def check_and_set_destination_factory(self, vessel: str) -> bool:
+    def check_and_set_destination_factory(self, vessel: str, noise_factor: float = 0.0) -> bool:
         """Picks a destination factory for the route in a greedy manner"""
         route = self.temp_routes[vessel]
-        factory_destination_options = [(factory_node, self.get_insertion_utility(factory_node, vessel, len(route)))
+        factory_destination_options = [(factory_node, self.get_insertion_utility(factory_node, vessel, len(route),
+                                                                                 noise_factor))
                                        for factory_node in self.prbl.factory_nodes.values()]
         factory_destination_options.sort(key=lambda item: item[1], reverse=True)
-        # TODO: Don't be pure greedy her, but use determinism parameter
+
         # perform changes in a copy, to distinguish temp changes related to factory destination insertion checks from
         # those related to the original insertion
         copy_sol = self.copy()
@@ -582,13 +583,15 @@ class Solution:
                 production_capacity_max = max(
                     [self.prbl.production_max_capacities[l, self.prbl.products[p]] for l in production_lines] + [0])
                 for k in range(np.shape(production_requirement_cum)[0]):
-                    try:
-                        activity_requirement_cum[k][p] = max(
-                            [0, np.ceil((production_requirement_cum[k, p] - initial_inventory) / production_capacity_max)])
-                    except ZeroDivisionError:  # if zero production capacity for p
+                    if production_capacity_max > 0:
+                        activity_requirement = np.ceil((production_requirement_cum[k, p] - initial_inventory) /
+                                                       production_capacity_max)
+                        activity_requirement_cum[k][p] = max(0, activity_requirement)
+                    else:
                         if production_requirement_cum[k, p] > initial_inventory:
                             return False, factory_node_id
                         activity_requirement_cum[k][p] = 0
+
             for k in range(len(activity_requirement_cum) - 1, 0, -1):
                 production_time_periods = len(production_lines) * sum([self.prbl.production_stops[factory_node_id, t]
                                                                        for t in range(latest_loading_times[k - 1],
@@ -783,7 +786,8 @@ class Solution:
         else:
             net_sail_change = transport_times[vessel, route[idx - 1], node.id]
         delivery_gain = self.prbl.external_delivery_penalties[node.id] if not node.is_factory else 0
-        noise = noise_factor * random.randrange(-self.prbl.max_transport_time, self.prbl.max_transport_time)
+        noise = noise_factor * random.randrange(-self.prbl.max_transport_cost[vessel],
+                                                self.prbl.max_transport_cost[vessel])
         return delivery_gain - net_sail_change * self.prbl.transport_unit_costs[vessel] + noise
 
     def get_removal_utility(self, vessel: str, idx: int) -> float:  # High utility -> good removal ("remove worst node")
