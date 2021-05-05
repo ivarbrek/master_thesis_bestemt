@@ -144,7 +144,8 @@ class Solution:
                                                 for factory, visit_route_idxs in
                                                 self.factory_visits_route_index.items()}
 
-    def check_insertion_feasibility(self, node_id: str, vessel: str, idx: int, noise_factor: float = 0.0) -> bool:
+    def check_insertion_feasibility(self, node_id: str, vessel: str, idx: int,
+                                    noise_factor: float = 0.0, ppfc: bool = False) -> bool:
         node = self.prbl.nodes[node_id]
         idx = len(self.temp_routes[vessel]) if idx > len(self.temp_routes[vessel]) else idx
         # Checks that do NOT assume node is inserted in temp:
@@ -163,8 +164,8 @@ class Solution:
                 print(f"check_final_factory_destination_feasibility failed for {vessel}, {node.id} inserted at {idx}")
             return False
 
-        # if not self.check_production_feasibility(vessel, idx):
-        #     return False
+        if ppfc and not self.check_production_feasibility(vessel, idx):
+            return False
 
         return True
 
