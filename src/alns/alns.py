@@ -620,11 +620,9 @@ class Alns:
         self.it_seg_count += 1
 
 
-if __name__ == '__main__':
-    precedence: bool = True
-
-    # prbl = ProblemDataExtended('../../data/input_data/large_testcase.xlsx', precedence=precedence)
-    prbl = ProblemDataExtended('../../data/testoutputfile.xlsx', precedence=precedence)
+def run_alns(prbl: ProblemDataExtended, num_alns_iterations: int, warm_start: bool = False, verbose: bool = True) -> \
+        Union[Dict[Tuple[str, str, int], int], None]:
+    precedence = prbl.precedence
     destroy_op = ['d_random',
                   'd_worst',
                   'd_voyage_random',
@@ -659,26 +657,27 @@ if __name__ == '__main__':
                 verbose=False
                 )
 
-    iterations = 1000
+    iterations = num_alns_iterations
 
-    print("Route after initialization")
-    alns.current_sol.print_routes()
-    print(f"Obj: {alns.current_sol_cost:n}   Not served: {alns.current_sol.get_orders_not_served()}")
-
-    print("\nRemove num:", alns.remove_num, "\n")
-
+    if verbose:
+        print("Route after initialization")
+        alns.current_sol.print_routes()
+        print(f"Obj: {alns.current_sol_cost:n}   Not served: {alns.current_sol.get_orders_not_served()}")
+        print("\nRemove num:", alns.remove_num, "\n")
 
     _stat_solution_cost = []
     _stat_operator_weights = defaultdict(list)
     t0 = time()
     for i in range(iterations):
-        print("Iteration", i)
+        if verbose:
+            print("Iteration", i)
         alns.run_alns_iteration()
 
-        alns.current_sol.print_routes()
-        print(f"Obj: {alns.current_sol_cost:n}   Not served: {alns.current_sol.get_orders_not_served()}")
-        print("Slack factor:", round(alns.current_sol.ppfc_slack_factor, 2),
-              "  Infeasible strike:", alns.production_infeasibility_strike)
+        if verbose:
+            alns.current_sol.print_routes()
+            print(f"Obj: {alns.current_sol_cost:n}   Not served: {alns.current_sol.get_orders_not_served()}")
+            print("Slack factor:", round(alns.current_sol.ppfc_slack_factor, 2),
+                  "  Infeasible strike:", alns.production_infeasibility_strike)
 
         _stat_solution_cost.append((i, alns.current_sol_cost))
         for op, score in alns.destroy_op_weight.items():
@@ -687,23 +686,39 @@ if __name__ == '__main__':
             _stat_operator_weights[op].append(score)
         print()
 
+    if warm_start:  # do not need to solve the production problem
+        alns.best_sol.print_routes()
+        return alns.best_sol.get_y_dict()
+
     alns.best_sol_production_cost = alns.production_model.get_production_cost(alns.best_sol, verbose=True,
                                                                               time_limit=10)
 
     print()
     print(f"...ALNS terminating  ({round(time() - t0)}s)")
     alns.best_sol.print_routes()
-    print("Not served:", alns.best_sol.get_orders_not_served())
-    alns.production_model.print_solution()
 
-    print("Routing obj:", alns.best_sol_cost, "Prod obj:", round(alns.best_sol_production_cost, 1),
-          "Total:", alns.best_sol_cost + round(alns.best_sol_production_cost, 1))
+    if verbose:
+        print("Not served:", alns.best_sol.get_orders_not_served())
+        alns.production_model.print_solution()
 
-    print(f"Best solution updated {alns.new_best_solution_feasible_production_count} times")
-    print(f"Candidate to become best solution rejected {alns.new_best_solution_infeasible_production_count} times, "
-          f"because of production infeasibility")
-    print(f"{len(alns.previous_solutions)} different solutions accepted")
-    print(f"Repaired solution rejected {alns.ppfc_infeasible_count} times, because of PPFC infeasibility")
+        print("Routing obj:", alns.best_sol_cost, "Prod obj:", round(alns.best_sol_production_cost, 1),
+              "Total:", alns.best_sol_cost + round(alns.best_sol_production_cost, 1))
 
-    util.plot_alns_history(_stat_solution_cost)
-    util.plot_operator_weights(_stat_operator_weights)
+        print(f"Best solution updated {alns.new_best_solution_feasible_production_count} times")
+        print(f"Candidate to become best solution rejected {alns.new_best_solution_infeasible_production_count} times, "
+              f"because of production infeasibility")
+        print(f"{len(alns.previous_solutions)} different solutions accepted")
+        print(f"Repaired solution rejected {alns.ppfc_infeasible_count} times, because of PPFC infeasibility")
+
+        util.plot_alns_history(_stat_solution_cost)
+        util.plot_operator_weights(_stat_operator_weights)
+
+
+if __name__ == '__main__':
+    precedence: bool = True
+    num_alns_iterations = 100
+
+    # prbl = ProblemDataExtended('../../data/input_data/large_testcase.xlsx', precedence=precedence)
+    prbl = ProblemDataExtended('../../data/input_data/testfile.xlsx', precedence=precedence)
+
+    run_alns(prbl, num_alns_iterations)

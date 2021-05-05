@@ -148,6 +148,9 @@ class Solution:
         node = self.prbl.nodes[node_id]
         idx = len(self.temp_routes[vessel]) if idx > len(self.temp_routes[vessel]) else idx
         # Checks that do NOT assume node is inserted in temp:
+        if not self.check_node_for_vessel_feasibility(node, vessel):
+            return False
+
         if not self.check_load_feasibility(node, vessel, idx):
             return False
 
@@ -538,8 +541,10 @@ class Solution:
         combined_demanded_products = np.logical_or(voyage_demanded_products, insert_node_demanded_products)
         return sum(combined_demanded_products) <= self.prbl.vessel_nprod_capacities[vessel]
 
-    def check_production_feasibility(self, vessel: str = None, idx: int = None) -> Tuple[bool, str]:
+    def check_node_for_vessel_feasibility(self, insert_node: Node, vessel: str) -> bool:
+        return self.prbl.nodes_for_vessels[(vessel, insert_node.id)] == 1
 
+    def check_production_feasibility(self, vessel: str = None, idx: int = None) -> Tuple[bool, str]:
         factories_to_check: List[str] = []
         if vessel and idx:
             for f in self.prbl.factory_nodes.keys():
@@ -932,6 +937,20 @@ class Solution:
                             if not self.prbl.nodes[o].is_factory)
         unserved_orders = list(set(self.prbl.order_nodes) - served_orders)
         return unserved_orders
+
+    def get_y_dict(self) -> Dict[Tuple[str, str, int], int]:
+        y_init_dict: Dict[Tuple[str, str, int], int] = {}
+        for v in self.prbl.vessels:
+            for i in self.prbl.nodes:
+                for t in self.prbl.time_periods:
+                    y_init_dict[(v, i, t)] = 0
+
+        for v in self.prbl.vessels:
+            route = self.routes[v]
+            for idx in range(len(route)):
+                y_init_dict[(v, route[idx], self.l[v][idx])] = 1
+
+        return y_init_dict
 
     def get_solution_hash(self) -> str:
         relevant_solution_parts = [self.routes, self.factory_visits]

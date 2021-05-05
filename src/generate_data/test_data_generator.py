@@ -635,26 +635,28 @@ class TestDataGenerator:
 
 if __name__ == '__main__':
     tdg = TestDataGenerator()
-    tdg.write_test_instance_to_file(out_filepath="../../data/testoutputfile.xlsx",
-                                    vessel_names=["Ripnes", "Vågsund", "Pirholm"],
-                                    factory_locations=["2022", "482"],
-                                    no_orders=12,
-                                    no_products=8,
-                                    no_product_groups=3,
+    tdg.write_test_instance_to_file(out_filepath="../../data/input_data/test03.xlsx",
+                                    # Input parameters varying:
+                                    vessel_names=["Ripnes", "Vågsund", "Nyksund"],
+                                    factory_locations=["2022", "482", "2016"],  # Biomar Myre, Biomar Karmøy
+                                    no_orders=30,
+                                    no_products=5,
+                                    no_product_groups=1,
                                     factory_level=0.3,
                                     ext_depot_level=0.1,
+                                    time_periods=int(336 / 2),  # 14 days = 336 hours
+                                    time_period_length=2,
+                                    # Input parameters kept constant:
                                     quay_activity_level=0.1,
                                     orders_from_company=None,
-                                    time_periods=100,
-                                    time_period_length=2,
                                     hours_production_stop=12,
-                                    share_red_nodes=0.2,
-                                    radius_red=50000,
-                                    radius_yellow=300000,
+                                    share_red_nodes=0.1,
+                                    radius_red=10000,
+                                    radius_yellow=30000,
                                     share_bag_locations=0.25,
                                     share_small_fjord_locations=0.25,
                                     share_time_periods_availability=0.5,
-                                    small_fjord_radius=50000,
+                                    small_fjord_radius=20000,
                                     min_wait_if_sick_hours=12,
                                     delivery_delay_unit_penalty=1000)
 

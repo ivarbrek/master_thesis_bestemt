@@ -1,9 +1,14 @@
 import pyomo.environ as pyo
-from typing import Dict, List
+from typing import Dict, List, Tuple
 from time import time
 from pyomo.core import Constraint  # TODO: Remove this and use pyo.Constraint.Feasible/Skip
 from tabulate import tabulate
+from pyomo.util.infeasible import log_infeasible_constraints
+
+from src.alns.solution import ProblemDataExtended
 from src.read_problem_data import ProblemData
+import src.alns.alns
+
 
 # TODO IN THIS FILE
 # ----------------------------------------------------------------------------------------------------------------------------
@@ -14,6 +19,7 @@ class FfprpModel:
     def __init__(self,
                  prbl: ProblemData,
                  extended_model: bool = False,
+                 y_init_dict: Dict[Tuple[str, str, int], int] = None,
                  ) -> None:
 
         # GENERAL MODEL SETUP
@@ -219,8 +225,6 @@ class FfprpModel:
         self.m.external_delivery_penalties = pyo.Param(self.m.ORDER_NODES,
                                                        initialize=prbl.external_delivery_penalties)
 
-        self.m.WAIT_EDGES_FOR_VESSEL_TRIP.pprint()
-        print(prbl.min_wait_if_sick)
         self.m.min_wait_if_sick = pyo.Param(self.m.WAIT_EDGES_FOR_VESSEL_TRIP,
                                             initialize=prbl.min_wait_if_sick)
 
@@ -260,10 +264,12 @@ class FfprpModel:
                            domain=pyo.Boolean,
                            initialize=0)
 
+        def y_init(m, v, i, t):
+            return y_init_dict[(v, i, t)] if y_init_dict is not None else 0
         self.m.y = pyo.Var(self.m.NODES_FOR_VESSELS_TUP,
                            self.m.TIME_PERIODS,
                            domain=pyo.Boolean,
-                           initialize=0)
+                           initialize=y_init)
 
         self.m.z = pyo.Var(self.m.ORDER_NODES_RELEVANT_NODES_FOR_VESSELS_TRIP,
                            self.m.TIME_PERIODS,
@@ -366,6 +372,13 @@ class FfprpModel:
 
         ################################################################################################################
         # CONSTRAINTS ##################################################################################################
+
+        # def constr_test_alns_solution_feasible(model, v, i, t):
+        #     return model.y[v, i, t] == y_init_dict[v, i, t]
+        # self.m.constr_test = pyo.Constraint(self.m.NODES_FOR_VESSELS_TUP,
+        #                                     self.m.TIME_PERIODS,
+        #                                     rule=constr_test_alns_solution_feasible,
+        #                                     name="test_constraint")
 
         # def constr_max_one_activity(model, v, t):
         #     relevant_nodes = {n for (vessel, n) in model.NODES_FOR_VESSELS_TUP if vessel == v}
@@ -575,10 +588,11 @@ class FfprpModel:
                 return Constraint.Feasible
             return (model.s[i, p, t] == model.s[i, p, (t - 1)] +
                     sum(model.production_max_capacities[l, p] * model.g[l, p, (t - 1)]
-                        for (ii, l) in model.PRODUCTION_LINES_FOR_FACTORIES_TUP if ii == i) -
+                        for (ii, l) in model.PRODUCTION_LINES_FOR_FACTORIES_TUP if ii == i) +
                     sum(model.demands[i, j, p] * model.z[v, i, j, t]
                         for v, i2, j in model.ORDER_NODES_RELEVANT_NODES_FOR_VESSELS_TRIP
                         if i2 == i))
+
         # sum(model.q[l, p, t - 1] for (ii, l) in model.PRODUCTION_LINES_FOR_FACTORIES_TUP if ii == i) +
 
         self.m.constr_inventory_balance = pyo.Constraint(self.m.FACTORY_NODES,
@@ -729,16 +743,20 @@ class FfprpModel:
 
         print("Done setting constraints!")
 
-    def solve(self, verbose: bool = True, time_limit: int = None) -> None:
+    def solve(self, verbose: bool = True, time_limit: int = None, warm_start: bool = False) -> None:
         print("Solver running...")
         if time_limit:
             self.solver_factory.options['TimeLimit'] = time_limit  # time limit in seconds
         t = time()
-        self.results = self.solver_factory.solve(self.m,
-                                                 tee=verbose)  # logfile=f'../../log_files/console_output_{log_name}.log'
-        if self.results.solver.termination_condition != pyo.TerminationCondition.optimal:
-            print("Not optimal termination condition: ", self.results.solver.termination_condition)
-        print("Solve time: ", round(time() - t, 1))
+        try:
+            self.results = self.solver_factory.solve(self.m,
+                                                     tee=verbose) #, warmstart=True)  # logfile=f'../../log_files/console_output_{log_name}.log'
+            if self.results.solver.termination_condition != pyo.TerminationCondition.optimal:
+                print("Not optimal termination condition: ", self.results.solver.termination_condition)
+                # log_infeasible_constraints(self.m, log_variables=True, log_expression=True)
+            print("Solve time: ", round(time() - t, 1))
+        except ValueError:
+            print(f"No solution found within time limit of {time_limit} seconds")
 
     def print_result(self):
 
@@ -780,7 +798,8 @@ class FfprpModel:
                     for l in self.m.PRODUCTION_LINES:
                         for p in self.m.PRODUCTS:
                             if pyo.value(self.m.g[l, p, t]) >= 0.5:
-                                print("Production line", l, "produces", pyo.value(self.m.production_max_capacities[l, p]), "tons of product",
+                                print("Production line", l, "produces",
+                                      pyo.value(self.m.production_max_capacities[l, p]), "tons of product",
                                       p,
                                       "in time period", t)
                                 production = True
@@ -887,7 +906,7 @@ class FfprpModel:
 
             # PRINTING
             print()
-            print_factory_production()
+            # print_factory_production()
             # print_factory_inventory()
             # print_vessel_routing()
             print_order_delivery_and_pickup()
@@ -896,7 +915,7 @@ class FfprpModel:
             # print_vessel_load()
             print_orders_not_delivered()
             print_production_starts()
-            print_production_happens()
+            # print_production_happens()
             print_final_inventory()
             # print_available_production_lines()
             print_time_window_violations()
@@ -979,7 +998,8 @@ class FfprpModel:
                     for t in self.m.TIME_PERIODS:
                         relevant_production_lines = {l for (ii, l) in self.m.PRODUCTION_LINES_FOR_FACTORIES_TUP if
                                                      ii == i}
-                        production = [round(sum(self.m.g[l, p, t]() * self.m.production_max_capacities[l, p] for l in relevant_production_lines))
+                        production = [round(sum(self.m.g[l, p, t]() * self.m.production_max_capacities[l, p] for l in
+                                                relevant_production_lines))
                                       for p in sorted(self.m.PRODUCTS)]
                         inventory = [round(self.m.s[i, p, t]()) for p in sorted(self.m.PRODUCTS)]
                         if sum(production) > 0.5:
@@ -1011,8 +1031,9 @@ class FfprpModel:
                         row = [p, "prod"]
                         for t in self.m.TIME_PERIODS:
                             if sum(self.m.g[l, p, t]() for l in relevant_production_lines) > 0.5:
-                                row.append(round(sum(self.m.g[l, p, t]() * self.m.production_max_capacities[l, p] for l in
-                                                     relevant_production_lines)))  # + " [" + str(self.m.s[i, p, t]()) + "]")
+                                row.append(
+                                    round(sum(self.m.g[l, p, t]() * self.m.production_max_capacities[l, p] for l in
+                                              relevant_production_lines)))  # + " [" + str(self.m.s[i, p, t]()) + "]")
                             else:
                                 row.append(" ")
                         table.append(row)
@@ -1029,9 +1050,9 @@ class FfprpModel:
                     print(tabulate(table, headers=["product", "prod/inv"] + list(self.m.TIME_PERIODS)))
                     print()
 
-            print_routing(include_loads=False)
+            # print_routing(include_loads=False)
             # print_vessel_load()
-            print_production_and_inventory()
+            # print_production_and_inventory()
             print_production_simple()
             print_routes_simple()
 
@@ -1087,10 +1108,30 @@ if __name__ == '__main__':
     # problem_data = ProblemData('../../data/input_data/large_testcase.xlsx')
     # problem_data = ProblemData('../../data/input_data/larger_testcase.xlsx')
     # problem_data = ProblemData('../../data/input_data/larger_testcase_4vessels.xlsx')
-    problem_data = ProblemData('../../data/testoutputfile.xlsx')
 
+    # PARAMETERS TO CHANGE ###
+    file_path = '../../data/input_data/test03.xlsx'
+    partial_warm_start = True
+    num_alns_iterations = 10  # only used if partial_warm_start = True
     extensions = False  # extensions _not_ supported in generated test files
+
+    # PARAMETERS NOT TO CHANGE ###
+    problem_data = ProblemData(file_path)
     problem_data.soft_tw = extensions
-    model = FfprpModel(problem_data, extended_model=extensions)
-    model.solve(time_limit=40)
+
+    y_init_dict = None
+    if partial_warm_start:
+        problem_data_ext = ProblemDataExtended(file_path)
+        problem_data_ext.soft_tw = extensions
+        t = time()
+        y_init_dict = src.alns.alns.run_alns(prbl=problem_data_ext, num_alns_iterations=num_alns_iterations,
+                                             warm_start=partial_warm_start, verbose=False)
+        print(f"ALNS warmup time {round(time() - t, 1)}")
+
+    model = FfprpModel(problem_data, extended_model=extensions, y_init_dict=y_init_dict)
+    for (v, i) in model.m.NODES_FOR_VESSELS_TUP:
+        for t in model.m.TIME_PERIODS:
+            if y_init_dict[v, i, t] > 0.5:
+                print(f"y[{v},{i},{t}]: {y_init_dict[v, i, t]}")
+    model.solve(time_limit=90)
     model.print_result()
