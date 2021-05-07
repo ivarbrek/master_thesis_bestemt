@@ -360,9 +360,12 @@ class ProblemData:
                 for factory in self.factory_max_vessels_loading_df.columns}
 
     def get_external_delivery_penalties_dict(self) -> Dict[str, int]:
-        return {order: (int(self.get_key_value("external_delivery_unit_penalty")) *
-                        sum(self.demands_df.loc[order, product] for product in self.demands_df.columns))
+        return {order: 2 * int(max(self.get_transport_times_per_vessel_dict().values())
+                               * max(self.get_transport_costs_dict().values()))
                 for order in self.order_nodes}
+        # return {order: (int(self.get_key_value("external_delivery_unit_penalty")) *
+        #                 sum(self.demands_df.loc[order, product] for product in self.demands_df.columns))
+        #         for order in self.order_nodes}
 
     def get_factory_max_vessels_destination_dict(self) -> Dict[str, int]:
         return {factory: int(self.factory_max_vessel_destination_df.loc[factory])

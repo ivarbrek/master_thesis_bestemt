@@ -128,7 +128,7 @@ class TestDataGenerator:
         self.write_transport_costs_to_file(relevant_vessels=vessels)
         self.write_loading_times_to_file(relevant_vessels=vessels, orders=orders,
                                          time_period_length=time_period_length)
-        self.write_time_windows_to_file(time_periods, tw_length=20, earliest_tw_start=5)
+        self.write_time_windows_to_file(time_periods, tw_length=120//time_period_length, earliest_tw_start=5)
         self.write_factory_max_vessel_destination_to_file(vessels)
         self.write_factory_max_vessel_loading_to_file(quay_activity_level, time_periods, time_period_length)
         self.write_initial_inventory_to_file(factory_level, ext_depot_level, orders)
@@ -635,29 +635,29 @@ class TestDataGenerator:
 
 if __name__ == '__main__':
     tdg = TestDataGenerator()
-    tdg.write_test_instance_to_file(out_filepath="../../data/input_data/test03.xlsx",
+    tdg.write_test_instance_to_file(out_filepath="../../data/input_data/gurobi_testing/f1-v3-o10-t168-tw5.xlsx",
                                     # Input parameters varying:
-                                    vessel_names=["Ripnes", "Vågsund", "Nyksund"],
-                                    factory_locations=["2022", "482", "2016"],  # Biomar Myre, Biomar Karmøy
-                                    no_orders=30,
-                                    no_products=5,
-                                    no_product_groups=1,
-                                    factory_level=0.3,
-                                    ext_depot_level=0.1,
-                                    time_periods=int(336 / 2),  # 14 days = 336 hours
-                                    time_period_length=2,
+                                    vessel_names=["Borgenfjord", "Høydal", "Nyksund"],
+                                    factory_locations=["2016"],  # Valsneset
+                                    orders_from_company="Mowi Feed AS",
+                                    no_orders=60,
+                                    factory_level=0.2,
+                                    time_periods=168,
                                     # Input parameters kept constant:
+                                    ext_depot_level=0.1,  # no external depots in computational study instances
+                                    time_period_length=2,
+                                    no_products=10,
+                                    no_product_groups=4,
                                     quay_activity_level=0.1,
-                                    orders_from_company=None,
                                     hours_production_stop=12,
                                     share_red_nodes=0.1,
                                     radius_red=10000,
                                     radius_yellow=30000,
-                                    share_bag_locations=0.25,
+                                    share_bag_locations=0.2,
                                     share_small_fjord_locations=0.05,
                                     share_time_periods_vessel_availability=0.5,
                                     small_fjord_radius=50000,
                                     min_wait_if_sick_hours=12,
-                                    delivery_delay_unit_penalty=1000)
+                                    delivery_delay_unit_penalty=10000)  # not used in read_problem_data anymore
 
 

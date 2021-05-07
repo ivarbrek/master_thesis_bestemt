@@ -609,7 +609,7 @@ class Alns:
             self.iter_same_solution += 1
 
         # Update scores πd of the destroy and repair heuristics - dependent on how good the solution is
-        self.update_scores(destroy_op=d_op, repair_op=r_op, noise_op=noise_op,  update_type=self.update_type)
+        self.update_scores(destroy_op=d_op, repair_op=r_op, noise_op=noise_op, update_type=self.update_type)
 
         # if IS iterations has passed since last weight update then
         # Update the weight wdm+1 for method d for the next segment m + 1 based on
@@ -660,7 +660,7 @@ def run_alns(prbl: ProblemDataExtended, num_alns_iterations: int, warm_start: bo
                 weight_min_threshold=0.2,
                 reaction_param=0.1,
                 score_params=[5, 3, 1],  # corresponding to sigma_1, sigma_2, sigma_3 in R&P and L&N
-                start_temperature_controlparam=0.4,  # solution 40% worse than best solution is accepted with 50% prob.
+                start_temperature_controlparam=0.1,  # solution 40% worse than best solution is accepted with 50% prob.
                 cooling_rate=0.995,
                 max_iter_same_solution=50,
                 max_iter_seg=40,
@@ -714,8 +714,11 @@ def run_alns(prbl: ProblemDataExtended, num_alns_iterations: int, warm_start: bo
         alns.best_sol.print_routes()
         return alns.best_sol.get_y_dict()
 
-    alns.best_sol_production_cost = alns.production_model.get_production_cost(alns.best_sol, verbose=True,
-                                                                              time_limit=30)
+    try:
+        alns.best_sol_production_cost = alns.production_model.get_production_cost(alns.best_sol, verbose=True,
+                                                                                  time_limit=90)
+    except ValueError:
+        pass
 
     print()
     print(f"...ALNS terminating  ({round(time() - t0)}s)")
@@ -723,10 +726,14 @@ def run_alns(prbl: ProblemDataExtended, num_alns_iterations: int, warm_start: bo
 
     if verbose:
         print("Not served:", alns.best_sol.get_orders_not_served())
-        alns.production_model.print_solution()
 
-        print("Routing obj:", alns.best_sol_cost, "Prod obj:", round(alns.best_sol_production_cost, 1),
-              "Total:", alns.best_sol_cost + round(alns.best_sol_production_cost, 1))
+        try:
+            alns.production_model.print_solution2()
+
+            print("Routing obj:", alns.best_sol_cost, "Prod obj:", round(alns.best_sol_production_cost, 1),
+                  "Total:", alns.best_sol_cost + round(alns.best_sol_production_cost, 1))
+        except AttributeError:
+            print("Routing obj:", alns.best_sol_cost, "Production problem not solved")
 
         print(f"Best solution updated {alns.new_best_solution_feasible_production_count} times")
         print(f"Candidate to become best solution rejected {alns.new_best_solution_infeasible_production_count} times, "
@@ -742,9 +749,9 @@ def run_alns(prbl: ProblemDataExtended, num_alns_iterations: int, warm_start: bo
 
 if __name__ == '__main__':
     precedence: bool = True
-    num_alns_iterations = 100
+    num_alns_iterations = 1000
 
     # prbl = ProblemDataExtended('../../data/input_data/large_testcase.xlsx', precedence=precedence)
-    prbl = ProblemDataExtended('../../data/input_data/testfile.xlsx', precedence=precedence)
+    prbl = ProblemDataExtended('../../data/input_data/f1-v3-o40-t108-tw4.xlsx', precedence=precedence)
 
     run_alns(prbl, num_alns_iterations)

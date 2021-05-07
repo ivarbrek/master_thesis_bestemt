@@ -295,6 +295,26 @@ class ProductionModel:
             print(tabulate(table, headers=["product", "prod/inv"] + list(self.m.TIME_PERIODS)))
             print()
 
+    def print_solution2(self):
+        for i in self.m.FACTORY_NODES:
+            prod_line_activities = {l: [] for (ii, l) in self.m.PRODUCTION_LINES_FOR_FACTORIES_TUP if ii == i}
+            for l in prod_line_activities:
+                for t in self.m.TIME_PERIODS:
+                    has_activity = False
+                    if not self.m.production_stops[i, t]:
+                        prod_line_activities[l].append('stop')
+                        has_activity = True
+                    else:
+                        for p in self.m.PRODUCTS:
+                            if self.m.g[l, p, t]() > 0.5:
+                                prod_line_activities[l].append(p)
+                                has_activity = True
+                    if not has_activity:
+                        prod_line_activities[l].append(' ')
+            activities = [[prod_line] + activities for prod_line, activities in prod_line_activities.items()]
+            print(tabulate(activities, headers=['prod_line'] + list(self.m.TIME_PERIODS)))
+            print()
+
     def reconstruct_demand(self, new_demands: Dict[Tuple[str, str, int], int]) -> None:
         """ Helper function for get_production_cost and for production feasibility check of initial solution """
         self.m.demands.reconstruct(new_demands)

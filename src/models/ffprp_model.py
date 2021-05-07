@@ -228,6 +228,10 @@ class FfprpModel:
         self.m.min_wait_if_sick = pyo.Param(self.m.WAIT_EDGES_FOR_VESSEL_TRIP,
                                             initialize=prbl.min_wait_if_sick)
 
+        # self.m.warm_start = pyo.Param({0},
+        #                               initialize={0:False},
+        #                               mutable=True)
+
         # Extension
         if extended_model:
             tw_violation_unit_cost = {k: prbl.tw_violation_unit_cost * abs(k) for k in self.m.TIME_WINDOW_VIOLATIONS}
@@ -264,13 +268,13 @@ class FfprpModel:
                            domain=pyo.Boolean,
                            initialize=0)
 
-        def y_init(m, v, i, t):
-            return y_init_dict[(v, i, t)] if (y_init_dict is not None and prbl.is_order_node(i)) else 0
+        # def y_init(m, v, i, t):
+        #     return y_init_dict[(v, i, t)] if (y_init_dict is not None and prbl.is_order_node(i)) else 0
 
         self.m.y = pyo.Var(self.m.NODES_FOR_VESSELS_TUP,
                            self.m.TIME_PERIODS,
                            domain=pyo.Boolean,
-                           initialize=y_init)
+                           initialize=0)
 
         self.m.z = pyo.Var(self.m.ORDER_NODES_RELEVANT_NODES_FOR_VESSELS_TRIP,
                            self.m.TIME_PERIODS,
@@ -374,16 +378,15 @@ class FfprpModel:
         ################################################################################################################
         # CONSTRAINTS ##################################################################################################
 
-        def constr_y_heuristic_flying_start(model, v, i, t):
-            if prbl.is_factory_node(node_id=i):
-                return Constraint.Feasible
-            return model.y[v, i, t] == int(y_init_dict[v, i, t])
-
-        self.m.constr_y_heuristic_flying_start = pyo.Constraint(self.m.NODES_FOR_VESSELS_TUP,
-                                                                self.m.TIME_PERIODS,
-                                                                rule=constr_y_heuristic_flying_start,
-                                                                name="constr_y_heuristic_flying_start")
-        self.m.constr_y_heuristic_flying_start.deactivate()  # activated if running ffprp with warm-start
+        # def constr_y_heuristic_flying_start(model, v, i, t):
+        #     if prbl.is_factory_node(node_id=i) or not model.warm_start[0]:
+        #         return Constraint.Skip
+        #     return model.y[v, i, t] == int(y_init_dict[v, i, t])
+        #
+        # self.m.constr_y_heuristic_flying_start = pyo.Constraint(self.m.NODES_FOR_VESSELS_TUP,
+        #                                                         self.m.TIME_PERIODS,
+        #                                                         rule=constr_y_heuristic_flying_start,
+        #                                                         name="constr_y_heuristic_flying_start")
 
         # def constr_max_one_activity(model, v, t):
         #     relevant_nodes = {n for (vessel, n) in model.NODES_FOR_VESSELS_TUP if vessel == v}
@@ -782,18 +785,37 @@ class FfprpModel:
 
     def solve(self, verbose: bool = True, time_limit: int = None, warm_start: bool = False) -> None:
         print("Solver running...")
-        if time_limit:
-            self.solver_factory.options['TimeLimit'] = time_limit  # time limit in seconds
-        t = time()
-        if warm_start:
-            print(f"Preparing for warm-start...")
-            self.m.constr_y_heuristic_flying_start.activate()
-            self.solver_factory.options['SolutionLimit'] = 1
-            self.results = self.solver_factory.solve(self.m, tee=verbose)
 
-            print(f"...warm-start model completed!")
-            self.m.constr_y_heuristic_flying_start.deactivate()
-            self.solver_factory.options['SolutionLimit'] = 2000000000  # Gurobi's default value
+        t = time()
+        # t_warm_solve = 0
+
+        # if warm_start:
+        #     print(f"Preparing for warm-start...")
+        #     self.solver_factory.options['TimeLimit'] = time_limit
+        #     self.m.warm_start.reconstruct({0: True})
+        #     self.m.constr_y_heuristic_flying_start.reconstruct()
+        #     self.solver_factory.options['SolutionLimit'] = 1
+        #     try:
+        #         self.results = self.solver_factory.solve(self.m, tee=verbose)
+        #         # self.m.write("debug.lp")
+        #         if self.results.solver.termination_condition == pyo.TerminationCondition.infeasible:
+        #             warm_start = False
+        #             print(f"Initial ALNS solution was regarded infeasible")
+        #     except ValueError:
+        #         print(f"No warm-start initial solution found within time limit")
+        #         warm_start = False
+        #
+        #     self.solver_factory.options['SolutionLimit'] = 2000000000  # Gurobi's default value
+        #     print(f"...warm-start model completed!")
+        #
+        #     self.m.warm_start.reconstruct({0: False})
+        #     self.m.constr_y_heuristic_flying_start.reconstruct()
+        #     t_warm_solve = time() - t
+
+        if time_limit:
+            remaining_time_limit = time_limit # max(time_limit - t_warm_solve, 60) if time_limit > 60 else time_limit - t_warm_solve
+            print(f"{round(remaining_time_limit, 1)} seconds remains out of the total of {time_limit} seconds")
+            self.solver_factory.options['TimeLimit'] = remaining_time_limit  # time limit in seconds
 
         try:
             print(f"Solving model...")
@@ -1160,9 +1182,10 @@ if __name__ == '__main__':
     # problem_data = ProblemData('../../data/input_data/larger_testcase_4vessels.xlsx')
 
     # PARAMETERS TO CHANGE ###
-    file_path = '../../data/input_data/test02.xlsx'
-    partial_warm_start = True
-    num_alns_iterations = 10  # only used if partial_warm_start = True
+    file_path = '../../data/input_data/gurobi_testing/f1-v3-o20-t72-tw4.xlsx'
+    time_limit = 1800
+    partial_warm_start = False
+    num_alns_iterations = 200  # only used if partial_warm_start = True
     extensions = False  # extensions _not_ supported in generated test files
 
     # PARAMETERS NOT TO CHANGE ###
@@ -1179,5 +1202,5 @@ if __name__ == '__main__':
         print(f"ALNS warmup time {round(time() - t, 1)}")
 
     model = FfprpModel(problem_data, extended_model=extensions, y_init_dict=y_init_dict)
-    model.solve(time_limit=300, warm_start=partial_warm_start)
+    model.solve(time_limit=time_limit, warm_start=partial_warm_start)
     model.print_result()
