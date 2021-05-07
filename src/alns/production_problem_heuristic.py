@@ -256,6 +256,8 @@ class ProductionProblemHeuristic:
 
     def __init__(self, prbl: ProductionProblem):
         self.prbl = prbl
+        self.solution: Dict[str, ProductionProblemSolution] = {factory: None
+                                                               for factory in self.prbl.base_problem.factory_nodes}
 
     @staticmethod
     def construct_greedy(sol: ProductionProblemSolution, verbose: bool = False) -> bool:
@@ -281,8 +283,29 @@ class ProductionProblemHeuristic:
             if not is_feasible:
                 print(round(time() - t0, 1), "s (h) (infeasible)", sep="")
                 return False, factory
+            self.solution[factory] = sol
         print(round(time() - t0, 1), "s (h)", sep="")
         return True, ''
+
+    def get_cost(self, routing_sol: Solution):
+        self.prbl.set_demands_and_pickup_times(routing_sol.get_demand_dict())
+        cost = 0
+        for factory in self.prbl.base_problem.factory_nodes:
+            sol = ProductionProblemSolution(self.prbl, factory)
+            is_feasible = self.construct_greedy(sol)
+            if is_feasible:
+                self.solution[factory] = sol
+                cost += sol.get_cost()
+            else:
+                print("Infeasible production problem")
+                return 0
+        return cost
+
+    def print_sol(self):
+        for factory, sub_sol in self.solution.items():
+            print(factory)
+            sub_sol.print()
+
 
 
 def hardcode_demand_dict(prbl: ProblemData) -> Dict[Tuple[str, str, int], int]:
