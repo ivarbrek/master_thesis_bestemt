@@ -172,6 +172,12 @@ class ProblemData:
     def get_order_nodes(self) -> List[str]:
         return list(self.time_windows_for_orders_df.index)
 
+    def is_order_node(self, node_id: str) -> bool:
+        return node_id.startswith("o")
+
+    def is_factory_node(self, node_id: str) -> bool:
+        return node_id.startswith("f")
+
     def get_zone_orders_dict(self):
         zone_orders_dict = defaultdict(list)
         for order in self.order_zones_df.index:
