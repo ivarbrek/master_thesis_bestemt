@@ -1,6 +1,7 @@
 import matplotlib.pyplot as plt
 from typing import List, Tuple, Dict
 import pandas as pd
+import plotly.graph_objects as go
 
 def plot_alns_history(solution_costs: List[Tuple[int, int]]) -> None:
     x, y = zip(*solution_costs)
@@ -32,3 +33,35 @@ def plot_alns_history_with_production_feasibility(solution_costs: List[Tuple[int
 
     ax.scatter(df['iter'], df['cost'], c=df['feasible'].apply(lambda x: colors[x]))
     plt.show()
+
+
+def plot_locations(locations_ids: List[str]):
+    loc_data = pd.read_csv('../../data/locations.csv')
+    loc_data.set_index("loknr", inplace=True)
+    relevant_locations_and_coords = [(loc_id,
+                                      loc_data.loc[int(loc_id), "breddegrader"],
+                                      loc_data.loc[int(loc_id), "lengdegrader"])
+                                     for loc_id in locations_ids if int(loc_id) in loc_data.index]
+    df = pd.DataFrame(relevant_locations_and_coords)
+    df.columns = ['loc_id', 'lat', 'long']
+    # color = c if c else "LightSkyBlue"
+    fig = go.Figure(data=go.Scattergeo(
+        lon=df['long'],
+        lat=df['lat'],
+        text=df['loc_id'],
+        mode='markers',
+        marker=dict(
+            # color=color,
+            size=12,
+            line=dict(color='MediumPurple', width=1)
+        )
+    ))
+
+    fig.update_layout(
+        title='Locations',
+        geo_scope='europe',
+    )
+    fig.update_geos(resolution=50)
+    # if save_to:  # Save figure
+    #     fig.write_html(save_to)
+    fig.show()
