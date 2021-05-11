@@ -1,3 +1,9 @@
+import sys
+import os
+
+sys.path.append(os.getcwd())
+print("cwd:", os.getcwd())
+
 import math
 import random
 import numpy as np
@@ -5,9 +11,12 @@ from time import time
 from typing import Dict, List, Tuple, Union, Set
 from collections import defaultdict
 import function
+import argparse
+import pandas as pd
 
 from src.alns.solution import Solution, ProblemDataExtended
 from src.models.production_model import ProductionModel
+import src.alns.alns_parameters as alnsparam
 import src.util.plot as util
 from src.alns.production_problem_heuristic import ProductionProblemHeuristic, ProductionProblem
 import locale
@@ -657,9 +666,27 @@ class Alns:
         self.temperature = self.temperature * self.cooling_rate
         self.it_seg_count += 1
 
+    def write_to_file(self, excel_writer: pd.ExcelWriter, id: int) -> None:
+        solution_dict = {'obj_val': round(self.best_sol_production_cost + self.best_sol_cost, 2),
+                         'production_cost': round(self.best_sol_production_cost, 2),
+                         'routing_cost': round(self.best_sol_cost, 2),
+                         'number_orders_not_served': len(self.best_sol.get_orders_not_served()),
+                         'score_params': str(alnsparam.score_params),
+                         'reaction_param': str(alnsparam.reaction_param),
+                         'start_temperature_controlparam': str(alnsparam.start_temperature_controlparam),
+                         'cooling_rate': str(alnsparam.cooling_rate),
+                         'remove_percentage_interval': str(alnsparam.remove_percentage_interval),
+                         'noise_param': str(alnsparam.noise_param),
+                         'determinism_param': str(alnsparam.determinism_param),
+                         'related_removal_weight_param': str(alnsparam.related_removal_weight_param)}
+        # TODO: Add relevant data
+        sheet_name = "run_" + str(id)
+        df = pd.DataFrame(solution_dict, index=[0]).transpose()
+        df.to_excel(excel_writer, sheet_name=sheet_name, startrow=1)
+
 
 def run_alns(prbl: ProblemDataExtended, num_alns_iterations: int, warm_start: bool = False, verbose: bool = True) -> \
-        Union[Dict[Tuple[str, str, int], int], None]:
+        Union[Dict[Tuple[str, str, int], int], None, Alns]:
     precedence = prbl.precedence
     destroy_op = ['d_random',
                   'd_worst',
@@ -675,24 +702,28 @@ def run_alns(prbl: ProblemDataExtended, num_alns_iterations: int, warm_start: bo
     alns = Alns(problem_data=prbl,
                 destroy_op=destroy_op,
                 repair_op=['r_greedy', 'r_2regret', 'r_3regret'],
-                weight_min_threshold=0.2,
-                reaction_param=0.1,
-                score_params=[5, 3, 1],  # corresponding to sigma_1, sigma_2, sigma_3 in R&P and L&N
-                start_temperature_controlparam=0.1,  # solution 40% worse than best solution is accepted with 50% prob.
-                cooling_rate=0.995,
-                max_iter_same_solution=50,
-                max_iter_seg=40,
-                remove_percentage_interval=(0.1, 0.3),
-                remove_num_percentage_adjust=0.05,
-                determinism_param=5,
-                noise_param=0.25,
-                relatedness_precedence={('green', 'yellow'): 6, ('green', 'red'): 10, ('yellow', 'red'): 4},
-                related_removal_weight_param={'relatedness_location_time': [1, 0.9],
-                                              'relatedness_location_precedence': [0.25, 1]},
-                production_infeasibility_strike_max=0,
-                ppfc_slack_increment=0.05,
-                inventory_reward=False,
-                reinsert_with_ppfc=False,
+                weight_min_threshold=alnsparam.weight_min_threshold,  # 0.2
+                reaction_param=alnsparam.reaction_param,  # 0.1,
+                score_params=alnsparam.score_params,
+                # [5, 3, 1],  # corresponding to sigma_1, sigma_2, sigma_3 in R&P and L&N
+                start_temperature_controlparam=alnsparam.start_temperature_controlparam,
+                # 0.1,  # solution 40% worse than best solution is accepted with 50% prob.
+                cooling_rate=alnsparam.cooling_rate,  # 0.995,
+                max_iter_same_solution=alnsparam.max_iter_same_solution,  # 50,
+                max_iter_seg=alnsparam.max_iter_seg,  # 40,
+                remove_percentage_interval=alnsparam.remove_percentage_interval,  # (0.1, 0.3),
+                remove_num_percentage_adjust=alnsparam.remove_num_percentage_adjust,  # 0.05,
+                determinism_param=alnsparam.determinism_param,  # 5,
+                noise_param=alnsparam.noise_param,  # 0.25,
+                relatedness_precedence=alnsparam.relatedness_precedence,
+                # {('green', 'yellow'): 6, ('green', 'red'): 10, ('yellow', 'red'): 4},
+                related_removal_weight_param=alnsparam.related_removal_weight_param,
+                # {'relatedness_location_time': [1, 0.9],
+                # 'relatedness_location_precedence': [0.25, 1]},
+                production_infeasibility_strike_max=alnsparam.production_infeasibility_strike_max,  # 0,
+                ppfc_slack_increment=alnsparam.ppfc_slack_increment,  # 0.05,
+                inventory_reward=alnsparam.inventory_reward,  # False,
+                reinsert_with_ppfc=alnsparam.reinsert_with_ppfc,  # False,
                 verbose=False
                 )
 
@@ -702,7 +733,7 @@ def run_alns(prbl: ProblemDataExtended, num_alns_iterations: int, warm_start: bo
         print("Route after initialization")
         alns.current_sol.print_routes()
         print(f"Obj: {alns.current_sol_cost:n}   Not served: {alns.current_sol.get_orders_not_served()}")
-        print("\nRemove num:", alns.remove_num, "\n")
+        print("\nRemove num:", alns.remove_num_interval, "\n")
 
     _stat_solution_cost = []
     _stat_repair_weights = defaultdict(list)
@@ -735,9 +766,11 @@ def run_alns(prbl: ProblemDataExtended, num_alns_iterations: int, warm_start: bo
 
     try:
         alns.best_sol_production_cost = alns.production_model.get_production_cost(alns.best_sol, verbose=True,
-                                                                                  time_limit=90)
+                                                                                  time_limit=30)
+        alns.production_model.print_solution2()
     except ValueError:
-        pass
+        alns.best_sol_production_cost = alns.production_heuristic.get_cost(alns.best_sol)
+        alns.production_heuristic.print_sol()
 
     print()
     print(f"...ALNS terminating  ({round(time() - t0)}s)")
@@ -767,10 +800,29 @@ def run_alns(prbl: ProblemDataExtended, num_alns_iterations: int, warm_start: bo
 
 
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='process ALNS input parameters')
+    parser.add_argument('input_filepath', type=str, help='path of input data file')
+    parser.add_argument('num_runs', type=int, help='number of runs using same input data file')
+    args = parser.parse_args()
+
     precedence: bool = True
     num_alns_iterations = 1000
+    write_solution = False
 
     # prbl = ProblemDataExtended('../../data/input_data/large_testcase.xlsx', precedence=precedence)
-    prbl = ProblemDataExtended('../../data/input_data/f1-v3-o40-t108-tw4.xlsx', precedence=precedence)
+    # prbl = ProblemDataExtended('../../data/input_data/gurobi_testing/f1-v3-o20-t72-i0.05-tw4.xlsx', precedence=precedence)
+    prbl = ProblemDataExtended(args.input_filepath, precedence=precedence)
 
-    run_alns(prbl, num_alns_iterations)
+    output_filepath = "data/output_data/" + str(args.input_filepath.split("/")[-1])
+
+    # WRITE TO FILE
+    excel_writer = pd.ExcelWriter(output_filepath, engine='openpyxl', mode='w',
+                                  options={'strings_to_formulas': False})
+
+    for i in range(args.num_runs):
+        alns = run_alns(prbl, num_alns_iterations)
+        if write_solution:
+            # TODO: Write actual solution to separate excel file
+            pass
+        alns.write_to_file(excel_writer, i)
+    excel_writer.close()

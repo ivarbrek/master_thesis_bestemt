@@ -9,6 +9,9 @@ import random
 from src.read_problem_data import ProblemData
 from src.util.print import bcolors
 
+import sys
+sys.path.append('/Users/srandoy/git/master_thesis_bestemt/')
+
 int_inf = 9999
 
 
@@ -80,7 +83,7 @@ class Solution:
         self.debug = debug
 
         self.routes: Dict[str, List[str]] = {v: [self.prbl.vessel_initial_locations[v]] for v in self.prbl.vessels}
-        self.e: Dict[str, List[int]] = {v: [max(1, self.prbl.start_times_for_vessels[v])] for v in self.prbl.vessels}
+        self.e: Dict[str, List[int]] = {v: [max(1, self.prbl.start_times_for_vessels[v] + 1)] for v in self.prbl.vessels}
         self.l: Dict[str, List[int]] = {v: [len(self.prbl.time_periods) - 1] for v in
                                         self.prbl.vessels}  # changed from just len
         self.factory_visits: Dict[str, List[str]] = self._init_factory_visits()
@@ -177,7 +180,7 @@ class Solution:
         node = self.prbl.nodes[route[idx]]
 
         prev_node_id = route[idx - 1] if idx > 0 else None
-        prev_e = self.temp_e[vessel][idx - 1] if prev_node_id else self.prbl.start_times_for_vessels[vessel]
+        prev_e = self.temp_e[vessel][idx - 1] if prev_node_id else self.prbl.start_times_for_vessels[vessel] + 1
 
         prev_transport_time = self.prbl.transport_times[vessel, prev_node_id, node.id] if prev_node_id else 0
         prev_loading_unloading_time = self.prbl.loading_unloading_times[vessel, prev_node_id] if prev_node_id else 0

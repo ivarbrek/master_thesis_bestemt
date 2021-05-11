@@ -786,38 +786,37 @@ class FfprpModel:
     def solve(self, verbose: bool = True, time_limit: int = None, warm_start: bool = False) -> None:
         print("Solver running...")
 
+        # self.m.constr_y_heuristic_flying_start.deactivate()
         t = time()
-        # t_warm_solve = 0
+        t_warm_solve = 0
 
-        # if warm_start:
-        #     print(f"Preparing for warm-start...")
-        #     self.solver_factory.options['TimeLimit'] = time_limit
-        #     self.m.warm_start.reconstruct({0: True})
-        #     self.m.constr_y_heuristic_flying_start.reconstruct()
-        #     self.solver_factory.options['SolutionLimit'] = 1
-        #     try:
-        #         self.results = self.solver_factory.solve(self.m, tee=verbose)
-        #         # self.m.write("debug.lp")
-        #         if self.results.solver.termination_condition == pyo.TerminationCondition.infeasible:
-        #             warm_start = False
-        #             print(f"Initial ALNS solution was regarded infeasible")
-        #     except ValueError:
-        #         print(f"No warm-start initial solution found within time limit")
-        #         warm_start = False
-        #
-        #     self.solver_factory.options['SolutionLimit'] = 2000000000  # Gurobi's default value
-        #     print(f"...warm-start model completed!")
-        #
-        #     self.m.warm_start.reconstruct({0: False})
-        #     self.m.constr_y_heuristic_flying_start.reconstruct()
-        #     t_warm_solve = time() - t
+        if warm_start:
+            pass
+            # print(f"Preparing for warm-start...")
+            # self.solver_factory.options['TimeLimit'] = time_limit
+            # self.m.constr_y_heuristic_flying_start.activate()
+            # self.solver_factory.options['SolutionLimit'] = 1
+            # try:
+            #     self.results = self.solver_factory.solve(self.m, tee=verbose)
+            #     self.m.write("debug.lp")
+            #     if self.results.solver.termination_condition == pyo.TerminationCondition.infeasible:
+            #         warm_start = False
+            #         print(f"Initial ALNS solution was regarded infeasible")
+            # except ValueError:
+            #     print(f"No warm-start initial solution found within time limit")
+            #     warm_start = False
+            #
+            # self.solver_factory.options['SolutionLimit'] = 2000000000  # Gurobi's default value
+            # print(f"...warm-start model completed!")
+            # t_warm_solve = time() - t
 
         if time_limit:
-            remaining_time_limit = time_limit # max(time_limit - t_warm_solve, 60) if time_limit > 60 else time_limit - t_warm_solve
+            remaining_time_limit = time_limit  # max(time_limit - t_warm_solve, 60) if time_limit > 60 else time_limit - t_warm_solve  # time_limit
             print(f"{round(remaining_time_limit, 1)} seconds remains out of the total of {time_limit} seconds")
             self.solver_factory.options['TimeLimit'] = remaining_time_limit  # time limit in seconds
 
         try:
+            # self.m.constr_y_heuristic_flying_start.deactivate()
             print(f"Solving model...")
             self.results = self.solver_factory.solve(self.m, tee=verbose, warmstart=warm_start)
             # logfile=f'../../log_files/console_output_{log_name}.log'
@@ -1182,10 +1181,11 @@ if __name__ == '__main__':
     # problem_data = ProblemData('../../data/input_data/larger_testcase_4vessels.xlsx')
 
     # PARAMETERS TO CHANGE ###
-    file_path = '../../data/input_data/gurobi_testing/f1-v3-o20-t72-tw4.xlsx'
-    time_limit = 1800
-    partial_warm_start = False
-    num_alns_iterations = 200  # only used if partial_warm_start = True
+    partial_warm_start = False  # TODO: Fix
+    num_alns_iterations = 100  # only used if partial_warm_start = True
+
+    file_path = '../../data/input_data/f1-v3-o40-t108-tw4.xlsx'
+    time_limit = 720
     extensions = False  # extensions _not_ supported in generated test files
 
     # PARAMETERS NOT TO CHANGE ###
@@ -1193,8 +1193,8 @@ if __name__ == '__main__':
     problem_data.soft_tw = extensions
 
     y_init_dict = None
-    if partial_warm_start:
-        problem_data_ext = ProblemDataExtended(file_path)  # TODO: Fix to avoid to prbl reads (problem with nodes field)
+    if partial_warm_start:  # Currently not supported
+        problem_data_ext = ProblemDataExtended(file_path)  # TODO: Fix to avoid two prbl reads (problem with nodes field)
         problem_data_ext.soft_tw = extensions
         t = time()
         y_init_dict = src.alns.alns.run_alns(prbl=problem_data_ext, num_alns_iterations=num_alns_iterations,
