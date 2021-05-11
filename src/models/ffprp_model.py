@@ -1,9 +1,15 @@
+import sys
+import os
+sys.path.append(os.getcwd())
+
 import pyomo.environ as pyo
 from typing import Dict, List, Tuple
 from time import time
 from pyomo.core import Constraint  # TODO: Remove this and use pyo.Constraint.Feasible/Skip
 from tabulate import tabulate
 from pyomo.util.infeasible import log_infeasible_constraints
+import argparse
+import pandas as pd
 
 from src.alns.solution import ProblemDataExtended
 from src.read_problem_data import ProblemData
@@ -1128,26 +1134,13 @@ class FfprpModel:
             print_routes_simple()
 
         def print_objective_function_components():
-            inventory_cost = (sum(self.m.inventory_unit_costs[i] * pyo.value(self.m.s[i, p, t])
-                                  for t in self.m.TIME_PERIODS
-                                  for p in self.m.PRODUCTS
-                                  for i in self.m.FACTORY_NODES))
-            transport_cost = (
-                sum(self.m.transport_unit_costs[v] * self.m.transport_times[v, i, j] * pyo.value(self.m.x[v, i, j, t])
-                    for t in self.m.TIME_PERIODS
-                    for v in self.m.VESSELS
-                    for i, j in self.m.ARCS[v]
-                    if i != 'd_0' and j != 'd_-1'))
-
-            production_start_cost = (sum(self.m.production_start_costs[i, p] * pyo.value(self.m.delta[l, p, t])
-                                         for i in self.m.FACTORY_NODES
-                                         for (ii, l) in self.m.PRODUCTION_LINES_FOR_FACTORIES_TUP if i == ii
-                                         for p in self.m.PRODUCTS
-                                         for t in self.m.TIME_PERIODS))
-            unmet_order_cost = (sum(self.m.external_delivery_penalties[i] * pyo.value(self.m.e[i])
-                                    for i in self.m.ORDER_NODES))
+            inventory_cost = self.get_inventory_cost()
+            transport_cost = self.get_transport_cost()
+            production_start_cost = self.get_production_start_cost()
+            unmet_order_cost = self.get_unmet_order_cost()
 
             sum_obj = inventory_cost + transport_cost + unmet_order_cost + production_start_cost
+
             if self.extended_model:
                 time_window_violation_cost = (sum(self.m.time_window_violation_cost[k] * self.m.lambd[i, k]()
                                                   for i in self.m.ORDER_NODES
@@ -1171,6 +1164,61 @@ class FfprpModel:
         print_result_eventwise()
         print_objective_function_components()
 
+    def get_production_start_cost(self) -> int:
+        return int(sum(self.m.production_start_costs[i, p] * pyo.value(self.m.delta[l, p, t])
+                                         for i in self.m.FACTORY_NODES
+                                         for (ii, l) in self.m.PRODUCTION_LINES_FOR_FACTORIES_TUP if i == ii
+                                         for p in self.m.PRODUCTS
+                                         for t in self.m.TIME_PERIODS))
+
+    def get_inventory_cost(self) -> int:
+        return int(sum(self.m.inventory_unit_costs[i] * pyo.value(self.m.s[i, p, t])
+             for t in self.m.TIME_PERIODS
+             for p in self.m.PRODUCTS
+             for i in self.m.FACTORY_NODES))
+
+    def get_transport_cost(self) -> int:
+        return int(sum(self.m.transport_unit_costs[v] * self.m.transport_times[v, i, j]
+                       * pyo.value(self.m.x[v, i, j, t])
+                for t in self.m.TIME_PERIODS
+                for v in self.m.VESSELS
+                for i, j in self.m.ARCS[v]
+                if i != 'd_0' and j != 'd_-1'))
+
+    def get_unmet_order_cost(self) -> int:
+        return int(sum(self.m.external_delivery_penalties[i] * pyo.value(self.m.e[i])
+                                    for i in self.m.ORDER_NODES))
+
+    def get_orders_not_served(self) -> List[str]:
+        orders_not_served: List[str] = []
+        for i in self.m.ORDER_NODES:
+            if pyo.value(self.m.e[i]) > 0.5:
+                orders_not_served.append(i)
+        return orders_not_served
+
+    def write_to_file(self, excel_writer: pd.ExcelWriter, id: int = 0) -> None:
+        inventory_cost = self.get_inventory_cost()
+        transport_cost = self.get_transport_cost()
+        unmet_order_cost = self.get_unmet_order_cost()
+        production_start_cost = self.get_production_start_cost()
+
+        lb = self.results.Problem._list[0].lower_bound
+        ub = self.results.Problem._list[0].upper_bound
+
+        solution_dict = {'obj_val': round(pyo.value(self.m.objective), 2),
+                         'production_start_cost': round(production_start_cost, 2),
+                         'inventory_cost': round(inventory_cost, 2),
+                         'transport_cost': round(transport_cost, 2),
+                         'unmet_order_cost': round(unmet_order_cost, 2),
+                         'number_orders_not_served': len(self.get_orders_not_served()),
+                         'lower_bound': round(lb, 2),
+                         'upper_bound': round(ub, 2),
+                         'mip_gap': str(round(((ub-lb)/ub)*100, 2)) + "%"}
+        # TODO: Add relevant data
+        sheet_name = "run_" + str(id)
+        df = pd.DataFrame(solution_dict, index=[0]).transpose()
+        df.to_excel(excel_writer, sheet_name=sheet_name, startrow=1)
+
 
 if __name__ == '__main__':
     # problem_data = ProblemData('../../data/input_data/small_testcase_one_vessel.xlsx')
@@ -1180,27 +1228,39 @@ if __name__ == '__main__':
     # problem_data = ProblemData('../../data/input_data/larger_testcase.xlsx')
     # problem_data = ProblemData('../../data/input_data/larger_testcase_4vessels.xlsx')
 
-    # PARAMETERS TO CHANGE ###
+    # PARAMETERS TO FIX BEFORE USE ###
     partial_warm_start = False  # TODO: Fix
     num_alns_iterations = 100  # only used if partial_warm_start = True
-
-    file_path = '../../data/input_data/f1-v3-o40-t108-tw4.xlsx'
-    time_limit = 720
     extensions = False  # extensions _not_ supported in generated test files
 
+    # PARAMETERS TO CHANGE ###
+    time_limit = 30
+
+    # EXTERNAL RUN
+    parser = argparse.ArgumentParser(description='process FFPRP input parameters')
+    parser.add_argument('input_filepath', type=str, help='path of input data file')
+    args = parser.parse_args()
+    output_filepath = "data/output_data/gurobi-" + str(args.input_filepath.split("/")[-1])
+    # Execution line format: python3 src/models/ffprp_model.py data/input_data/f1-v3-o20-t50.xlsx 5
+
     # PARAMETERS NOT TO CHANGE ###
-    problem_data = ProblemData(file_path)
+    problem_data = ProblemData(args.input_filepath)  # ProblemData(file_path)
     problem_data.soft_tw = extensions
 
-    y_init_dict = None
-    if partial_warm_start:  # Currently not supported
-        problem_data_ext = ProblemDataExtended(file_path)  # TODO: Fix to avoid two prbl reads (problem with nodes field)
-        problem_data_ext.soft_tw = extensions
-        t = time()
-        y_init_dict = src.alns.alns.run_alns(prbl=problem_data_ext, num_alns_iterations=num_alns_iterations,
-                                             warm_start=partial_warm_start, verbose=False)
-        print(f"ALNS warmup time {round(time() - t, 1)}")
+    # y_init_dict = None
+    # if partial_warm_start:  # Currently not supported
+    #     problem_data_ext = ProblemDataExtended(args.input_filepath)  # TODO: Fix to avoid two prbl reads (problem with nodes field)
+    #     problem_data_ext.soft_tw = extensions
+    #     t = time()
+    #     y_init_dict = src.alns.alns.run_alns(prbl=problem_data_ext, num_alns_iterations=num_alns_iterations,
+    #                                          warm_start=partial_warm_start, verbose=False)
+    #     print(f"ALNS warmup time {round(time() - t, 1)}")
 
-    model = FfprpModel(problem_data, extended_model=extensions, y_init_dict=y_init_dict)
+    model = FfprpModel(problem_data, extended_model=extensions)  #, y_init_dict=y_init_dict)
     model.solve(time_limit=time_limit, warm_start=partial_warm_start)
+
+    # WRITE TO FILE
+    excel_writer = pd.ExcelWriter(output_filepath, engine='openpyxl', mode='w', options={'strings_to_formulas': False})
+    model.write_to_file(excel_writer)
+    excel_writer.close()
     model.print_result()

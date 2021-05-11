@@ -2,7 +2,6 @@ import sys
 import os
 
 sys.path.append(os.getcwd())
-print("cwd:", os.getcwd())
 
 import math
 import random
@@ -804,6 +803,7 @@ if __name__ == '__main__':
     parser.add_argument('input_filepath', type=str, help='path of input data file')
     parser.add_argument('num_runs', type=int, help='number of runs using same input data file')
     args = parser.parse_args()
+    # Execution line format: python3 src/alns/alns.py data/input_data/f1-v3-o20-t50.xlsx 5
 
     precedence: bool = True
     num_alns_iterations = 1000
@@ -813,7 +813,7 @@ if __name__ == '__main__':
     # prbl = ProblemDataExtended('../../data/input_data/gurobi_testing/f1-v3-o20-t72-i0.05-tw4.xlsx', precedence=precedence)
     prbl = ProblemDataExtended(args.input_filepath, precedence=precedence)
 
-    output_filepath = "data/output_data/" + str(args.input_filepath.split("/")[-1])
+    output_filepath = "data/output_data/alns-" + str(args.input_filepath.split("/")[-1])
 
     # WRITE TO FILE
     excel_writer = pd.ExcelWriter(output_filepath, engine='openpyxl', mode='w',
