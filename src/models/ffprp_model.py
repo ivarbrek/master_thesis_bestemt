@@ -202,6 +202,11 @@ class FfprpModel:
                                            self.m.NODES_INCLUDING_DUMMY_END,
                                            initialize=prbl.transport_times)
 
+        self.m.transport_times_exact = pyo.Param(self.m.VESSELS,
+                                                 self.m.NODES_INCLUDING_DUMMY_START,
+                                                 self.m.NODES_INCLUDING_DUMMY_END,
+                                                 initialize=prbl.transport_times_exact)
+
         self.m.loading_unloading_times = pyo.Param(self.m.VESSELS,
                                                    self.m.NODES,
                                                    initialize=prbl.loading_unloading_times)
@@ -353,7 +358,7 @@ class FfprpModel:
                         for t in model.TIME_PERIODS
                         for p in model.PRODUCTS
                         for i in model.FACTORY_NODES)
-                    + sum(model.transport_unit_costs[v] * model.transport_times[v, i, j] * model.x[v, i, j, t]
+                    + sum(model.transport_unit_costs[v] * model.transport_times_exact[v, i, j] * model.x[v, i, j, t]
                           for t in model.TIME_PERIODS
                           for v in model.VESSELS
                           for i, j in model.ARCS[v]
@@ -618,13 +623,12 @@ class FfprpModel:
         def constr_inventory_balance(model, i, p, t):
             if t == 0:
                 return Constraint.Feasible
-            return (model.s[i, p, t] == model.s[i, p, (t - 1)] +
-                    sum(model.production_max_capacities[l, p] * model.g[l, p, (t - 1)]
-                        for (ii, l) in model.PRODUCTION_LINES_FOR_FACTORIES_TUP if ii == i) +
-                    sum(model.demands[i, j, p] * model.z[v, i, j, t]
-                        for v, i2, j in model.ORDER_NODES_RELEVANT_NODES_FOR_VESSELS_TRIP
-                        if i2 == i))
-
+            return (model.s[i, p, t] == model.s[i, p, (t - 1)]
+                    + sum(model.production_max_capacities[l, p] * model.g[l, p, (t - 1)]
+                          for (ii, l) in model.PRODUCTION_LINES_FOR_FACTORIES_TUP if ii == i)
+                    + sum(model.demands[i, j, p] * model.z[v, i, j, t]
+                          for v, i2, j in model.ORDER_NODES_RELEVANT_NODES_FOR_VESSELS_TRIP
+                          if i2 == i))
         # sum(model.q[l, p, t - 1] for (ii, l) in model.PRODUCTION_LINES_FOR_FACTORIES_TUP if ii == i) +
 
         self.m.constr_inventory_balance = pyo.Constraint(self.m.FACTORY_NODES,
@@ -817,7 +821,7 @@ class FfprpModel:
             # t_warm_solve = time() - t
 
         if time_limit:
-            remaining_time_limit = time_limit  # max(time_limit - t_warm_solve, 60) if time_limit > 60 else time_limit - t_warm_solve  # time_limit
+            remaining_time_limit = time_limit  # max(time_limit - t_warm_solve, 60) if time_limit > 60 else time_limit - t_warm_solve
             print(f"{round(remaining_time_limit, 1)} seconds remains out of the total of {time_limit} seconds")
             self.solver_factory.options['TimeLimit'] = remaining_time_limit  # time limit in seconds
 
@@ -986,16 +990,16 @@ class FfprpModel:
             # print_factory_production()
             # print_factory_inventory()
             # print_vessel_routing()
-            print_order_delivery_and_pickup()
+            # print_order_delivery_and_pickup()
             # print_factory_pickup()
             # print_waiting()
             # print_vessel_load()
             print_orders_not_delivered()
-            print_production_starts()
+            # print_production_starts()
             # print_production_happens()
-            print_final_inventory()
+            # print_final_inventory()
             # print_available_production_lines()
-            print_time_window_violations()
+            # print_time_window_violations()
 
         def print_result_eventwise():
 
@@ -1029,6 +1033,14 @@ class FfprpModel:
                     table.append(row)
                 print(tabulate(table, headers=["vessel"] + list(self.m.TIME_PERIODS)))
                 print()
+
+            def print_y():
+                active_y_s = [(v, i, t)
+                              for v in self.m.VESSELS
+                              for v2, i in self.m.NODES_FOR_VESSELS_TUP
+                              for t in self.m.TIME_PERIODS
+                              if v2 == v and self.m.y[v, i, t]() > 0.5]
+                print("Active y's:", active_y_s)
 
             def print_routing(include_loads=True):
                 for v in self.m.VESSELS:
@@ -1075,8 +1087,8 @@ class FfprpModel:
                     for t in self.m.TIME_PERIODS:
                         relevant_production_lines = {l for (ii, l) in self.m.PRODUCTION_LINES_FOR_FACTORIES_TUP if
                                                      ii == i}
-                        production = [round(sum(self.m.g[l, p, t]() * self.m.production_max_capacities[l, p] for l in
-                                                relevant_production_lines))
+                        production = [round(sum(self.m.g[l, p, t]() * self.m.production_max_capacities[l, p]
+                                                for l in relevant_production_lines))
                                       for p in sorted(self.m.PRODUCTS)]
                         inventory = [round(self.m.s[i, p, t]()) for p in sorted(self.m.PRODUCTS)]
                         if sum(production) > 0.5:
@@ -1131,6 +1143,7 @@ class FfprpModel:
             # print_vessel_load()
             # print_production_and_inventory()
             print_production_simple()
+            print_y()
             print_routes_simple()
 
         def print_objective_function_components():
@@ -1247,14 +1260,15 @@ if __name__ == '__main__':
     problem_data = ProblemData(args.input_filepath)  # ProblemData(file_path)
     problem_data.soft_tw = extensions
 
-    # y_init_dict = None
-    # if partial_warm_start:  # Currently not supported
-    #     problem_data_ext = ProblemDataExtended(args.input_filepath)  # TODO: Fix to avoid two prbl reads (problem with nodes field)
-    #     problem_data_ext.soft_tw = extensions
-    #     t = time()
-    #     y_init_dict = src.alns.alns.run_alns(prbl=problem_data_ext, num_alns_iterations=num_alns_iterations,
-    #                                          warm_start=partial_warm_start, verbose=False)
-    #     print(f"ALNS warmup time {round(time() - t, 1)}")
+    y_init_dict = None
+    if partial_warm_start:
+        pass
+        # problem_data_ext = ProblemDataExtended(file_path)  # TODO: Fix to avoid to prbl reads (problem with nodes field)
+        # problem_data_ext.soft_tw = extensions
+        # t = time()
+        # y_init_dict = src.alns.alns.run_alns(prbl=problem_data_ext, iterations=num_alns_iterations,
+        #                                      skip_production_problem_postprocess=partial_warm_start, verbose=False)
+        # print(f"ALNS warmup time {round(time() - t, 1)}")
 
     model = FfprpModel(problem_data, extended_model=extensions)  #, y_init_dict=y_init_dict)
     model.solve(time_limit=time_limit, warm_start=partial_warm_start)

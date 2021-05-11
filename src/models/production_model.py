@@ -295,7 +295,8 @@ class ProductionModel:
             print(tabulate(table, headers=["product", "prod/inv"] + list(self.m.TIME_PERIODS)))
             print()
 
-    def print_solution2(self):
+    def print_solution_simple(self):
+
         for i in self.m.FACTORY_NODES:
             prod_line_activities = {l: [] for (ii, l) in self.m.PRODUCTION_LINES_FOR_FACTORIES_TUP if ii == i}
             for l in prod_line_activities:

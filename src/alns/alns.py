@@ -103,7 +103,7 @@ class Alns:
         self.current_sol = self.adjust_sol_exact(self.current_sol, remove_num=self.remove_num_adjust)
         self.current_sol_cost = self.current_sol.get_solution_routing_cost()
         self.best_sol = self.current_sol
-        self.best_sol_cost = self.current_sol_cost
+        self.best_sol_cost = round(self.current_sol_cost)
         self.record_solution(self.current_sol)
 
         # Operator weights, scores and usage
@@ -647,7 +647,7 @@ class Alns:
         # set x∗ =x
         if self.update_type == 0:  # type 0 means global best solution is found
             self.best_sol = self.current_sol
-            self.best_sol_cost = self.current_sol_cost
+            self.best_sol_cost = round(self.current_sol_cost)
             self.new_best_solution_feasible_production_count += 1
             if self.verbose:
                 print(f'> Solution is accepted as best solution')
@@ -684,8 +684,8 @@ class Alns:
         df.to_excel(excel_writer, sheet_name=sheet_name, startrow=1)
 
 
-def run_alns(prbl: ProblemDataExtended, num_alns_iterations: int, warm_start: bool = False, verbose: bool = True) -> \
-        Union[Dict[Tuple[str, str, int], int], None, Alns]:
+def run_alns(prbl: ProblemDataExtended, iterations: int, skip_production_problem_postprocess: bool = False,
+             verbose: bool = True) -> Union[Dict[Tuple[str, str, int], int], None, Alns]:
     precedence = prbl.precedence
     destroy_op = ['d_random',
                   'd_worst',
@@ -726,8 +726,6 @@ def run_alns(prbl: ProblemDataExtended, num_alns_iterations: int, warm_start: bo
                 verbose=False
                 )
 
-    iterations = num_alns_iterations
-
     if verbose:
         print("Route after initialization")
         alns.current_sol.print_routes()
@@ -759,17 +757,15 @@ def run_alns(prbl: ProblemDataExtended, num_alns_iterations: int, warm_start: bo
             _stat_noise_weights[op].append(score)
         print()
 
-    if warm_start:  # do not need to solve the production problem
+    if skip_production_problem_postprocess:  # do not need to solve the production problem
         alns.best_sol.print_routes()
         return alns.best_sol.get_y_dict()
 
     try:
         alns.best_sol_production_cost = alns.production_model.get_production_cost(alns.best_sol, verbose=True,
                                                                                   time_limit=30)
-        alns.production_model.print_solution2()
     except ValueError:
         alns.best_sol_production_cost = alns.production_heuristic.get_cost(alns.best_sol)
-        alns.production_heuristic.print_sol()
 
     print()
     print(f"...ALNS terminating  ({round(time() - t0)}s)")
@@ -779,7 +775,7 @@ def run_alns(prbl: ProblemDataExtended, num_alns_iterations: int, warm_start: bo
         print("Not served:", alns.best_sol.get_orders_not_served())
 
         try:
-            alns.production_model.print_solution2()
+            alns.production_model.print_solution_simple()
 
             print("Routing obj:", alns.best_sol_cost, "Prod obj:", round(alns.best_sol_production_cost, 1),
                   "Total:", alns.best_sol_cost + round(alns.best_sol_production_cost, 1))
@@ -807,7 +803,7 @@ if __name__ == '__main__':
 
     precedence: bool = True
     num_alns_iterations = 1000
-    write_solution = False
+    write_solution_details = False
 
     # prbl = ProblemDataExtended('../../data/input_data/large_testcase.xlsx', precedence=precedence)
     # prbl = ProblemDataExtended('../../data/input_data/gurobi_testing/f1-v3-o20-t72-i0.05-tw4.xlsx', precedence=precedence)
@@ -821,7 +817,7 @@ if __name__ == '__main__':
 
     for i in range(args.num_runs):
         alns = run_alns(prbl, num_alns_iterations)
-        if write_solution:
+        if write_solution_details:
             # TODO: Write actual solution to separate excel file
             pass
         alns.write_to_file(excel_writer, i)

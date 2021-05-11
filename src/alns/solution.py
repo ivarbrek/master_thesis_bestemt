@@ -1,3 +1,8 @@
+import sys
+import os
+
+sys.path.append(os.getcwd())
+
 from __future__ import annotations
 from typing import List, Dict, Tuple
 import math
@@ -9,8 +14,7 @@ import random
 from src.read_problem_data import ProblemData
 from src.util.print import bcolors
 
-import sys
-sys.path.append('/Users/srandoy/git/master_thesis_bestemt/')
+
 
 int_inf = 9999
 
@@ -37,7 +41,8 @@ class ProblemDataExtended(ProblemData):
         self.precedence = precedence
         self._init_nodes()
         self._init_quay_capacities()
-        self.max_transport_cost = {vessel: max(cost for (v, i, j), cost in self.transport_times.items() if v == vessel)
+        self.max_transport_cost = {vessel: max(self.transport_unit_costs[v] * t
+                                               for (v, i, j), t in self.transport_times.items() if v == vessel)
                                    for vessel in self.vessels}
 
     def _init_nodes(self) -> None:
@@ -84,8 +89,7 @@ class Solution:
 
         self.routes: Dict[str, List[str]] = {v: [self.prbl.vessel_initial_locations[v]] for v in self.prbl.vessels}
         self.e: Dict[str, List[int]] = {v: [max(1, self.prbl.start_times_for_vessels[v] + 1)] for v in self.prbl.vessels}
-        self.l: Dict[str, List[int]] = {v: [len(self.prbl.time_periods) - 1] for v in
-                                        self.prbl.vessels}  # changed from just len
+        self.l: Dict[str, List[int]] = {v: [len(self.prbl.time_periods) - 1] for v in self.prbl.vessels}
         self.factory_visits: Dict[str, List[str]] = self._init_factory_visits()
         self.factory_visits_route_index: Dict[str, List[int]] = {f: [0 for _ in self.factory_visits[f]]
                                                                  for f in self.prbl.factory_nodes}
@@ -151,6 +155,7 @@ class Solution:
                                     noise_factor: float = 0.0, ppfc: bool = False) -> bool:
         node = self.prbl.nodes[node_id]
         idx = len(self.temp_routes[vessel]) if idx > len(self.temp_routes[vessel]) else idx
+
         # Checks that do NOT assume node is inserted in temp:
         if not self.check_node_for_vessel_feasibility(node, vessel):
             return False
@@ -528,6 +533,9 @@ class Solution:
         else:  # destination factories are unchanged or 'removed'
             return True
 
+    def check_node_for_vessel_feasibility(self, insert_node: Node, vessel: str) -> bool:
+        return self.prbl.nodes_for_vessels[(vessel, insert_node.id)] == 1
+
     def check_load_feasibility(self, insert_node: Node, vessel: str, idx: int) -> bool:
         route = self.routes[vessel]
         voyage_start, voyage_end = self.get_voyage_start_end_idx(vessel, idx)
@@ -751,36 +759,39 @@ class Solution:
         return factory_visits_route_idx
 
     def get_solution_routing_cost(self) -> int:
-        transport_cost = sum(self.prbl.transport_times[vessel, route[i - 1], route[i]] * self.prbl.transport_unit_costs[vessel]
+        transport_times = self.prbl.transport_times_exact
+        transport_cost = sum(transport_times[vessel, route[i - 1], route[i]] * self.prbl.transport_unit_costs[vessel]
                              for vessel, route in self.routes.items()
                              for i in range(1, len(route)))
         unmet_order_cost = sum(self.prbl.external_delivery_penalties[order_node]
                                for order_node in self.get_orders_not_served())
-        return transport_cost + unmet_order_cost
+        return round(transport_cost + unmet_order_cost)
 
     def get_route_profit(self, vessel: str):
         route = self.routes[vessel]
+        transport_times = self.prbl.transport_times_exact
         order_profits = sum(self.prbl.external_delivery_penalties[node_id]
                             for node_id in route if not self.prbl.nodes[node_id].is_factory)
-        transport_cost = sum(self.prbl.transport_times[vessel, route[i - 1], route[i]] * self.prbl.transport_unit_costs[vessel]
+        transport_cost = sum(transport_times[vessel, route[i - 1], route[i]] * self.prbl.transport_unit_costs[vessel]
                              for i in range(1, len(route)))
         return order_profits - transport_cost
 
     def get_voyage_profit(self, vessel: str, voyage_start_idx: int):
         route = self.routes[vessel]
+        transport_times = self.prbl.transport_times_exact
         voyage_indexes = [i for i in range(self.get_temp_voyage_end_idx(vessel, voyage_start_idx))]
         node_before = route[max(0, voyage_indexes[0] - 1)]
         node_after = route[min(len(route) - 1, voyage_indexes[-1] + 1)]
         order_profits = sum(self.prbl.external_delivery_penalties[route[i]]
                             for i in voyage_indexes if not self.prbl.nodes[route[i]].is_factory)
-        transport_cost = sum(self.prbl.transport_times[vessel, route[i], route[i + 1]] * self.prbl.transport_unit_costs[vessel]
+        transport_cost = sum(transport_times[vessel, route[i], route[i + 1]] * self.prbl.transport_unit_costs[vessel]
                              for i in voyage_indexes)
-        new_transport_cost = self.prbl.transport_times[vessel, node_before, node_after] * self.prbl.transport_unit_costs[vessel]
+        new_transport_cost = transport_times[vessel, node_before, node_after] * self.prbl.transport_unit_costs[vessel]
         return order_profits - transport_cost + new_transport_cost
 
     def get_insertion_utility(self, node: Node, vessel: str, idx: int, noise_factor: float = 0) -> float:  # High utility -> good insertion
         route = self.temp_routes[vessel]
-        transport_times = self.prbl.transport_times
+        transport_times = self.prbl.transport_times_exact
         if idx < len(self.temp_routes[vessel]) - 1:  # node to be inserted is not at end of route
             net_sail_change = (transport_times[vessel, route[idx - 1], node.id] + transport_times[vessel, node.id, route[idx]]
                                - transport_times[vessel, route[idx - 1], route[idx]])
@@ -796,13 +807,14 @@ class Solution:
 
     def get_removal_utility(self, vessel: str, idx: int) -> float:  # High utility -> good removal ("remove worst node")
         route = self.routes[vessel]
+        transport_times = self.prbl.transport_times_exact
         if idx >= len(route):
             print("Index", idx, "does not exist for vessel", vessel)
             return -1
-        net_sail_change = - self.prbl.transport_times[vessel, route[idx - 1], route[idx]]
+        net_sail_change = - transport_times[vessel, route[idx - 1], route[idx]]
         if idx < len(self.routes[vessel]) - 1:
-            net_sail_change += (self.prbl.transport_times[vessel, route[idx - 1], route[idx + 1]]
-                                - self.prbl.transport_times[vessel, route[idx], route[idx + 1]])
+            net_sail_change += (transport_times[vessel, route[idx - 1], route[idx + 1]]
+                                - transport_times[vessel, route[idx], route[idx + 1]])
         delivery_penalty = (self.prbl.external_delivery_penalties[route[idx]]
                             if not self.prbl.nodes[route[idx]].is_factory else 0)
 

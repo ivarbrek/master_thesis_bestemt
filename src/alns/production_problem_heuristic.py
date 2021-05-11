@@ -64,6 +64,8 @@ class ProductionProblemSolution:
                                                  self.prbl.base_problem.production_lines_for_factories
                                                  if f2 == self.factory}
         self.inventory: Dict[int, List[int]] = self._init_inventory()
+        self.filled_ranges: Dict[str, List[Tuple[int, int]]] = self._set_filled_ranges()  # new
+
 
     def _init_inventory(self) -> Dict[int, List[int]]:
         init_inventory = np.array(self.prbl.init_inventory[self.factory])
@@ -92,9 +94,11 @@ class ProductionProblemSolution:
                        self.get_insertion_cost(prod_line, t_insert, product_idx, t_demand))
                       for prod_line in self.activities.keys()
                       for product_idx in unmet_demand_product_idxs
-                      for t_insert in range(0, t_demand)  # may insert until t_demand
+                      # for t_insert in range(0, t_demand)  # old
+                      for t_insert in self._get_t_insert_cands(prod_line, t_demand)  # new
                       if self.insertion_is_feasible(prod_line, t_insert, product_idx, t_demand)]
         return candidates
+
 
     def insertion_is_feasible(self, prod_line: str, t_insert: int, product: int, t_demand: int,
                               check_min_periods: bool = True) -> bool:
@@ -161,6 +165,9 @@ class ProductionProblemSolution:
         remaining_pickups = [t for t in self.inventory.keys() if t >= t_demand]
         for t in remaining_pickups:
             self.inventory[t][product] += extra_production
+
+        # Update filled ranges
+        self._update_filled_ranges(prod_line, t_insert)  # new
 
         # A new insertion must be made (assumes min_production_periods in [1, 2]
         if min_production_periods > 1 and not (activity_before == product or activity_after == product):
@@ -230,6 +237,71 @@ class ProductionProblemSolution:
         idx = min(bisect.bisect_left(pickup_t_list, t), len(pickup_t_list) - 1)
         return pickup_t_list[idx + 1]
 
+    def _get_t_insert_cands(self, prod_line: str, t_demand: int) -> List[int]:
+        insert_times = [t_demand - 1]
+        for filled_start, filled_end in self.filled_ranges[prod_line]:
+            if filled_start >= t_demand:
+                break
+            insert_times += [t for t in range(max(0, filled_start - 2), filled_start)]  # the 2 steps before
+            insert_times += [t for t in range(filled_end + 1, filled_end + 2) if t < t_demand]  # one step after
+        return insert_times
+
+    def _update_filled_ranges(self, prod_line: str, t_insert: int):
+        next_range_idx = bisect.bisect(self.filled_ranges[prod_line], (t_insert, ))
+        if next_range_idx == 0:
+            next_range_start, next_range_end = self.filled_ranges[prod_line][next_range_idx]
+            if next_range_start - t_insert <= 2:
+                self.filled_ranges[prod_line][next_range_idx] = (t_insert, next_range_end)
+            else:
+                # insert is adjacent to no other range
+                self.filled_ranges[prod_line].append((t_insert, t_insert))
+                self.filled_ranges[prod_line].sort(key=lambda item: item[0])
+
+        elif next_range_idx == len(self.filled_ranges[prod_line]):  # insert after filled ranges
+            prev_range_start, prev_range_end = self.filled_ranges[prod_line][next_range_idx - 1]
+            if t_insert - prev_range_end <= 1:
+                # insert is adjacent to previous range
+                self.filled_ranges[prod_line][next_range_idx - 1] = (prev_range_start, t_insert)
+            else:
+                # insert is adjacent to no other range
+                self.filled_ranges[prod_line].append((t_insert, t_insert))
+                self.filled_ranges[prod_line].sort(key=lambda item: item[0])
+        else:
+            next_range_start, next_range_end = self.filled_ranges[prod_line][next_range_idx]
+            prev_range_start, prev_range_end = self.filled_ranges[prod_line][next_range_idx - 1]
+            if t_insert - prev_range_end <= 1 and next_range_start - t_insert <= 2:
+                # insert is adjacent to previous and next range -> merge ranges
+                self.filled_ranges[prod_line][next_range_idx - 1] = (prev_range_start, next_range_end)
+                self.filled_ranges[prod_line].pop(next_range_idx)
+            elif t_insert - prev_range_end <= 1:
+                # insert is adjacent to previous range
+                self.filled_ranges[prod_line][next_range_idx - 1] = (prev_range_start, t_insert)
+            elif next_range_start - t_insert <= 2:
+                # insert is adjacent to next range
+                self.filled_ranges[prod_line][next_range_idx] = (t_insert, next_range_end)
+            else:
+                # insert is adjacent to no other range
+                self.filled_ranges[prod_line].append((t_insert, t_insert))
+                self.filled_ranges[prod_line].sort(key=lambda item: item[0])
+
+    def _set_filled_ranges(self) -> Dict[str, List[Tuple[int, int]]]:
+        filled_ranges = {prod_line: [] for prod_line in self.activities.keys()}
+        for prod_line, activities in self.activities.items():
+            prev_is_filled = activities[0] is not None
+            range_start = 0
+            i = 1
+            while i < len(activities):
+                is_filled = activities[i] is not None
+                if is_filled and not prev_is_filled:
+                    range_start = i
+                elif prev_is_filled and not is_filled:
+                    filled_ranges[prod_line].append((range_start, i - 1))
+                i += 1
+                prev_is_filled = is_filled
+            if prev_is_filled:
+                filled_ranges[prod_line].append((range_start, i))
+        return filled_ranges
+
     def _get_activity_before_and_after(self, prod_line: str, t_insert: int) -> Tuple[Any, Any]:
         activity_before = self.activities[prod_line][t_insert - 1] if t_insert > 0 else 'stop'
         activity_after = self.activities[prod_line][t_insert + 1] if t_insert < len(self.activities[prod_line]) else 'stop'
@@ -281,10 +353,10 @@ class ProductionProblemHeuristic:
             is_feasible = self.construct_greedy(sol)
             # sol.print()
             if not is_feasible:
-                print(round(time() - t0, 1), "s (h) (infeasible)", sep="")
+                print(round(time() - t0, 3), "s (h) (infeasible)", sep="")
                 return False, factory
             self.solution[factory] = sol
-        print(round(time() - t0, 1), "s (h)", sep="")
+        print(round(time() - t0, 3), "s (h)", sep="")
         return True, ''
 
     def get_cost(self, routing_sol: Solution):

@@ -25,6 +25,8 @@ class ProblemData:
                                                              skiprows=[0])
         self.transport_unit_costs_df = pd.read_excel(file_path, sheet_name='transport_cost', index_col=0, skiprows=[0])
         self.transport_times_df = pd.read_excel(file_path, sheet_name='transport_time', index_col=[0, 1], skiprows=[0])
+        self.transport_times_exact_df = pd.read_excel(file_path, sheet_name='transport_time_exact', index_col=[0, 1],
+                                                      skiprows=[0])
         self.loading_unloading_times_df = pd.read_excel(file_path, sheet_name='loading_unloading_time', index_col=0,
                                                         skiprows=[0])
         self.demands_df = pd.read_excel(file_path, sheet_name='demand', index_col=0, skiprows=[0])
@@ -75,6 +77,7 @@ class ProblemData:
         self.loading_unloading_times = self.get_loading_unloading_times_dict()
         self.transport_unit_costs = self.get_transport_costs_dict()
         self.transport_times = self.get_transport_times_per_vessel_dict()
+        self.transport_times_exact = self.get_transport_times_per_vessel_dict(exact=True)
         # self.transport_times = self.get_transport_times_dict()  # depreciated
         self.arcs_for_vessels = self.generate_arcs_for_vessels()
         self.demands = self.get_demands_dict()
@@ -260,16 +263,21 @@ class ProblemData:
         return {vessel: self.transport_unit_costs_df.loc[vessel, 'unit_transport_cost'] for vessel in
                 self.transport_unit_costs_df.index}
 
-    def get_transport_times_per_vessel_dict(self) -> Dict[Tuple[str, str, str], int]:
+    def get_transport_times_per_vessel_dict(self, exact: bool = False) -> Dict[Tuple[str, str, str], int]:
         # Triangle inequality holds for all distances in original distance matrix
-        d = {**{(vessel, orig, dest): self.transport_times_df.loc[(orig, vessel), dest]
-                for orig in self.transport_times_df.index.levels[0]
-                for dest in self.transport_times_df.columns
-                for vessel in self.transport_times_df.index.levels[1]},
-             **{(vessel, 'd_0', node): 1 for node in self.transport_times_df.index.levels[0]
-                for vessel in self.transport_times_df.index.levels[1]},
-             **{(vessel, node, 'd_-1'): 1 for node in self.transport_times_df.index.levels[0]
-                for vessel in self.transport_times_df.index.levels[1]}}
+        if exact:
+            transport_times_df = self.transport_times_exact_df
+        else:
+            transport_times_df = self.transport_times_df
+
+        d = {**{(vessel, orig, dest): transport_times_df.loc[(orig, vessel), dest]
+                for orig in transport_times_df.index.levels[0]
+                for dest in transport_times_df.columns
+                for vessel in transport_times_df.index.levels[1]},
+             **{(vessel, 'd_0', node): 1 for node in transport_times_df.index.levels[0]
+                for vessel in transport_times_df.index.levels[1]},
+             **{(vessel, node, 'd_-1'): 1 for node in transport_times_df.index.levels[0]
+                for vessel in transport_times_df.index.levels[1]}}
         return d
 
     def get_loading_unloading_times_dict(self) -> Dict[Tuple[str, str], int]:
@@ -360,12 +368,8 @@ class ProblemData:
                 for factory in self.factory_max_vessels_loading_df.columns}
 
     def get_external_delivery_penalties_dict(self) -> Dict[str, int]:
-        return {order: 2 * int(max(self.get_transport_times_per_vessel_dict().values())
-                               * max(self.get_transport_costs_dict().values()))
-                for order in self.order_nodes}
-        # return {order: (int(self.get_key_value("external_delivery_unit_penalty")) *
-        #                 sum(self.demands_df.loc[order, product] for product in self.demands_df.columns))
-        #         for order in self.order_nodes}
+        max_transport_cost = max(self.get_transport_costs_dict().values()) * max(self.get_transport_times_per_vessel_dict().values())
+        return {order: 2 * int(max_transport_cost) for order in self.order_nodes}
 
     def get_factory_max_vessels_destination_dict(self) -> Dict[str, int]:
         return {factory: int(self.factory_max_vessel_destination_df.loc[factory])
