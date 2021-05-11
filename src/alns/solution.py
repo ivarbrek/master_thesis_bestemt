@@ -34,7 +34,8 @@ class ProblemDataExtended(ProblemData):
         self.precedence = precedence
         self._init_nodes()
         self._init_quay_capacities()
-        self.max_transport_cost = {vessel: max(cost for (v, i, j), cost in self.transport_times.items() if v == vessel)
+        self.max_transport_cost = {vessel: max(self.transport_unit_costs[v] * t
+                                               for (v, i, j), t in self.transport_times.items() if v == vessel)
                                    for vessel in self.vessels}
 
     def _init_nodes(self) -> None:
@@ -80,9 +81,8 @@ class Solution:
         self.debug = debug
 
         self.routes: Dict[str, List[str]] = {v: [self.prbl.vessel_initial_locations[v]] for v in self.prbl.vessels}
-        self.e: Dict[str, List[int]] = {v: [max(1, self.prbl.start_times_for_vessels[v])] for v in self.prbl.vessels}
-        self.l: Dict[str, List[int]] = {v: [len(self.prbl.time_periods) - 1] for v in
-                                        self.prbl.vessels}  # changed from just len
+        self.e: Dict[str, List[int]] = {v: [max(1, self.prbl.start_times_for_vessels[v] + 1)] for v in self.prbl.vessels}
+        self.l: Dict[str, List[int]] = {v: [len(self.prbl.time_periods) - 1] for v in self.prbl.vessels}
         self.factory_visits: Dict[str, List[str]] = self._init_factory_visits()
         self.factory_visits_route_index: Dict[str, List[int]] = {f: [0 for _ in self.factory_visits[f]]
                                                                  for f in self.prbl.factory_nodes}
@@ -148,7 +148,11 @@ class Solution:
                                     noise_factor: float = 0.0, ppfc: bool = False) -> bool:
         node = self.prbl.nodes[node_id]
         idx = len(self.temp_routes[vessel]) if idx > len(self.temp_routes[vessel]) else idx
+
         # Checks that do NOT assume node is inserted in temp:
+        if not self.check_node_for_vessel_feasibility(node, vessel):
+            return False
+
         if not self.check_load_feasibility(node, vessel, idx):
             return False
 
@@ -174,7 +178,7 @@ class Solution:
         node = self.prbl.nodes[route[idx]]
 
         prev_node_id = route[idx - 1] if idx > 0 else None
-        prev_e = self.temp_e[vessel][idx - 1] if prev_node_id else self.prbl.start_times_for_vessels[vessel]
+        prev_e = self.temp_e[vessel][idx - 1] if prev_node_id else self.prbl.start_times_for_vessels[vessel] + 1
 
         prev_transport_time = self.prbl.transport_times[vessel, prev_node_id, node.id] if prev_node_id else 0
         prev_loading_unloading_time = self.prbl.loading_unloading_times[vessel, prev_node_id] if prev_node_id else 0
@@ -521,6 +525,9 @@ class Solution:
                     <= self.prbl.factory_max_vessels_destination[node_id])
         else:  # destination factories are unchanged or 'removed'
             return True
+
+    def check_node_for_vessel_feasibility(self, insert_node: Node, vessel: str) -> bool:
+        return self.prbl.nodes_for_vessels[(vessel, insert_node.id)] == 1
 
     def check_load_feasibility(self, insert_node: Node, vessel: str, idx: int) -> bool:
         route = self.routes[vessel]
