@@ -126,3 +126,10 @@ dmypy.json
 
 # IDE
 .idea/
+
+# data files
+/data
+/cache
+
+# iOS .DS_store
+.DS_store
