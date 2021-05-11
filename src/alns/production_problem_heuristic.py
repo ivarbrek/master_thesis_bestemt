@@ -290,7 +290,7 @@ class ProductionProblemSolution:
             prev_is_filled = activities[0] is not None
             range_start = 0
             i = 1
-            while i < len(activities) - 1:
+            while i < len(activities):
                 is_filled = activities[i] is not None
                 if is_filled and not prev_is_filled:
                     range_start = i
@@ -298,6 +298,8 @@ class ProductionProblemSolution:
                     filled_ranges[prod_line].append((range_start, i - 1))
                 i += 1
                 prev_is_filled = is_filled
+            if prev_is_filled:
+                filled_ranges[prod_line].append((range_start, i))
         return filled_ranges
 
     def _get_activity_before_and_after(self, prod_line: str, t_insert: int) -> Tuple[Any, Any]:
@@ -351,10 +353,10 @@ class ProductionProblemHeuristic:
             is_feasible = self.construct_greedy(sol)
             # sol.print()
             if not is_feasible:
-                print(round(time() - t0, 1), "s (h) (infeasible)", sep="")
+                print(round(time() - t0, 3), "s (h) (infeasible)", sep="")
                 return False, factory
             self.solution[factory] = sol
-        print(round(time() - t0, 1), "s (h)", sep="")
+        print(round(time() - t0, 3), "s (h)", sep="")
         return True, ''
 
     def get_cost(self, routing_sol: Solution):

@@ -145,7 +145,7 @@ class TestDataGenerator:
         self.write_factory_max_vessel_loading_to_file(quay_activity_level, time_periods, time_period_length)
         self.write_initial_inventory_to_file(factory_level, ext_depot_level, orders)
         self.write_inventory_capacity_to_file()
-        self.write_inventory_cost_to_file()
+        self.write_inventory_cost_to_file(time_period_length)
         self.write_production_start_cost_to_file(no_products)
         self.write_product_group_to_file(no_product_groups, no_products)
         self.write_production_lines_for_factory_to_file()
@@ -262,7 +262,7 @@ class TestDataGenerator:
             self.write_initial_inventory_to_file(factory_level, ext_depot_level, orders, excel_writer=writer,
                                                  df=init_inventory)
             self.write_inventory_capacity_to_file(excel_writer=writer)
-            self.write_inventory_cost_to_file(excel_writer=writer)
+            self.write_inventory_cost_to_file(time_period_length, excel_writer=writer)
             self.write_production_start_cost_to_file(no_products, excel_writer=writer)
             self.write_product_group_to_file(no_product_groups, no_products, excel_writer=writer, df=product_groups)
             self.write_production_lines_for_factory_to_file(excel_writer=writer)
@@ -451,8 +451,8 @@ class TestDataGenerator:
         df = df.set_index('factory')
         return df
 
-    def get_inventory_cost(self) -> pd.DataFrame:
-        data = [(factory_node, self.factories_df.loc[location, 'inventory_cost'])
+    def get_inventory_cost(self, time_period_length: int) -> pd.DataFrame:
+        data = [(factory_node, self.factories_df.loc[location, 'inventory_cost'] * time_period_length)
                 for factory_node, location in self.nlm.get_factory_items()]
         df = pd.DataFrame(data)
         df.columns = ['factory', 'unit_cost']
@@ -802,10 +802,10 @@ class TestDataGenerator:
         df = self.get_inventory_capacity()
         df.to_excel(excel_writer, sheet_name="inventory_capacity", startrow=1)
 
-    def write_inventory_cost_to_file(self, excel_writer: pd.ExcelWriter = None) -> None:
+    def write_inventory_cost_to_file(self, time_period_length: int, excel_writer: pd.ExcelWriter = None) -> None:
         if not excel_writer:
             excel_writer = self.excel_writer
-        df = self.get_inventory_cost()
+        df = self.get_inventory_cost(time_period_length)
         df.to_excel(excel_writer, sheet_name="inventory_cost", startrow=1)
 
     def write_product_group_to_file(self, no_product_groups: int, no_products: int, excel_writer: pd.ExcelWriter = None,
@@ -899,9 +899,9 @@ if __name__ == '__main__':
     #                                     plot_locations=False
     #                                     )
 
-    time_periods_list = [160, 80]
+    time_periods_list = [320, 160]
     time_period_lengths = [1, 2]
-    no_orders = 10
+    no_orders = 20
     tdg.write_duplicate_test_instances_to_file_time_periods(
         out_filepaths=[f"../../data/input_data/test_{no_orders}o_{tps}t.xlsx" for tps in time_periods_list],
         # Input parameters varying:

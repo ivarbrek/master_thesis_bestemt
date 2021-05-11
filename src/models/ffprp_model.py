@@ -1210,8 +1210,8 @@ if __name__ == '__main__':
         problem_data_ext = ProblemDataExtended(file_path)  # TODO: Fix to avoid to prbl reads (problem with nodes field)
         problem_data_ext.soft_tw = extensions
         t = time()
-        y_init_dict = src.alns.alns.run_alns(prbl=problem_data_ext, num_alns_iterations=num_alns_iterations,
-                                             warm_start=partial_warm_start, verbose=False)
+        y_init_dict = src.alns.alns.run_alns(prbl=problem_data_ext, iterations=num_alns_iterations,
+                                             skip_production_problem_postprocess=partial_warm_start, verbose=False)
         print(f"ALNS warmup time {round(time() - t, 1)}")
 
     model = FfprpModel(problem_data, extended_model=extensions, y_init_dict=y_init_dict)

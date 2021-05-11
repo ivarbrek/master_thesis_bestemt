@@ -95,7 +95,7 @@ class Alns:
         self.current_sol = self.adjust_sol_exact(self.current_sol, remove_num=self.remove_num_adjust)
         self.current_sol_cost = self.current_sol.get_solution_routing_cost()
         self.best_sol = self.current_sol
-        self.best_sol_cost = self.current_sol_cost
+        self.best_sol_cost = round(self.current_sol_cost)
         self.record_solution(self.current_sol)
 
         # Operator weights, scores and usage
@@ -639,7 +639,7 @@ class Alns:
         # set x∗ =x
         if self.update_type == 0:  # type 0 means global best solution is found
             self.best_sol = self.current_sol
-            self.best_sol_cost = self.current_sol_cost
+            self.best_sol_cost = round(self.current_sol_cost)
             self.new_best_solution_feasible_production_count += 1
             if self.verbose:
                 print(f'> Solution is accepted as best solution')
@@ -658,8 +658,8 @@ class Alns:
         self.it_seg_count += 1
 
 
-def run_alns(prbl: ProblemDataExtended, num_alns_iterations: int, warm_start: bool = False, verbose: bool = True) -> \
-        Union[Dict[Tuple[str, str, int], int], None]:
+def run_alns(prbl: ProblemDataExtended, iterations: int, skip_production_problem_postprocess: bool = False,
+             verbose: bool = True) -> Union[Dict[Tuple[str, str, int], int], None]:
     precedence = prbl.precedence
     destroy_op = ['d_random',
                   'd_worst',
@@ -696,13 +696,11 @@ def run_alns(prbl: ProblemDataExtended, num_alns_iterations: int, warm_start: bo
                 verbose=False
                 )
 
-    iterations = num_alns_iterations
-
     if verbose:
         print("Route after initialization")
         alns.current_sol.print_routes()
         print(f"Obj: {alns.current_sol_cost:n}   Not served: {alns.current_sol.get_orders_not_served()}")
-        print("\nRemove num:", alns.remove_num, "\n")
+        print("\nRemove num:", alns.remove_num_interval, "\n")
 
     _stat_solution_cost = []
     _stat_repair_weights = defaultdict(list)
@@ -729,7 +727,7 @@ def run_alns(prbl: ProblemDataExtended, num_alns_iterations: int, warm_start: bo
             _stat_noise_weights[op].append(score)
         print()
 
-    if warm_start:  # do not need to solve the production problem
+    if skip_production_problem_postprocess:  # do not need to solve the production problem
         alns.best_sol.print_routes()
         return alns.best_sol.get_y_dict()
 
@@ -747,7 +745,7 @@ def run_alns(prbl: ProblemDataExtended, num_alns_iterations: int, warm_start: bo
         print("Not served:", alns.best_sol.get_orders_not_served())
 
         try:
-            alns.production_model.print_solution2()
+            alns.production_model.print_solution_simple()
 
             print("Routing obj:", alns.best_sol_cost, "Prod obj:", round(alns.best_sol_production_cost, 1),
                   "Total:", alns.best_sol_cost + round(alns.best_sol_production_cost, 1))
