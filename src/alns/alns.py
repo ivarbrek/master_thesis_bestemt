@@ -793,6 +793,8 @@ def run_alns(prbl: ProblemDataExtended, iterations: int, skip_production_problem
         util.plot_operator_weights(_stat_repair_weights)
         util.plot_operator_weights(_stat_noise_weights)
 
+    return alns
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='process ALNS input parameters')

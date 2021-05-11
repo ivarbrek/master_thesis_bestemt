@@ -1,9 +1,10 @@
+from __future__ import annotations
+
 import sys
 import os
 
 sys.path.append(os.getcwd())
 
-from __future__ import annotations
 from typing import List, Dict, Tuple
 import math
 
@@ -13,8 +14,6 @@ import bisect
 import random
 from src.read_problem_data import ProblemData
 from src.util.print import bcolors
-
-
 
 int_inf = 9999
 
@@ -88,7 +87,8 @@ class Solution:
         self.debug = debug
 
         self.routes: Dict[str, List[str]] = {v: [self.prbl.vessel_initial_locations[v]] for v in self.prbl.vessels}
-        self.e: Dict[str, List[int]] = {v: [max(1, self.prbl.start_times_for_vessels[v] + 1)] for v in self.prbl.vessels}
+        self.e: Dict[str, List[int]] = {v: [max(1, self.prbl.start_times_for_vessels[v] + 1)] for v in
+                                        self.prbl.vessels}
         self.l: Dict[str, List[int]] = {v: [len(self.prbl.time_periods) - 1] for v in self.prbl.vessels}
         self.factory_visits: Dict[str, List[str]] = self._init_factory_visits()
         self.factory_visits_route_index: Dict[str, List[int]] = {f: [0 for _ in self.factory_visits[f]]
@@ -528,7 +528,8 @@ class Solution:
         node = self.prbl.nodes[node_id]
 
         if node.is_factory:
-            return (len([v for v in self.prbl.vessels if (self.temp_routes[v][-1] == node_id and len(self.temp_routes[v]) > 1)])
+            return (len([v for v in self.prbl.vessels if
+                         (self.temp_routes[v][-1] == node_id and len(self.temp_routes[v]) > 1)])
                     <= self.prbl.factory_max_vessels_destination[node_id])
         else:  # destination factories are unchanged or 'removed'
             return True
@@ -564,7 +565,8 @@ class Solution:
                 if (not self.prbl.nodes[self.temp_routes[vessel][idx]].is_factory and
                         self.get_temp_voyage_start_factory(vessel=vessel, idx=idx) == f):  # added order picked up at f
                     factories_to_check.append(f)
-                elif self.is_factory_latest_changed_in_temp(f):  # factory may have to be ready for vessel loading earlier
+                elif self.is_factory_latest_changed_in_temp(
+                        f):  # factory may have to be ready for vessel loading earlier
                     factories_to_check.append(f)
         else:
             factories_to_check = list(self.prbl.factory_nodes.keys())
@@ -681,7 +683,6 @@ class Solution:
 
         return demands
 
-
     def remove_node(self, vessel: str, idx: int):
         node = self.prbl.nodes[self.routes[vessel][idx]]
         if node.is_factory:
@@ -789,12 +790,14 @@ class Solution:
         new_transport_cost = transport_times[vessel, node_before, node_after] * self.prbl.transport_unit_costs[vessel]
         return order_profits - transport_cost + new_transport_cost
 
-    def get_insertion_utility(self, node: Node, vessel: str, idx: int, noise_factor: float = 0) -> float:  # High utility -> good insertion
+    def get_insertion_utility(self, node: Node, vessel: str, idx: int,
+                              noise_factor: float = 0) -> float:  # High utility -> good insertion
         route = self.temp_routes[vessel]
         transport_times = self.prbl.transport_times_exact
         if idx < len(self.temp_routes[vessel]) - 1:  # node to be inserted is not at end of route
-            net_sail_change = (transport_times[vessel, route[idx - 1], node.id] + transport_times[vessel, node.id, route[idx]]
-                               - transport_times[vessel, route[idx - 1], route[idx]])
+            net_sail_change = (
+                        transport_times[vessel, route[idx - 1], node.id] + transport_times[vessel, node.id, route[idx]]
+                        - transport_times[vessel, route[idx - 1], route[idx]])
         elif not node.is_factory:  # insert order at the end of route
             # assuming that vessel must sail back to the destination factory afterwards
             net_sail_change = 2 * transport_times[vessel, route[idx - 1], node.id]
