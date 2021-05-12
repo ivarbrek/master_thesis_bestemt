@@ -1,8 +1,3 @@
-import sys
-import os
-
-sys.path.append(os.getcwd())
-
 import math
 import random
 import numpy as np
@@ -657,6 +652,7 @@ class Alns:
             print("New best solutions' routing obj:", self.best_sol_cost)
 
         if self.update_type == -2:  # type -2 means solution gave global best routing, but was not production feasible
+            self.new_best_solution_infeasible_production_count += 1
             self.production_infeasibility_strike += 1
             if self.production_infeasibility_strike > self.production_infeasibility_strike_max:
                 self.current_sol.ppfc_slack_factor += self.ppfc_slack_increment
