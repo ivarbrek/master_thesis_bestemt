@@ -43,6 +43,7 @@ class ProblemDataExtended(ProblemData):
         self.max_transport_cost = {vessel: max(self.transport_unit_costs[v] * t
                                                for (v, i, j), t in self.transport_times.items() if v == vessel)
                                    for vessel in self.vessels}
+        self.no_time_periods = len(self.time_periods)
 
     def _init_nodes(self) -> None:
         f_nodes = self.factory_nodes[:]

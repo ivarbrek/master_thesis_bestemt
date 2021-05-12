@@ -1226,7 +1226,8 @@ class FfprpModel:
                          'number_orders_not_served': len(self.get_orders_not_served()),
                          'lower_bound': round(lb, 2),
                          'upper_bound': round(ub, 2),
-                         'mip_gap': str(round(((ub-lb)/ub)*100, 2)) + "%"}
+                         'mip_gap': str(round(((ub-lb)/ub)*100, 2)) + "%",
+                         'time_limit [sec]': self.solver_factory.options['TimeLimit']}
         # TODO: Add relevant data
         sheet_name = "run_" + str(id)
         df = pd.DataFrame(solution_dict, index=[0]).transpose()
@@ -1247,14 +1248,14 @@ if __name__ == '__main__':
     extensions = False  # extensions _not_ supported in generated test files
 
     # PARAMETERS TO CHANGE ###
-    time_limit = 30
+    time_limit = 3600
 
     # EXTERNAL RUN
     parser = argparse.ArgumentParser(description='process FFPRP input parameters')
     parser.add_argument('input_filepath', type=str, help='path of input data file')
     args = parser.parse_args()
     output_filepath = "data/output_data/gurobi-" + str(args.input_filepath.split("/")[-1])
-    # Execution line format: python3 src/models/ffprp_model.py data/input_data/f1-v3-o20-t50.xlsx 5
+    # Execution line format: python3 src/models/ffprp_model.py data/input_data/f1-v3-o20-t50.xlsx
 
     # PARAMETERS NOT TO CHANGE ###
     problem_data = ProblemData(args.input_filepath)  # ProblemData(file_path)

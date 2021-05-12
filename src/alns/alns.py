@@ -427,19 +427,19 @@ class Alns:
     def _relatedness_location_time(self, order1: str, order2: str, vessel: str) -> float:
         w_0 = self.related_removal_weight_param['relatedness_location_time'][0]
         w_1 = self.related_removal_weight_param['relatedness_location_time'][1]
-
         time_window_difference = (abs(self.current_sol.prbl.nodes[order1].tw_start
                                       - self.current_sol.prbl.nodes[order2].tw_start) +
                                   abs(self.current_sol.prbl.nodes[order1].tw_end
                                       - self.current_sol.prbl.nodes[order2].tw_end))
 
-        return w_0 * self.current_sol.prbl.transport_times[vessel, order1, order2] + w_1 * time_window_difference
+        # Normalize difference with respect to n.o. time periods in problem
+        time_window_difference /= self.current_sol.prbl.no_time_periods
+        return w_0 * self.current_sol.prbl.transport_times_exact[vessel, order1, order2] + w_1 * time_window_difference
 
     def _relatedness_location_precedence(self, order1: str, order2: str, vessel: str) -> float:
         w_0 = self.related_removal_weight_param['relatedness_location_precedence'][0]
         w_1 = self.related_removal_weight_param['relatedness_location_precedence'][1]
-
-        return (w_0 * self.current_sol.prbl.transport_times[vessel, order1, order2] +
+        return (w_0 * self.current_sol.prbl.transport_times_exact[vessel, order1, order2] +
                 w_1 * self.relatedness_precedence[(self.current_sol.prbl.nodes[order1].zone,
                                                    self.current_sol.prbl.nodes[order2].zone)])
 
@@ -665,11 +665,14 @@ class Alns:
         self.temperature = self.temperature * self.cooling_rate
         self.it_seg_count += 1
 
-    def write_to_file(self, excel_writer: pd.ExcelWriter, id: int) -> None:
+    def write_to_file(self, excel_writer: pd.ExcelWriter, id: int, stop_criterion: str, alns_iter: int, alns_time: int) -> None:
         solution_dict = {'obj_val': round(self.best_sol_production_cost + self.best_sol_cost, 2),
                          'production_cost': round(self.best_sol_production_cost, 2),
                          'routing_cost': round(self.best_sol_cost, 2),
-                         'number_orders_not_served': len(self.best_sol.get_orders_not_served()),
+                         'num_orders_not_served': len(self.best_sol.get_orders_not_served()),
+                         'stop_crierion': stop_criterion,
+                         'num_iterations': alns_iter,
+                         'time [sec]': alns_time,
                          'score_params': str(alnsparam.score_params),
                          'reaction_param': str(alnsparam.reaction_param),
                          'start_temperature_controlparam': str(alnsparam.start_temperature_controlparam),
@@ -684,8 +687,15 @@ class Alns:
         df.to_excel(excel_writer, sheet_name=sheet_name, startrow=1)
 
 
-def run_alns(prbl: ProblemDataExtended, iterations: int, skip_production_problem_postprocess: bool = False,
-             verbose: bool = True) -> Union[Dict[Tuple[str, str, int], int], None, Alns]:
+def run_alns(prbl: ProblemDataExtended, iterations: int = 0, max_time: int = 0, skip_production_problem_postprocess: bool = False,
+             verbose: bool = True) -> Union[Dict[Tuple[str, str, int], int], None, Tuple[Alns, str, int, int]]:
+    if iterations == 0 and max_time == 0:
+        print(f"Required input parameters not provided. Cannot run ALNS.")
+        return
+    elif iterations * max_time != 0:
+        print(f"Multiple stopping criteria given. Choosing maximum time criteria, where max_time={max_time} sec.")
+        iterations = 0
+
     precedence = prbl.precedence
     destroy_op = ['d_random',
                   'd_worst',
@@ -736,11 +746,15 @@ def run_alns(prbl: ProblemDataExtended, iterations: int, skip_production_problem
     _stat_repair_weights = defaultdict(list)
     _stat_destroy_weights = defaultdict(list)
     _stat_noise_weights = defaultdict(list)
+    print(round(time(), 5))
     t0 = time()
-    for i in range(iterations):
+    print(t0)
+    i = 0
+    while i < iterations or (time() - t0) < max_time:
         if verbose:
             print("Iteration", i)
         alns.run_alns_iteration()
+        i += 1
 
         if verbose:
             alns.current_sol.print_routes()
@@ -767,8 +781,9 @@ def run_alns(prbl: ProblemDataExtended, iterations: int, skip_production_problem
     except ValueError:
         alns.best_sol_production_cost = alns.production_heuristic.get_cost(alns.best_sol)
 
+    alns_time = time() - t0
     print()
-    print(f"...ALNS terminating  ({round(time() - t0)}s)")
+    print(f"...ALNS terminating  ({round(alns_time)}s)")
     alns.best_sol.print_routes()
 
     if verbose:
@@ -788,12 +803,13 @@ def run_alns(prbl: ProblemDataExtended, iterations: int, skip_production_problem
         print(f"{len(alns.previous_solutions)} different solutions accepted")
         print(f"Repaired solution rejected {alns.ppfc_infeasible_count} times, because of PPFC infeasibility")
 
-        util.plot_alns_history(_stat_solution_cost)
-        util.plot_operator_weights(_stat_destroy_weights)
-        util.plot_operator_weights(_stat_repair_weights)
-        util.plot_operator_weights(_stat_noise_weights)
+        # util.plot_alns_history(_stat_solution_cost)
+        # util.plot_operator_weights(_stat_destroy_weights)
+        # util.plot_operator_weights(_stat_repair_weights)
+        # util.plot_operator_weights(_stat_noise_weights)
 
-    return alns
+    stop_criterion = str(max_time)+" sec" if iterations == 0 else str(iterations)+" iterations"
+    return alns, stop_criterion, i, int(alns_time)
 
 
 if __name__ == '__main__':
@@ -805,6 +821,7 @@ if __name__ == '__main__':
 
     precedence: bool = True
     num_alns_iterations = 1000
+    alns_runtime = 10*60  # choose in run_alns which stopping criteria to use: iterations or runtime
     write_solution_details = False
 
     # prbl = ProblemDataExtended('../../data/input_data/large_testcase.xlsx', precedence=precedence)
@@ -818,9 +835,10 @@ if __name__ == '__main__':
                                   options={'strings_to_formulas': False})
 
     for i in range(args.num_runs):
-        alns = run_alns(prbl, num_alns_iterations)
+        alns, stop_crierion, alns_iter, run_time = run_alns(prbl, max_time=alns_runtime) # iterations=num_alns_iterations)
         if write_solution_details:
             # TODO: Write actual solution to separate excel file
             pass
-        alns.write_to_file(excel_writer, i)
+        alns.write_to_file(excel_writer, i, stop_crierion, alns_iter, run_time)
+
     excel_writer.close()
