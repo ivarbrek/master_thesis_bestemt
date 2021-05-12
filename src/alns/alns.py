@@ -427,6 +427,7 @@ class Alns:
     def _relatedness_location_time(self, order1: str, order2: str, vessel: str) -> float:
         w_0 = self.related_removal_weight_param['relatedness_location_time'][0]
         w_1 = self.related_removal_weight_param['relatedness_location_time'][1]
+
         time_window_difference = (abs(self.current_sol.prbl.nodes[order1].tw_start
                                       - self.current_sol.prbl.nodes[order2].tw_start) +
                                   abs(self.current_sol.prbl.nodes[order1].tw_end
@@ -434,11 +435,13 @@ class Alns:
 
         # Normalize difference with respect to n.o. time periods in problem
         time_window_difference /= self.current_sol.prbl.no_time_periods
+
         return w_0 * self.current_sol.prbl.transport_times_exact[vessel, order1, order2] + w_1 * time_window_difference
 
     def _relatedness_location_precedence(self, order1: str, order2: str, vessel: str) -> float:
         w_0 = self.related_removal_weight_param['relatedness_location_precedence'][0]
         w_1 = self.related_removal_weight_param['relatedness_location_precedence'][1]
+
         return (w_0 * self.current_sol.prbl.transport_times_exact[vessel, order1, order2] +
                 w_1 * self.relatedness_precedence[(self.current_sol.prbl.nodes[order1].zone,
                                                    self.current_sol.prbl.nodes[order2].zone)])
