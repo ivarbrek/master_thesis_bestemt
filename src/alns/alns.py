@@ -649,6 +649,7 @@ class Alns:
             print("New best solutions' routing obj:", self.best_sol_cost)
 
         if self.update_type == -2:  # type -2 means solution gave global best routing, but was not production feasible
+            self.new_best_solution_infeasible_production_count += 1
             self.production_infeasibility_strike += 1
             if self.production_infeasibility_strike > self.production_infeasibility_strike_max:
                 self.current_sol.ppfc_slack_factor += self.ppfc_slack_increment
@@ -662,6 +663,7 @@ class Alns:
 
 
 def run_alns(prbl: ProblemDataExtended, iterations: int, skip_production_problem_postprocess: bool = False,
+             post_process_heuristically: bool = False,
              verbose: bool = True) -> Union[Dict[Tuple[str, str, int], int], None]:
     precedence = prbl.precedence
     destroy_op = ['d_random',
@@ -734,17 +736,27 @@ def run_alns(prbl: ProblemDataExtended, iterations: int, skip_production_problem
         alns.best_sol.print_routes()
         return alns.best_sol.get_y_dict()
 
-    try:
-        alns.best_sol_production_cost = alns.production_model.get_production_cost(alns.best_sol, verbose=True,
-                                                                                  time_limit=90)
-    except ValueError:
-        pass
-
-    print()
-    print(f"...ALNS terminating  ({round(time() - t0)}s)")
-    alns.best_sol.print_routes()
+    if post_process_heuristically:
+        alns.best_sol_production_cost = alns.production_heuristic.get_cost(alns.best_sol)
+        alns.production_heuristic.print_sol()
+        alns.best_sol.print_routes()
+        print("Routing obj:", alns.best_sol_cost, "Prod obj:", round(alns.best_sol_production_cost, 1),
+              "Total:", alns.best_sol_cost + round(alns.best_sol_production_cost, 1))
+        print("Orders not_served:", len(alns.best_sol.get_orders_not_served()))
+    else:
+        try:
+            alns.best_sol_production_cost = alns.production_model.get_production_cost(alns.best_sol, verbose=True,
+                                                                                      time_limit=30)
+            alns.production_model.print_solution_simple()
+            print("Routing obj:", alns.best_sol_cost, "Prod obj:", round(alns.best_sol_production_cost, 1),
+                  "Total:", alns.best_sol_cost + round(alns.best_sol_production_cost, 1))
+        except ValueError:
+            print("Routing obj:", alns.best_sol_cost, "Production problem not solved")
 
     if verbose:
+        print()
+        print(f"...ALNS terminating  ({round(time() - t0)}s)")
+        alns.best_sol.print_routes()
         print("Not served:", alns.best_sol.get_orders_not_served())
 
         try:
