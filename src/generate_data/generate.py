@@ -9,8 +9,8 @@ def generate_parameter_tuning_instances():
     all_vessels = [["Borgenfjord", "Nyksund", "Høydal"], ["Ripnes", "Vågsund", "Nyksund", "Borgenfjord", "Høydal"]]
     all_factories = [["2016"], ["2022", "482"]]
     companies = ["Mowi Feed AS", "BioMar AS"]
-    inventory_levels = [0.2, 0.4]
-    inventory_level_encoding = {0.2: "l", 0.4: "h"}
+    inventory_levels = [0.2, 0.5]
+    inventory_level_encoding = {0.2: "l", 0.5: "h"}
 
     # Input parameters kept constant:
     tw_length_hours = 4 * 24
@@ -70,20 +70,20 @@ def generate_parameter_tuning_instances():
 
 def generate_performance_testing_instances():
     # Input parameters and info that varies for each instance:
-    instances_per_modification = 3
+    instances_per_modification = 1
     base_settings = ['3-1', '5-2']
-    all_orders = [[20, 40, 60], [20, 40, 60]]
-    all_planning_horizon_days = [[6, 9, 14], [5, 8, 12]]
+    all_orders = [[15], [18]]
+    all_planning_horizon_days = [[6], [6]]
     all_vessels = [["Borgenfjord", "Nyksund", "Høydal"], ["Ripnes", "Vågsund", "Nyksund", "Borgenfjord", "Høydal"]]
     all_factories = [["2016"], ["2022", "482"]]
     companies = ["Mowi Feed AS", "BioMar AS"]
-    inventory_levels = [0.2, 0.4]
-    inventory_level_encoding = {0.2: "l", 0.4: "h"}
+    inventory_levels = [0.2, 0.5]
+    inventory_level_encoding = {0.2: "l", 0.5: "h"}
+    no_products = [1, 5]
 
     # Input parameters kept constant:
     tw_length_hours = 4 * 24
     time_period_length = 2
-    no_products = 10
     no_product_groups = 4
     quay_activity_level = 0.1
     hours_production_stop = 12
@@ -103,40 +103,41 @@ def generate_performance_testing_instances():
         generator = TestDataGenerator()  # need re-instantiated generator per set of factories
         for no_orders, planning_horizon_days in zip(no_orders_group, planning_horizon_days_group):
             for inventory_level in inventory_levels:
-                for i in range(instances_per_modification):
-                    instance_name = f"performance-{setting_name}-{no_orders}-" \
-                                    f"{inventory_level_encoding[inventory_level]}-{i}"
-                    time_periods = int(planning_horizon_days * 24 / time_period_length)
-                    print(instance_name)
+                for no_product in no_products:
+                    for i in range(instances_per_modification):
+                        instance_name = f"performance-{setting_name}-{no_orders}-" \
+                                        f"{inventory_level_encoding[inventory_level]}-{no_product}p-{i}"
+                        time_periods = int(planning_horizon_days * 24 / time_period_length)
+                        print(instance_name)
 
-                    generator.write_test_instance_to_file(
-                        # Input parameters varying:
-                        out_filepath=f"../../data/input_data/performance_testing/{instance_name}.xlsx",
-                        vessel_names=vessels,
-                        factory_locations=factories,
-                        orders_from_company=company,
-                        no_orders=no_orders,
-                        factory_level=inventory_level,
-                        ext_depot_level=0.1,
-                        time_periods=time_periods,
-                        tw_length_hours=tw_length_hours,
-                        # Input parameters kept constant:
-                        time_period_length=time_period_length,
-                        no_products=no_products,
-                        no_product_groups=no_product_groups,
-                        quay_activity_level=quay_activity_level,
-                        hours_production_stop=hours_production_stop,
-                        share_red_nodes=share_red_nodes,
-                        radius_red=radius_red,
-                        radius_yellow=radius_yellow,
-                        share_bag_locations=share_bag_locations,
-                        share_small_fjord_locations=share_small_fjord_locations,
-                        share_time_periods_vessel_availability=share_time_periods_vessel_availability,
-                        small_fjord_radius=small_fjord_radius,
-                        min_wait_if_sick_hours=min_wait_if_sick_hours,
-                        delivery_delay_unit_penalty=delivery_delay_unit_penalty,
-                        earliest_tw_start=earliest_tw_start
-                    )
+                        generator.write_test_instance_to_file(
+                            # Input parameters varying:
+                            out_filepath=f"../../data/input_data/performance_testing/{instance_name}.xlsx",
+                            vessel_names=vessels,
+                            factory_locations=factories,
+                            orders_from_company=company,
+                            no_orders=no_orders,
+                            factory_level=inventory_level,
+                            ext_depot_level=0.1,
+                            time_periods=time_periods,
+                            tw_length_hours=tw_length_hours,
+                            # Input parameters kept constant:
+                            time_period_length=time_period_length,
+                            no_products=no_product,
+                            no_product_groups=no_product_groups,
+                            quay_activity_level=quay_activity_level,
+                            hours_production_stop=hours_production_stop,
+                            share_red_nodes=share_red_nodes,
+                            radius_red=radius_red,
+                            radius_yellow=radius_yellow,
+                            share_bag_locations=share_bag_locations,
+                            share_small_fjord_locations=share_small_fjord_locations,
+                            share_time_periods_vessel_availability=share_time_periods_vessel_availability,
+                            small_fjord_radius=small_fjord_radius,
+                            min_wait_if_sick_hours=min_wait_if_sick_hours,
+                            delivery_delay_unit_penalty=delivery_delay_unit_penalty,
+                            earliest_tw_start=earliest_tw_start
+                        )
 
 
 def generate_time_period_duplicate_instances():
@@ -278,6 +279,6 @@ def generate_time_window_duplicate_instances():
 
 if __name__ == '__main__':
     # generate_parameter_tuning_instances()
+    generate_performance_testing_instances()
     # generate_time_period_duplicate_instances()
-    # generate_performance_testing_instances()
-    generate_time_window_duplicate_instances()
+    # generate_time_window_duplicate_instances()

@@ -1191,7 +1191,7 @@ class FfprpModel:
              for i in self.m.FACTORY_NODES))
 
     def get_transport_cost(self) -> int:
-        return int(sum(self.m.transport_unit_costs[v] * self.m.transport_times[v, i, j]
+        return int(sum(self.m.transport_unit_costs[v] * self.m.transport_times_exact[v, i, j]
                        * pyo.value(self.m.x[v, i, j, t])
                 for t in self.m.TIME_PERIODS
                 for v in self.m.VESSELS
@@ -1248,13 +1248,15 @@ if __name__ == '__main__':
     extensions = False  # extensions _not_ supported in generated test files
 
     # PARAMETERS TO CHANGE ###
-    time_limit = 3600
+    # time_limit = 100
 
     # EXTERNAL RUN
     parser = argparse.ArgumentParser(description='process FFPRP input parameters')
     parser.add_argument('input_filepath', type=str, help='path of input data file')
+    parser.add_argument('time_limit', type=str, help='path of input data file')
     args = parser.parse_args()
     output_filepath = "data/output_data/gurobi-" + str(args.input_filepath.split("/")[-1])
+    time_limit = int(args.time_limit)
     # Execution line format: python3 src/models/ffprp_model.py data/input_data/f1-v3-o20-t50.xlsx
 
     # PARAMETERS NOT TO CHANGE ###

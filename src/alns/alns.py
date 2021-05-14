@@ -7,6 +7,10 @@ from collections import defaultdict
 import function
 import argparse
 import pandas as pd
+import sys
+import os
+
+sys.path.append(os.getcwd())
 
 from src.alns.solution import Solution, ProblemDataExtended
 from src.models.production_model import ProductionModel
@@ -186,7 +190,7 @@ class Alns:
             prod_feasible, infeasible_factory = sol.check_production_feasibility()
             infeasible.append(infeasible_factory)
 
-        print("Infeasible:", infeasible)
+        # print("Infeasible:", infeasible)
         orders_not_served = len(sol.get_orders_not_served())
         if repair_op and self.reinsert_with_ppfc:  # Reinsert nodes using the ppfc check
             sol = self.repair(repair_op, sol, apply_noise=True, use_ppfc=True)
@@ -258,7 +262,7 @@ class Alns:
         repair_op = np.random.choice(list(self.repair_op_weight.keys()), p=repair_weights_normalized)
         self.repair_op_segment_usage[repair_op] += 1
 
-        print(destroy_op, repair_op, 'noise' if noise_op else 'no noise')
+        # print(destroy_op, repair_op, 'noise' if noise_op else 'no noise')
         return destroy_op, repair_op, noise_op
 
     def generate_new_solution(self, destroy_op: str, repair_op: str, apply_noise: bool) -> Solution:
@@ -649,7 +653,8 @@ class Alns:
             self.new_best_solution_feasible_production_count += 1
             if self.verbose:
                 print(f'> Solution is accepted as best solution')
-            print("New best solutions' routing obj:", self.best_sol_cost)
+
+            # print("New best solutions' routing obj:", self.best_sol_cost)
 
         if self.update_type == -2:  # type -2 means solution gave global best routing, but was not production feasible
             self.new_best_solution_infeasible_production_count += 1
@@ -705,8 +710,7 @@ def run_alns(prbl: ProblemDataExtended, iterations: int = 0, max_time: int = 0, 
                   'd_related_location_time']
     destroy_op += ['d_related_location_precedence'] if precedence else []
 
-    print()
-    print("ALNS starting...")
+    print("ALNS running...")
     alns = Alns(problem_data=prbl,
                 destroy_op=destroy_op,
                 repair_op=['r_greedy', 'r_2regret', 'r_3regret'],
@@ -760,6 +764,7 @@ def run_alns(prbl: ProblemDataExtended, iterations: int = 0, max_time: int = 0, 
             print(f"Obj: {alns.current_sol_cost:,}   Not served: {alns.current_sol.get_orders_not_served()}")
             print("Slack factor:", round(alns.current_sol.ppfc_slack_factor, 2),
                   "  Infeasible strike:", alns.production_infeasibility_strike)
+            print()
 
         _stat_solution_cost.append((i, alns.current_sol_cost))
         for op, score in alns.destroy_op_weight.items():
@@ -768,7 +773,6 @@ def run_alns(prbl: ProblemDataExtended, iterations: int = 0, max_time: int = 0, 
             _stat_repair_weights[op].append(score)
         for op, score in alns.noise_op_weight.items():
             _stat_noise_weights[op].append(score)
-        print()
 
     if skip_production_problem_postprocess:  # do not need to solve the production problem
         alns.best_sol.print_routes()
@@ -786,20 +790,16 @@ def run_alns(prbl: ProblemDataExtended, iterations: int = 0, max_time: int = 0, 
     alns.best_sol.print_routes()
 
     if verbose:
+        print("Routing obj:", alns.best_sol_cost, "Prod obj:", round(alns.best_sol_production_cost, 1),
+              "Total:", alns.best_sol_cost + round(alns.best_sol_production_cost, 1))
         print("Not served:", alns.best_sol.get_orders_not_served())
 
-        try:
-            alns.production_model.print_solution_simple()
 
-            print("Routing obj:", alns.best_sol_cost, "Prod obj:", round(alns.best_sol_production_cost, 1),
-                  "Total:", alns.best_sol_cost + round(alns.best_sol_production_cost, 1))
-        except AttributeError:
-            print("Routing obj:", alns.best_sol_cost, "Production problem not solved")
+        print(f"{len(alns.previous_solutions)} different solutions accepted")
 
         print(f"Best solution updated {alns.new_best_solution_feasible_production_count} times")
         print(f"Candidate to become best solution rejected {alns.new_best_solution_infeasible_production_count} times, "
               f"because of production infeasibility")
-        print(f"{len(alns.previous_solutions)} different solutions accepted")
         print(f"Repaired solution rejected {alns.ppfc_infeasible_count} times, because of PPFC infeasibility")
 
         # util.plot_alns_history(_stat_solution_cost)

@@ -96,6 +96,7 @@ class ProblemData:
         self.min_wait_if_sick = self.get_min_wait_if_sick_dict()
         self.min_wait_if_sick_abs = self.get_min_wait_if_sick()
         self.external_delivery_penalties = self.get_external_delivery_penalties_dict()
+        self.no_time_periods = len(self.time_periods)
 
     def _validate_set_consistency(self) -> None:
         # Products
@@ -368,7 +369,7 @@ class ProblemData:
                 for factory in self.factory_max_vessels_loading_df.columns}
 
     def get_external_delivery_penalties_dict(self) -> Dict[str, int]:
-        max_transport_cost = max(self.get_transport_costs_dict().values()) * max(self.get_transport_times_per_vessel_dict().values())
+        max_transport_cost = max(self.get_transport_costs_dict().values()) * max(self.transport_times_exact.values())
         return {order: 2 * int(max_transport_cost) for order in self.order_nodes}
 
     def get_factory_max_vessels_destination_dict(self) -> Dict[str, int]:

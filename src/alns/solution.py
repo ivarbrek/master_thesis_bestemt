@@ -35,7 +35,7 @@ class Node:
 
 class ProblemDataExtended(ProblemData):
 
-    def __init__(self, file_path: str, precedence: bool = False) -> None:
+    def __init__(self, file_path: str, precedence: bool = True) -> None:
         super().__init__(file_path)
         self.precedence = precedence
         self._init_nodes()
