@@ -665,7 +665,8 @@ class Alns:
         self.temperature = self.temperature * self.cooling_rate
         self.it_seg_count += 1
 
-    def write_to_file(self, excel_writer: pd.ExcelWriter, id: int, stop_criterion: str, alns_iter: int, alns_time: int) -> None:
+    def write_to_file(self, excel_writer: pd.ExcelWriter, id: int, stop_criterion: str, alns_iter: int,
+                      alns_time: int, parameter_tune: str = None, parameter_tune_value = None) -> None:
         solution_dict = {'obj_val': round(self.best_sol_production_cost + self.best_sol_cost, 2),
                          'production_cost': round(self.best_sol_production_cost, 2),
                          'routing_cost': round(self.best_sol_cost, 2),
@@ -676,25 +677,92 @@ class Alns:
                          'score_params': str(alnsparam.score_params),
                          'reaction_param': str(alnsparam.reaction_param),
                          'start_temperature_controlparam': str(alnsparam.start_temperature_controlparam),
-                         'cooling_rate': str(alnsparam.cooling_rate),
+                         'cooling_rate': str(round(math.pow(0.002, (1/alns_iter)), 4)),  # TODO: Support time-based run (it=0)
                          'remove_percentage_interval': str(alnsparam.remove_percentage_interval),
                          'noise_param': str(alnsparam.noise_param),
                          'determinism_param': str(alnsparam.determinism_param),
                          'related_removal_weight_param': str(alnsparam.related_removal_weight_param)}
+
+        if parameter_tune is not None:
+            if parameter_tune == 'relatedness_location_time':
+                solution_dict['related_removal_weight_param']['relatedness_location_time'] = str(parameter_tune_value)
+            elif parameter_tune == 'relatedness_location_precedence':
+                solution_dict['related_removal_weight_param']['relatedness_location_precedence'] = str(parameter_tune_value)
+            else:
+                solution_dict[parameter_tune] = str(parameter_tune_value)
+
         # TODO: Add relevant data
         sheet_name = "run_" + str(id)
         df = pd.DataFrame(solution_dict, index=[0]).transpose()
         df.to_excel(excel_writer, sheet_name=sheet_name, startrow=1)
 
 
-def run_alns(prbl: ProblemDataExtended, iterations: int = 0, max_time: int = 0, skip_production_problem_postprocess: bool = False,
+def parse_tune_values(parameter_tune: str) -> List[Union[Tuple[float, float], int, float,
+                                                         Dict[str, List[float]], List[int], List[float]]]:
+    if parameter_tune == "None":
+        return []
+    if parameter_tune == "remove_percentage_interval":
+        return [(0.1, 0.3)]  # (0.05, 0.2), (0.2, 0.4), (0.3, 0.5), (0.1, 0.4)]
+    if parameter_tune == "relatedness_location_time":
+        return [[0.02, 0.25], [0.01, 0.5], [0.005, 1]]
+    if parameter_tune == "relatedness_location_precedence":
+        return [[0.02, 0.05], [0.01, 0.1], [0.005, 0.2]]
+    if parameter_tune == "score_params":
+        return [[33, 9, 1], [9, 9, 9], [33, 9, 13]]
+    if parameter_tune == "reaction_param":
+        return [0.1, 0.2, 0.5, 1]
+    if parameter_tune == "noise_param":
+        return [0, 0.1, 0.2]
+    if parameter_tune == "determinism_param":
+        return [3, 5, 7]
+    print(f"Values could not be parsed")
+    return []
+
+
+def run_alns(prbl: ProblemDataExtended, parameter_tune: str, parameter_tune_value,
+             iterations: int = 0, max_time: int = 0, skip_production_problem_postprocess: bool = False,
              verbose: bool = True) -> Union[Dict[Tuple[str, str, int], int], None, Tuple[Alns, str, int, int]]:
     if iterations == 0 and max_time == 0:
         print(f"Required input parameters not provided. Cannot run ALNS.")
         return
-    elif iterations * max_time != 0:
-        print(f"Multiple stopping criteria given. Choosing maximum time criteria, where max_time={max_time} sec.")
-        iterations = 0
+    elif iterations * max_time > 0:
+        print(f"Multiple stopping criteria given. Choosing iterations criteria, where iterations={iterations}.")
+        max_time = 0
+
+    if iterations == 0:
+        print(f"Using cooling rate of 0.999.")
+        cooling_rate = 0.999
+    else:
+        cooling_rate = math.pow(0.002, (1 / iterations))
+
+    parameter_values = {
+        'weight_min_threshold': alnsparam.weight_min_threshold,  # 0.2
+        'reaction_param': alnsparam.reaction_param,  # 0.1,
+        'score_params': alnsparam.score_params,
+        'start_temperature_controlparam': alnsparam.start_temperature_controlparam,
+        'cooling_rate': cooling_rate,  # alnsparam.cooling_rate,  # 0.995,
+        'max_iter_same_solution': alnsparam.max_iter_same_solution,  # 50,
+        'max_iter_seg': alnsparam.max_iter_seg,  # 40,
+        'remove_percentage_interval': alnsparam.remove_percentage_interval,  # (0.1, 0.3),
+        'remove_num_percentage_adjust': alnsparam.remove_num_percentage_adjust,  # 0.05,
+        'determinism_param': alnsparam.determinism_param,  # 5,
+        'noise_param': alnsparam.noise_param,  # 0.25,
+        'relatedness_precedence': alnsparam.relatedness_precedence,
+        'related_removal_weight_param': alnsparam.related_removal_weight_param,
+        'production_infeasibility_strike_max': alnsparam.production_infeasibility_strike_max,  # 0,
+        'ppfc_slack_increment': alnsparam.ppfc_slack_increment,  # 0.05,
+        'inventory_reward': alnsparam.inventory_reward,  # False,
+        'reinsert_with_ppfc': alnsparam.reinsert_with_ppfc}
+
+    if parameter_tune != "None":
+        if parameter_tune == 'relatedness_location_time':
+            parameter_values['related_removal_weight_param']['relatedness_location_time'] = parameter_tune_value
+        elif parameter_tune == 'relatedness_location_precedence':
+            parameter_values['related_removal_weight_param']['relatedness_location_precedence'] = parameter_tune_value
+        if parameter_tune in parameter_values.keys():
+            parameter_values[parameter_tune] = parameter_tune_value
+        else:
+            print(f"Parameter {parameter_tune} does not exist. Parameters left unchanged.")
 
     precedence = prbl.precedence
     destroy_op = ['d_random',
@@ -711,28 +779,23 @@ def run_alns(prbl: ProblemDataExtended, iterations: int = 0, max_time: int = 0, 
     alns = Alns(problem_data=prbl,
                 destroy_op=destroy_op,
                 repair_op=['r_greedy', 'r_2regret', 'r_3regret'],
-                weight_min_threshold=alnsparam.weight_min_threshold,  # 0.2
-                reaction_param=alnsparam.reaction_param,  # 0.1,
-                score_params=alnsparam.score_params,
-                # [5, 3, 1],  # corresponding to sigma_1, sigma_2, sigma_3 in R&P and L&N
-                start_temperature_controlparam=alnsparam.start_temperature_controlparam,
-                # 0.1,  # solution 40% worse than best solution is accepted with 50% prob.
-                cooling_rate=alnsparam.cooling_rate,  # 0.995,
-                max_iter_same_solution=alnsparam.max_iter_same_solution,  # 50,
-                max_iter_seg=alnsparam.max_iter_seg,  # 40,
-                remove_percentage_interval=alnsparam.remove_percentage_interval,  # (0.1, 0.3),
-                remove_num_percentage_adjust=alnsparam.remove_num_percentage_adjust,  # 0.05,
-                determinism_param=alnsparam.determinism_param,  # 5,
-                noise_param=alnsparam.noise_param,  # 0.25,
-                relatedness_precedence=alnsparam.relatedness_precedence,
-                # {('green', 'yellow'): 6, ('green', 'red'): 10, ('yellow', 'red'): 4},
-                related_removal_weight_param=alnsparam.related_removal_weight_param,
-                # {'relatedness_location_time': [1, 0.9],
-                # 'relatedness_location_precedence': [0.25, 1]},
-                production_infeasibility_strike_max=alnsparam.production_infeasibility_strike_max,  # 0,
-                ppfc_slack_increment=alnsparam.ppfc_slack_increment,  # 0.05,
-                inventory_reward=alnsparam.inventory_reward,  # False,
-                reinsert_with_ppfc=alnsparam.reinsert_with_ppfc,  # False,
+                weight_min_threshold=parameter_values['weight_min_threshold'],  # 0.2
+                reaction_param=parameter_values['reaction_param'],  # 0.1,
+                score_params=parameter_values['score_params'],
+                start_temperature_controlparam=parameter_values['start_temperature_controlparam'],
+                cooling_rate=parameter_values['cooling_rate'],  # 0.995,
+                max_iter_same_solution=parameter_values['max_iter_same_solution'],  # 50,
+                max_iter_seg=parameter_values['max_iter_seg'],  # 40,
+                remove_percentage_interval=parameter_values['remove_percentage_interval'],  # (0.1, 0.3),
+                remove_num_percentage_adjust=parameter_values['remove_num_percentage_adjust'],  # 0.05,
+                determinism_param=parameter_values['determinism_param'],  # 5,
+                noise_param=parameter_values['noise_param'],  # 0.25,
+                relatedness_precedence=parameter_values['relatedness_precedence'],
+                related_removal_weight_param=parameter_values['related_removal_weight_param'],
+                production_infeasibility_strike_max=parameter_values['production_infeasibility_strike_max'],  # 0,
+                ppfc_slack_increment=parameter_values['ppfc_slack_increment'],  # 0.05,
+                inventory_reward=parameter_values['inventory_reward'],  # False,
+                reinsert_with_ppfc=parameter_values['reinsert_with_ppfc'],  # False,
                 verbose=False
                 )
 
@@ -775,11 +838,11 @@ def run_alns(prbl: ProblemDataExtended, iterations: int = 0, max_time: int = 0, 
         alns.best_sol.print_routes()
         return alns.best_sol.get_y_dict()
 
-    try:
-        alns.best_sol_production_cost = alns.production_model.get_production_cost(alns.best_sol, verbose=True,
-                                                                                  time_limit=30)
-    except ValueError:
-        alns.best_sol_production_cost = alns.production_heuristic.get_cost(alns.best_sol)
+    # try:
+    #     alns.best_sol_production_cost = alns.production_model.get_production_cost(alns.best_sol, verbose=True,
+    #                                                                               time_limit=30)
+    # except ValueError:
+    alns.best_sol_production_cost = alns.production_heuristic.get_cost(alns.best_sol)
 
     alns_time = time() - t0
     print()
@@ -808,7 +871,7 @@ def run_alns(prbl: ProblemDataExtended, iterations: int = 0, max_time: int = 0, 
         # util.plot_operator_weights(_stat_repair_weights)
         # util.plot_operator_weights(_stat_noise_weights)
 
-    stop_criterion = str(max_time)+" sec" if iterations == 0 else str(iterations)+" iterations"
+    stop_criterion = str(max_time) + " sec" if iterations == 0 else str(iterations) + " iterations"
     return alns, stop_criterion, i, int(alns_time)
 
 
@@ -816,29 +879,49 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='process ALNS input parameters')
     parser.add_argument('input_filepath', type=str, help='path of input data file')
     parser.add_argument('num_runs', type=int, help='number of runs using same input data file')
+    parser.add_argument('parameter_tune', type=str, help="parameter to tune, or 'None'")
+    parser.add_argument('num_iterations', type=int,
+                        help="number of ALNS iterations")
     args = parser.parse_args()
     # Execution line format: python3 src/alns/alns.py data/input_data/f1-v3-o20-t50.xlsx 5
 
+    parameter_tune_values = parse_tune_values(args.parameter_tune)
+
     precedence: bool = True
-    num_alns_iterations = 1000
-    alns_runtime = 10*60  # choose in run_alns which stopping criteria to use: iterations or runtime
+    num_alns_iterations = args.num_iterations
+    # alns_runtime = 5 * 60
     write_solution_details = False
 
     # prbl = ProblemDataExtended('../../data/input_data/large_testcase.xlsx', precedence=precedence)
     # prbl = ProblemDataExtended('../../data/input_data/gurobi_testing/f1-v3-o20-t72-i0.05-tw4.xlsx', precedence=precedence)
     prbl = ProblemDataExtended(args.input_filepath, precedence=precedence)
 
-    output_filepath = "data/output_data/alns-" + str(args.input_filepath.split("/")[-1])
-
     # WRITE TO FILE
-    excel_writer = pd.ExcelWriter(output_filepath, engine='openpyxl', mode='w',
-                                  options={'strings_to_formulas': False})
+    if args.parameter_tune != "None":
+        for idx in range(len(parameter_tune_values)):
+            output_filepath_orig = "data/output_data/alns-" + str(args.input_filepath.split("/")[-1])
+            val = parameter_tune_values[idx]
+            output_filepath = output_filepath_orig[:-5] + "-" + args.parameter_tune + ":" + str(val) + ".xlsx"
+            excel_writer = pd.ExcelWriter(output_filepath, engine='openpyxl', mode='w',
+                                          options={'strings_to_formulas': False})
 
-    for i in range(args.num_runs):
-        alns, stop_crierion, alns_iter, run_time = run_alns(prbl, max_time=alns_runtime) # iterations=num_alns_iterations)
-        if write_solution_details:
-            # TODO: Write actual solution to separate excel file
-            pass
-        alns.write_to_file(excel_writer, i, stop_crierion, alns_iter, run_time)
+            for i in range(args.num_runs):
+                alns, stop_crierion, alns_iter, run_time = run_alns(prbl, iterations=num_alns_iterations,
+                                                                    parameter_tune=args.parameter_tune,
+                                                                    parameter_tune_value=val)
+                alns.write_to_file(excel_writer, i, stop_crierion, alns_iter, run_time,
+                                   parameter_tune=args.parameter_tune, parameter_tune_value=val)
 
-    excel_writer.close()
+            excel_writer.close()
+    else:
+        output_filepath = "data/output_data/alns-" + str(args.input_filepath.split("/")[-1])
+        excel_writer = pd.ExcelWriter(output_filepath, engine='openpyxl', mode='w',
+                                      options={'strings_to_formulas': False})
+        for i in range(args.num_runs):
+            alns, stop_crierion, alns_iter, run_time = run_alns(prbl, iterations=num_alns_iterations,
+                                                                parameter_tune="None",
+                                                                parameter_tune_value="None")
+            alns.write_to_file(excel_writer, i, stop_crierion, alns_iter, run_time)
+
+        excel_writer.close()
+
