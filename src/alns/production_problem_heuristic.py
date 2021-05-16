@@ -248,7 +248,9 @@ class ProductionProblemSolution:
 
     def _update_filled_ranges(self, prod_line: str, t_insert: int):
         next_range_idx = bisect.bisect(self.filled_ranges[prod_line], (t_insert, ))
-        if next_range_idx == 0:
+        if len(self.filled_ranges[prod_line]) == 0:
+            self.filled_ranges[prod_line].append((t_insert, t_insert))
+        elif next_range_idx == 0:
             next_range_start, next_range_end = self.filled_ranges[prod_line][next_range_idx]
             if next_range_start - t_insert <= 2:
                 self.filled_ranges[prod_line][next_range_idx] = (t_insert, next_range_end)
@@ -353,10 +355,10 @@ class ProductionProblemHeuristic:
             is_feasible = self.construct_greedy(sol)
             # sol.print()
             if not is_feasible:
-                print(round(time() - t0, 3), "s (h) (infeasible)", sep="")
+                # print(round(time() - t0, 3), "s (h) (infeasible)", sep="")
                 return False, factory
             self.solution[factory] = sol
-        print(round(time() - t0, 3), "s (h)", sep="")
+        # print(round(time() - t0, 3), "s (h)", sep="")
         return True, ''
 
     def get_cost(self, routing_sol: Solution):

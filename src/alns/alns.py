@@ -434,11 +434,13 @@ class Alns:
 
         # Normalize difference with respect to n.o. time periods in problem
         time_window_difference /= self.current_sol.prbl.no_time_periods
+
         return w_0 * self.current_sol.prbl.transport_times_exact[vessel, order1, order2] + w_1 * time_window_difference
 
     def _relatedness_location_precedence(self, order1: str, order2: str, vessel: str) -> float:
         w_0 = self.related_removal_weight_param['relatedness_location_precedence'][0]
         w_1 = self.related_removal_weight_param['relatedness_location_precedence'][1]
+
         return (w_0 * self.current_sol.prbl.transport_times_exact[vessel, order1, order2] +
                 w_1 * self.relatedness_precedence[(self.current_sol.prbl.nodes[order1].zone,
                                                    self.current_sol.prbl.nodes[order2].zone)])
@@ -654,6 +656,7 @@ class Alns:
             print("New best solutions' routing obj:", self.best_sol_cost)
 
         if self.update_type == -2:  # type -2 means solution gave global best routing, but was not production feasible
+            self.new_best_solution_infeasible_production_count += 1
             self.production_infeasibility_strike += 1
             if self.production_infeasibility_strike > self.production_infeasibility_strike_max:
                 self.current_sol.ppfc_slack_factor += self.ppfc_slack_increment
@@ -718,9 +721,8 @@ def parse_tune_values(parameter_tune: str) -> List[Union[Tuple[float, float], in
     print(f"Values could not be parsed")
     return []
 
-
-def run_alns(prbl: ProblemDataExtended, parameter_tune: str, parameter_tune_value,
-             iterations: int = 0, max_time: int = 0, skip_production_problem_postprocess: bool = False,
+def run_alns(prbl: ProblemDataExtended, parameter_tune: str, parameter_tune_value, iterations: int = 0, max_time: int = 0, skip_production_problem_postprocess: bool = False,
+             post_process_heuristically: bool = False,
              verbose: bool = True) -> Union[Dict[Tuple[str, str, int], int], None, Tuple[Alns, str, int, int]]:
     if iterations == 0 and max_time == 0:
         print(f"Required input parameters not provided. Cannot run ALNS.")
@@ -809,7 +811,6 @@ def run_alns(prbl: ProblemDataExtended, parameter_tune: str, parameter_tune_valu
     _stat_repair_weights = defaultdict(list)
     _stat_destroy_weights = defaultdict(list)
     _stat_noise_weights = defaultdict(list)
-    print(round(time(), 5))
     t0 = time()
     print(t0)
     i = 0
@@ -838,18 +839,28 @@ def run_alns(prbl: ProblemDataExtended, parameter_tune: str, parameter_tune_valu
         alns.best_sol.print_routes()
         return alns.best_sol.get_y_dict()
 
-    # try:
-    #     alns.best_sol_production_cost = alns.production_model.get_production_cost(alns.best_sol, verbose=True,
-    #                                                                               time_limit=30)
-    # except ValueError:
-    alns.best_sol_production_cost = alns.production_heuristic.get_cost(alns.best_sol)
+    if post_process_heuristically:
+        alns.best_sol_production_cost = alns.production_heuristic.get_cost(alns.best_sol)
+        alns.production_heuristic.print_sol()
+        alns.best_sol.print_routes()
+        print("Routing obj:", alns.best_sol_cost, "Prod obj:", round(alns.best_sol_production_cost, 1),
+              "Total:", alns.best_sol_cost + round(alns.best_sol_production_cost, 1))
+        print("Orders not_served:", len(alns.best_sol.get_orders_not_served()))
+    else:
+        try:
+            alns.best_sol_production_cost = alns.production_model.get_production_cost(alns.best_sol, verbose=True,
+                                                                                      time_limit=30)
+            alns.production_model.print_solution_simple()
+            print("Routing obj:", alns.best_sol_cost, "Prod obj:", round(alns.best_sol_production_cost, 1),
+                  "Total:", alns.best_sol_cost + round(alns.best_sol_production_cost, 1))
+        except ValueError:
+            print("Routing obj:", alns.best_sol_cost, "Production problem not solved")
 
     alns_time = time() - t0
-    print()
-    print(f"...ALNS terminating  ({round(alns_time)}s)")
-    alns.best_sol.print_routes()
-
     if verbose:
+        print()
+        print(f"...ALNS terminating  ({round(time() - t0)}s)")
+        alns.best_sol.print_routes()
         print("Not served:", alns.best_sol.get_orders_not_served())
 
         try:
@@ -866,10 +877,10 @@ def run_alns(prbl: ProblemDataExtended, parameter_tune: str, parameter_tune_valu
         print(f"{len(alns.previous_solutions)} different solutions accepted")
         print(f"Repaired solution rejected {alns.ppfc_infeasible_count} times, because of PPFC infeasibility")
 
-        # util.plot_alns_history(_stat_solution_cost)
-        # util.plot_operator_weights(_stat_destroy_weights)
-        # util.plot_operator_weights(_stat_repair_weights)
-        # util.plot_operator_weights(_stat_noise_weights)
+        util.plot_alns_history(_stat_solution_cost)
+        util.plot_operator_weights(_stat_destroy_weights)
+        util.plot_operator_weights(_stat_repair_weights)
+        util.plot_operator_weights(_stat_noise_weights)
 
     stop_criterion = str(max_time) + " sec" if iterations == 0 else str(iterations) + " iterations"
     return alns, stop_criterion, i, int(alns_time)
