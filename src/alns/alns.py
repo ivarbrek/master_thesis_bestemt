@@ -685,9 +685,9 @@ class Alns:
 
         if parameter_tune is not None:
             if parameter_tune == 'relatedness_location_time':
-                solution_dict['related_removal_weight_param']['relatedness_location_time'] = str(parameter_tune_value)
+                solution_dict['related_removal_weight_param'] = str(parameter_tune_value) + str(alnsparam.related_removal_weight_param['relatedness_location_precedence'])
             elif parameter_tune == 'relatedness_location_precedence':
-                solution_dict['related_removal_weight_param']['relatedness_location_precedence'] = str(parameter_tune_value)
+                solution_dict['related_removal_weight_param'] = str(alnsparam.related_removal_weight_param['relatedness_location_time']) + str(parameter_tune_value)
             else:
                 solution_dict[parameter_tune] = str(parameter_tune_value)
 
@@ -702,7 +702,7 @@ def parse_tune_values(parameter_tune: str) -> List[Union[Tuple[float, float], in
     if parameter_tune == "None":
         return []
     if parameter_tune == "remove_percentage_interval":
-        return [(0.1, 0.3)]  # (0.05, 0.2), (0.2, 0.4), (0.3, 0.5), (0.1, 0.4)]
+        return [(0.05, 0.2), (0.1, 0.3), (0.2, 0.4), (0.3, 0.5), (0.1, 0.4)]
     if parameter_tune == "relatedness_location_time":
         return [[0.02, 0.25], [0.01, 0.5], [0.005, 1]]
     if parameter_tune == "relatedness_location_precedence":
