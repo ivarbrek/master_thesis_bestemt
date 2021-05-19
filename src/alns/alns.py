@@ -128,6 +128,9 @@ class Alns:
         self.production_infeasibility_strike_max = production_infeasibility_strike_max
         self.ppfc_slack_increment = ppfc_slack_increment
 
+        self.unique_initial_factory_visits: Set = set()
+        self.performed_initial_factory_visits_permutations = 0
+
         # Relatedness operator parameters
         self.related_removal_weight_param = related_removal_weight_param
         if problem_data.precedence:
@@ -270,7 +273,16 @@ class Alns:
         # Return x'
         candidate_sol = self.current_sol.copy()
         candidate_sol = self.destroy(destroy_op, candidate_sol)
+        if random.random() < alnsparam.permute_chance:
+            candidate_sol = self.permute_initial_factory_visits(candidate_sol)
         candidate_sol = self.repair(repair_op, candidate_sol, apply_noise)
+        return candidate_sol
+
+    def permute_initial_factory_visits(self, candidate_sol: Solution) -> Solution:
+        permutation_found = candidate_sol.permute_factory_visits()
+        self.performed_initial_factory_visits_permutations += int(permutation_found)
+        for factory in candidate_sol.prbl.factory_nodes:
+            self.unique_initial_factory_visits.add((factory, candidate_sol.get_initial_factory_visits(factory)))
         return candidate_sol
 
     def destroy(self, destroy_op: str, sol: Solution) -> Union[Solution, None]:
@@ -505,7 +517,7 @@ class Alns:
         while len(insertion_cand) > 0:  # try all possible insertions
             insert_node_id, vessel, idx, _ = insertions[-1]
             if sol.check_insertion_feasibility(insert_node_id, vessel, idx,
-                                               noise_factor=apply_noise * self.noise_param, ppfc=ppfc):
+                                               noise_factor=apply_noise * self.noise_param * 10, ppfc=ppfc):
                 sol.insert_last_checked()
                 insertion_cand.remove(insert_node_id)
                 # recalculate profit gain and omit other insertions of node_id
@@ -547,7 +559,7 @@ class Alns:
                 while num_feasible < k and len(insertions) > 0:
                     idx, vessel, util = insertions.pop()
                     feasible = sol.check_insertion_feasibility(order, vessel, idx,
-                                                               noise_factor=apply_noise * self.noise_param, ppfc=ppfc)
+                                                               noise_factor=apply_noise * self.noise_param * 10, ppfc=ppfc)
                     sol.clear_last_checked()
 
                     if feasible and num_feasible == 0:
@@ -570,7 +582,7 @@ class Alns:
 
             # insert the greatest regret from repair_candidates
             node_id, idx, vessel, _ = max(repair_candidates, key=lambda item: item[3])
-            sol.check_insertion_feasibility(node_id, vessel, idx, noise_factor=apply_noise * self.noise_param)
+            sol.check_insertion_feasibility(node_id, vessel, idx, noise_factor=apply_noise * self.noise_param * 10)
             sol.insert_last_checked()
             unrouted_orders.remove(node_id)
 

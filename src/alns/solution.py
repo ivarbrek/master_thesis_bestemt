@@ -897,14 +897,91 @@ class Solution:
 
     def _init_factory_visits(self) -> Dict[str, List[str]]:
         vessel_starting_times = list(self.prbl.start_times_for_vessels.items())
+        random.shuffle(vessel_starting_times)  # add randomness for equal start times
         vessel_starting_times.sort(key=lambda item: item[1])
         factory_visits: Dict[str, List[str]] = {i: [] for i in self.prbl.factory_nodes}
 
-        # TODO: Permute initial factory visit sequence?
         for vessel, _ in vessel_starting_times:
             initial_factory = self.prbl.vessel_initial_locations[vessel]
             factory_visits[initial_factory].append(vessel)
         return factory_visits
+
+
+    def _get_factory_visit_earliest_if_swapped(self, factory: str) -> List[int]:
+        """Get the earliest time for an factory visit if the visit was swapped with the previous vessel visiting the
+        factory"""
+        quay_vessels = 0
+        quay_cap_incr_times = self.prbl.quay_cap_incr_times[factory] + [int_inf]
+        first_vessel = self.factory_visits[factory][0]
+        t = self.prbl.start_times_for_vessels[first_vessel] + 1
+        earliest = [t]
+
+        next_departure_t = int_inf
+        for i, vessel in enumerate(self.factory_visits[factory][:-1]):
+            next_vessel = self.factory_visits[factory][i + 1]
+            t = max(t, self.prbl.start_times_for_vessels[vessel] + 1)
+            loading_time = (self.prbl.loading_unloading_times[next_vessel, factory] *   # next vessel's loading time
+                            self._is_destination_factory(vessel, self.factory_visits_route_index[factory][i + 1]))
+            while quay_vessels >= self._get_min_quay_capacity(factory, t, loading_time):
+                if next_departure_t < quay_cap_incr_times[0] and quay_vessels > 0:
+                    t = next_departure_t + 1
+                    quay_vessels -= 1
+                else:
+                    t = quay_cap_incr_times.pop(0)
+            earliest.append(max(t, self.prbl.start_times_for_vessels[next_vessel] + 1))
+            quay_vessels += 1
+
+            if len(self.routes[vessel]) > 1:
+                next_departure_t = t + self.prbl.loading_unloading_times[vessel, factory]
+            else:
+                next_departure_t = t
+
+        return earliest
+
+    def permute_factory_visits(self) -> bool:
+
+        # Find candidate pairs of vessels for permutation
+        cand_pairs = []
+        for factory in self.prbl.factory_nodes:
+            earliest_if_swapped_with_previous = self._get_factory_visit_earliest_if_swapped(factory)
+            for i, vessel in enumerate(self.factory_visits[factory][:-1]):
+                if (self.factory_visits_route_index[factory][i] != 0 or
+                        self.factory_visits_route_index[factory][i + 1] != 0):
+                    continue  # skip if one of the factory visits are not the first for their route
+                next_vessel = self.factory_visits[factory][i + 1]
+                next_e = earliest_if_swapped_with_previous[i + 1]  # last visits earliest if swapped
+                curr_loading_time = self.prbl.loading_unloading_times[vessel, factory]
+                next_loading_time = self.prbl.loading_unloading_times[next_vessel, factory]
+
+                # Assuming max 1 vessel may load simultaneously TODO?
+                min_quay_cap = self._get_min_quay_capacity(factory, next_e, next_loading_time + curr_loading_time)
+                if all([min_quay_cap > 0,
+                        vessel != next_vessel,
+                        next_e + next_loading_time < self.temp_l[vessel][0],
+                        self.temp_e[vessel][0] + curr_loading_time >= self.prbl.start_times_for_vessels[next_vessel]]):
+                    cand_pairs.append((factory, vessel, next_vessel, i, (self.temp_e[vessel][0], self.temp_l[vessel][0]), (next_e, self.temp_l[next_vessel][0])))
+
+        # print("Cands:", cand_pairs)
+
+        if not cand_pairs:
+            return False
+
+        # Choose a pair to permute
+        f, _, _, i, _, _ = random.choice(cand_pairs)
+
+        # Swap factory visits for the chosen pair
+        self.factory_visits[f][i], self.factory_visits[f][i+1] = self.factory_visits[f][i+1],  self.factory_visits[f][i]
+        self.temp_factory_visits = self.factory_visits
+        self.recompute_solution_variables()
+
+        return True
+
+    def get_initial_factory_visits(self, factory: str):
+        init_factory_visits = []
+        for vessel, route_idx in zip(self.factory_visits[factory], self.factory_visits_route_index[factory]):
+            if route_idx == 0:
+                init_factory_visits.append(vessel)
+        return tuple(init_factory_visits)
 
     def _is_destination_factory(self, vessel: str, route_index: int) -> bool:
         return route_index == len(self.temp_routes[vessel]) - 1

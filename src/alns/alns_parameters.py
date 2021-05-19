@@ -18,3 +18,4 @@ score_params = [33, 9, 13]  # corresponding to sigma_1, sigma_2, sigma_3 in R&P 
 reaction_param = 0.1
 noise_param = 0.1
 determinism_param = 5
+permute_chance = 0.1
