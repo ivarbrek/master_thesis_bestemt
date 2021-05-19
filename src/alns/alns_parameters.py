@@ -10,6 +10,7 @@ ppfc_slack_increment = 0.00
 relatedness_precedence = {('green', 'yellow'): 6, ('green', 'red'): 10, ('yellow', 'red'): 4}
 start_temperature_controlparam = 0.1
 # cooling_rate = 0.998
+percentage_best_solution_production_solved = 0.05  # if 0, then only new best routing solutions are evaluated
 
 # TUNED PARAMS
 remove_percentage_interval = (0.1, 0.3)

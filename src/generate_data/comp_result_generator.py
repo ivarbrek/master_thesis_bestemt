@@ -11,121 +11,235 @@ import locale
 
 locale.setlocale(locale.LC_ALL, '')
 
+import src.util.plot as alnsplot
 import pandas as pd
 
 
-def get_intermediate(tune_param: str) -> List[str]:
-    if tune_param == "remove_percentage_interval":
-        return ["(0.05, 0.2)", "(0.1, 0.3)", "(0.2, 0.4)", "(0.3, 0.5)", "(0.1, 0.4)"]
-    elif tune_param == "relatedness_location_time":
+def get_intermediate(experiment: str) -> List[str]:
+    if experiment == "remove_percentage_interval":
+        return ["(0.05, 0.2)", "(0.1, 0.3)", "(0.2, 0.4)", "(0.3, 0.5)", "(0.1, 0.4)"]  # , "(0.1, 0.3)-2"]
+    elif experiment == "relatedness_location_time":
         return ["[0.02, 0.25]", "[0.01, 0.5]", "[0.005, 1]"]
-    elif tune_param == "relatedness_location_precedence":
+    elif experiment == "relatedness_location_precedence":
         return ["[0.02, 0.05]", "[0.01, 0.1]", "[0.005, 0.2]"]
-    elif tune_param == "score_params":
+    elif experiment == "score_params":
         return ["[33, 9, 1]", "[9, 9, 9]", "[33, 9, 13]"]
-    elif tune_param == "reaction_param":
+    elif experiment == "reaction_param":
         return ["0.1", "0.2", "0.5", "1"]
-    elif tune_param == "noise_param":
+    elif experiment == "noise_param":
         return ["0", "0.1", "0.2"]
-    elif tune_param == "determinism_param":
+    elif experiment == "determinism_param":
         return ["3", "5", "7"]
+    elif experiment == "noise_destination_param":
+        return ["0.1", "0.5", "1"]
+    elif experiment == "convergence":
+        return ["construction_heuristic_solution", "improvement_heuristic_solution"]
+    elif experiment == "lns_config":
+        return ["all_adaptive", "one_pair", "all_random"]
+    elif experiment == "subproblem_integration":
+        return ["default", "reinsert_with_ppfc"]
     else:
         return []
 
 
-def get_best_obj_vals(instance_ids: List[str], dir_path: str, tune_param: str) -> Dict[str, float]:
+def get_best_obj_vals_in_experiment(instance_ids: List[str], dir_path: str, experiment: str) -> Dict[str, float]:
     d = {inst_id: math.inf for inst_id in instance_ids}
-    tune_combs = get_intermediate(tune_param)
-    results, sheet_names_d = get_results_raw(instance_ids=instance_ids, dir_path=dir_path, tune_combs=tune_combs)
+    configs = get_intermediate(experiment)
+    results, sheet_names_d = get_results_raw(instance_ids=instance_ids, dir_path=dir_path, configs=configs,
+                                             experiment=experiment)
 
-    for tune_comb in tune_combs:
-        for inst_id in instance_ids:  # e.g. alns-test_10o_40t
-            for sheet_name in sheet_names_d[inst_id]:
-                obj_val = float(results[(tune_comb, inst_id, sheet_name)].loc['obj_val'])
-                if obj_val < d[inst_id]:
-                    d[inst_id] = obj_val
+    for config in configs:
+        if config != "construction_heuristic_solution":  # construction heuristic will at best be as good as other solutions (deterministic)
+            for inst_id in instance_ids:  # e.g. alns-test_10o_40t
+                for sheet_name in sheet_names_d[inst_id]:
+                    obj_val = float(results[(config, inst_id, sheet_name)].loc['obj_val'])
+                    if obj_val < d[inst_id]:
+                        d[inst_id] = obj_val
     return d
 
 
-def get_results_raw(instance_ids: List[str], dir_path: str, tune_combs: List[str]) -> Tuple[Dict[Tuple[str, str, str], pd.DataFrame], Dict[str, str]]:
+def get_results_raw(instance_ids: List[str], dir_path: str, configs: List[str], experiment: str) -> Tuple[
+    Dict[Tuple[str, str, str], pd.DataFrame], Dict[str, list]]:
     sheet_names_d = {}
     results = {}
-    for tune_comb in tune_combs:
+    for config in configs:
         for inst_id in instance_ids:  # e.g. alns-test_10o_40t
-            file_path = dir_path + inst_id + "-" + tune_param + ":" + tune_comb + ".xlsx"
+            file_path = dir_path + inst_id + "-" + experiment + ":" + config + ".xlsx"
             file = pd.ExcelFile(file_path)
             sheet_names = file.sheet_names
             sheet_names_d[inst_id] = list(sheet_names)
             for sheet_name in sheet_names:  # e.g. run_0 and run_1
-                results[(tune_comb, inst_id, sheet_name)] = file.parse(sheet_name, index_col=[0])
+                results[(config, inst_id, sheet_name)] = file.parse(sheet_name, index_col=[0])
     return results, sheet_names_d
 
 
-def get_tuning_results(instance_ids: List[str], dir_path: str, tune_param: str) -> pd.DataFrame:
-    tune_combs = get_intermediate(tune_param)
-    header = pd.MultiIndex.from_product([tune_combs, ['obj_val', 'time [sec]'] + ['gap']],
+def get_results(instance_ids: List[str], dir_path: str, experiment: str) -> pd.DataFrame:
+    configs = get_intermediate(experiment)
+    header = pd.MultiIndex.from_product([configs, ['obj_val', 'prod_obj_%', 'time [sec]'] + ['gap']],
                                         names=['param_value', 'value_type'])
     df: pd.DataFrame = pd.DataFrame(index=instance_ids, columns=header)  # .set_index("instance_id", drop=True)
 
-    results, sheet_names_d = get_results_raw(instance_ids, dir_path, tune_combs)
+    results, sheet_names_d = get_results_raw(instance_ids, dir_path, configs=configs, experiment=experiment)
 
-    # Add
-    for tune_comb in tune_combs:  # e.g. score_params:[9,9,9]
-        for field in ['obj_val', 'time [sec]']:
-            d = {}
-            for inst_id in instance_ids:
-                d[inst_id] = float(
-                    sum(results[(tune_comb, inst_id, sheet_name)].loc[field] for sheet_name in
-                        sheet_names_d[inst_id])) / len(sheet_names_d[inst_id])
-            df[tune_comb, field] = df.index.to_series().map(d)
+    # Add obj_val column
+    for config in configs:  # e.g. score_params:[9,9,9]
+        d = {}
+        for inst_id in instance_ids:
+            sheet_names = sheet_names_d[inst_id] if config != "construction_heuristic_solution" else ["run_initial"]
+            d[inst_id] = float(
+                sum(results[(config, inst_id, sheet_name)].loc['obj_val'] for sheet_name in
+                    sheet_names)) / len(sheet_names)
+        df[config, 'obj_val'] = df.index.to_series().map(d)
+
+    # Add prod_obj_% column
+    for config in configs:
+        d = {}
+        for inst_id in instance_ids:
+            sheet_names = sheet_names_d[inst_id] if config != "construction_heuristic_solution" else ["run_initial"]
+            d[inst_id] = 100 * (
+                        float(sum(results[(config, inst_id, sheet_name)].loc['production_cost'] for sheet_name in
+                                  sheet_names)) / len(sheet_names)) / df.loc[inst_id][config, 'obj_val']
+            df[config, 'prod_obj_%'] = df.index.to_series().map(d)
+
+    # Add time [sec] column
+    for config in configs:  # e.g. score_params:[9,9,9]
+        d = {}
+        for inst_id in instance_ids:
+            sheet_names = sheet_names_d[inst_id] if config != "construction_heuristic_solution" else ["run_initial"]
+            d[inst_id] = float(
+                sum(results[(config, inst_id, sheet_name)].loc['time [sec]'] for sheet_name in
+                    sheet_names)) / len(sheet_names)
+        df[config, 'time [sec]'] = df.index.to_series().map(d)
 
     # Add average row
     avg_d = {}
-    for tune_comb in tune_combs:
+    for config in configs:
+        # Zero decimal points
         for field in ['obj_val', 'time [sec]']:
-            avg_d[(tune_comb, field)] = round(sum(df.loc[inst][tune_comb, field] for inst in instance_ids) / len(instance_ids), 0)
+            avg_d[(config, field)] = sum(df.loc[inst][config, field] for inst in instance_ids) / len(instance_ids)
+        # Two decimal points
+        for field in ['prod_obj_%']:
+            avg_d[(config, field)] = sum(df.loc[inst][config, field] for inst in instance_ids) / len(instance_ids)
     new_row = pd.Series(data=avg_d, name='average')
     df = df.append(new_row, ignore_index=False)
 
     # Add gap column
-    best_obj_vals_d = get_best_obj_vals(instance_ids=instance_ids, dir_path=dir_path, tune_param=tune_param)
-    for tune_comb in tune_combs:
+    best_obj_vals_d = get_best_obj_vals_in_experiment(instance_ids=instance_ids, dir_path=dir_path,
+                                                      experiment=experiment)
+    for config in configs:
         d = {}
         for inst_id in instance_ids:
-            avg_obj = df.loc[inst_id][tune_comb, 'obj_val']
+            avg_obj = df.loc[inst_id][config, 'obj_val']
             best_obj = best_obj_vals_d[inst_id]
             d[inst_id] = abs(avg_obj - best_obj) / best_obj
-        d['average'] = round(100 * sum(gap for gap in d.values()) / len(instance_ids), 1)
+        d['average'] = 100 * sum(gap for gap in d.values()) / len(instance_ids)
         for inst_id in instance_ids:
-            d[inst_id] = round(100 * d[inst_id], 1)
+            d[inst_id] = 100 * d[inst_id]
+        df[config, 'gap'] = df.index.to_series().map(d)
 
-        df[tune_comb, 'gap'] = df.index.to_series().map(d)
-
-    for tune_comb in tune_combs:
-        for inst_id in instance_ids:
-            df.loc[inst_id][tune_comb, 'obj_val'] = round(df.loc[inst_id][tune_comb, 'obj_val'], 0)
-            df.loc[inst_id][tune_comb, 'time [sec]'] = round(df.loc[inst_id][tune_comb, 'time [sec]'], 0)
+    # Round off
+    # for config in configs:
+    #     for inst_id in instance_ids:
+    #         df.loc[inst_id][config, 'obj_val'] = round(df.loc[inst_id][config, 'obj_val'], 0)
+    #         df.loc[inst_id][config, 'time [sec]'] = round(df.loc[inst_id][config, 'time [sec]'], 0)
+    #         df.loc[inst_id][config, 'prod_obj_%'] = round(df.loc[inst_id][config, 'prod_obj_%'], 1)
 
     return df
 
 
-def write_result_to_file(dir_path: str, tune_param: str, instance_ids: List[str]) -> None:
-    df = get_tuning_results(instance_ids=instance_ids, dir_path=dir_path, tune_param=tune_param)
-    out_filepath = dir_path + tune_param + "-summary.xlsx"
+def write_result_to_file(dir_path: str, experiment: str, instance_ids: List[str]) -> None:
+    df = get_results(instance_ids=instance_ids, dir_path=dir_path, experiment=experiment)
+    out_filepath = dir_path + experiment + "-summary.xlsx"
     excel_writer = pd.ExcelWriter(out_filepath, engine='openpyxl', mode='w', options={'strings_to_formulas': False})
     df.to_excel(excel_writer, sheet_name="_")
     excel_writer.close()
 
 
-if __name__ == '__main__':
-    instance_ids = ["alns-tuning-3-1-20-l", "alns-tuning-3-1-20-h",
-                    "alns-tuning-3-1-40-l", "alns-tuning-3-1-40-h",
-                    "alns-tuning-3-1-60-l", "alns-tuning-3-1-60-h",
-                    "alns-tuning-5-2-20-l", "alns-tuning-5-2-20-h",
-                    "alns-tuning-5-2-40-l", "alns-tuning-5-2-40-h",
-                    "alns-tuning-5-2-60-l", "alns-tuning-5-2-60-h"]
-    dir_path = "../../data/output_data/determinism_param_tuning/"
-    tune_param = "determinism_param"
+def get_solution_development_df(inst_id: str, dir_path: str) -> pd.DataFrame:
+    file_path = dir_path + inst_id + "-stats.xlsx"
+    file = pd.ExcelFile(file_path)
+    sheet_names = list(file.sheet_names)
+    header = pd.Index(sheet_names)
+    iters = [i for i in range(len(file.parse(sheet_names[0], index_col=[0], skiprows=[0])))]
+    df: pd.DataFrame = pd.DataFrame(index=iters, columns=header)
 
-    score_param_results_dict = get_tuning_results(instance_ids, dir_path, tune_param)
-    write_result_to_file(dir_path=dir_path, tune_param=tune_param, instance_ids=instance_ids)
+    for sheet_name in sheet_names:  # e.g. run_0 and run_1
+        results = file.parse(sheet_name, index_col=[0])
+        df[sheet_name] = results
+
+    df["average_obj"] = df.mean(numeric_only=True, axis=1)
+    return df
+
+
+def plot_solution_development(solution_dev_df: pd.DataFrame, inst_id: str):
+    solution_dev_df = solution_dev_df[['average_obj']]
+    solution_tup = list(solution_dev_df.to_records())
+    alnsplot.plot_alns_history(solution_costs=solution_tup, lined=True, legend=inst_id)
+
+
+if __name__ == '__main__':
+    dir_path = "../../data/output_data/"  # noise_destination_param_tuning/"
+    experiment = "convergence"  # supported: tuning / convergence / lns_config / subproblem_integration
+
+    assert (experiment in ["tuning", "convergence", "lns_config", "subproblem_integration"])
+
+    if experiment == "tuning":
+        instance_ids = ["alns-tuning-3-1-20-l", "alns-tuning-3-1-20-h",
+                        "alns-tuning-3-1-40-l", "alns-tuning-3-1-40-h",
+                        "alns-tuning-3-1-60-l", "alns-tuning-3-1-60-h",
+                        "alns-tuning-5-2-20-l", "alns-tuning-5-2-20-h",
+                        "alns-tuning-5-2-40-l", "alns-tuning-5-2-40-h",
+                        "alns-tuning-5-2-60-l", "alns-tuning-5-2-60-h"]
+        tune_param = "noise_destination_param"
+        dir_path += tune_param + "_tuning/"
+        score_param_results_dict = get_results(instance_ids, dir_path, experiment=tune_param)
+        write_result_to_file(dir_path=dir_path, experiment=tune_param, instance_ids=instance_ids)
+
+    else:
+        instance_ids = ["alns-3-1-20-l", "alns-3-1-20-h"]  # TODO: Endre til relevante filnavn
+        dir_path += experiment + "/"
+
+        # # Just for Ivar's instances
+        # instance_ids = ["performance-3-1-8-h-1p-0",
+        #                 "performance-3-1-8-h-5p-0",
+        #                 "performance-3-1-8-l-1p-0",
+        #                 "performance-3-1-8-l-5p-0",
+        #                 "performance-3-1-10-h-1p-0",
+        #                 "performance-3-1-10-h-5p-0",
+        #                 "performance-3-1-10-l-1p-0",
+        #                 "performance-3-1-10-l-5p-0",
+        #                 "performance-3-1-12-h-1p-0",
+        #                 "performance-3-1-12-h-5p-0",
+        #                 "performance-3-1-12-l-1p-0",
+        #                 "performance-3-1-12-l-5p-0",
+        #                 "performance-3-1-15-h-1p-0",
+        #                 "performance-3-1-15-h-5p-0",
+        #                 "performance-3-1-15-l-1p-0",
+        #                 "performance-3-1-15-l-5p-0",
+        #                 "performance-5-2-10-h-1p-0",
+        #                 "performance-5-2-10-h-5p-0",
+        #                 "performance-5-2-10-l-1p-0",
+        #                 "performance-5-2-10-l-5p-0",
+        #                 "performance-5-2-12-h-1p-0",
+        #                 "performance-5-2-12-h-5p-0",
+        #                 "performance-5-2-12-l-1p-0",
+        #                 "performance-5-2-12-l-5p-0",
+        #                 "performance-5-2-15-h-1p-0",
+        #                 "performance-5-2-15-h-5p-0",
+        #                 "performance-5-2-15-l-1p-0",
+        #                 "performance-5-2-15-l-5p-0",
+        #                 "performance-5-2-18-h-1p-0",
+        #                 "performance-5-2-18-h-5p-0",
+        #                 "performance-5-2-18-l-1p-0",
+        #                 "performance-5-2-18-l-5p-0"]
+        # dir_path += "ivars_instances/"
+
+        results_dict = get_results(instance_ids, dir_path, experiment=experiment)
+        write_result_to_file(dir_path=dir_path, experiment=experiment, instance_ids=instance_ids)
+
+        if experiment == "convergence":
+            # Make plots
+            instance_ids_plot = instance_ids  # ["alns-3-1-20-l", "alns-3-1-20-h"]
+            for inst_id in instance_ids_plot:
+                sol_costs = get_solution_development_df(inst_id=inst_id, dir_path=dir_path)
+                plot_solution_development(sol_costs, inst_id=inst_id)

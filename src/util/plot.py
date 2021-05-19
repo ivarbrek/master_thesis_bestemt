@@ -2,10 +2,14 @@ import matplotlib.pyplot as plt
 from typing import List, Tuple, Dict
 import pandas as pd
 
-def plot_alns_history(solution_costs: List[Tuple[int, int]]) -> None:
+def plot_alns_history(solution_costs: List[Tuple[int, int]], lined: bool = False, legend: str = "") -> None:
     x, y = zip(*solution_costs)
     plt.figure(figsize=(10, 7))  # (8, 6) is default
     plt.scatter(x, y, s=7, alpha=0.4, c='black')
+    if lined:
+        plt.plot(x, y, label=legend)
+    if legend != "":
+        plt.legend()
     # plt.yscale('log')
     plt.show()
 
