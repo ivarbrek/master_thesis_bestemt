@@ -1,5 +1,5 @@
 from typing import List, Dict, Tuple
-
+from statistics import mean
 import sys
 import os
 
@@ -74,6 +74,56 @@ def load_tuning_result_file(instance_ids: List[str], dir_path: str, tune_param: 
     return df
 
 
+def load_performance_results(result_filenames: List[str], dir_path: str) -> pd.DataFrame:
+
+    # TODO: Include production problem gap between Gurobi and ALNS
+    gurobi_attrs = ['obj_val', 'time_limit [sec]', 'number_orders_not_served', 'lower_bound', 'production_start_cost', 'inventory_cost']
+    alns_attrs = ['obj_val', 'time [sec]', 'num_orders_not_served', 'production_cost']  #, 'num_iterations']
+    gurobi_file_names = [instance_id for instance_id in result_filenames if instance_id.split('-')[0] == 'gurobi']
+    alns_file_names = [instance_id for instance_id in result_filenames if instance_id.split('-')[0] == 'alns']
+    if len(gurobi_file_names) == len(alns_file_names):
+        print(f"Different number of Gurobi ({len(gurobi_file_names)}) and ALNS ({alns_file_names}) files:")
+
+    gurobi_data = []
+    alns_data = []
+    for filename in gurobi_file_names:
+        df = pd.read_excel(f'{dir_path}/{filename}', skiprows=[0], index_col=0)
+        # print(df)
+        gurobi_data.append((filename.replace("gurobi-", ""),) + tuple(df.loc[attr, 0] for attr in gurobi_attrs))
+
+    for filename in alns_file_names:
+        file = pd.ExcelFile(f'{dir_path}/{filename}')
+        sheet_names = file.sheet_names
+        sheet_dfs = [file.parse(sheet_name, index_col=[0], skiprows=[1]) for sheet_name in sheet_names]
+        for df in sheet_dfs:
+            print(df)
+        alns_data.append((filename.replace("alns-", ""),) +
+                         tuple(mean(df.loc[attr, df.columns[0]] for df in sheet_dfs) for attr in alns_attrs))
+
+    gurobi_df = pd.DataFrame(gurobi_data).set_index(0)
+    gurobi_df.columns = gurobi_attrs
+    # print(gurobi_df)
+    alns_df = pd.DataFrame(alns_data).set_index(0)
+    alns_df.columns = alns_attrs
+    # print(alns_df)
+
+    new_df = gurobi_df.join(alns_df, lsuffix='_gurobi', rsuffix='_alns')
+    writer = pd.ExcelWriter('../../data/output_aggregates/performance_aggregates2.xlsx', engine='openpyxl', mode='w')
+    new_df.to_excel(writer)
+    writer.close()
+
+
+def write_gurobi_alns_comparison_to_file():
+    dir_path = '../../data/output_data/'
+    # print([(i, len(i.split('-'))) for i in os.listdir(dir_path)])
+    # for name in os.listdir(dir_path):
+    #     print(name)
+    #     print(name.split('-')[1])
+    instance_ids = [inst_id for inst_id in os.listdir(dir_path)
+                    if inst_id[0] != '.' and inst_id.split('-')[1] == 'performance']
+    load_performance_results(instance_ids, dir_path)
+
+
 def write_result_to_file(dir_path: str, tune_param: str, instance_ids: List[str]) -> None:
     df = load_tuning_result_file(instance_ids=instance_ids, dir_path=dir_path, tune_param=tune_param)
     out_filepath = dir_path + tune_param + "-summary.xlsx"
@@ -83,14 +133,15 @@ def write_result_to_file(dir_path: str, tune_param: str, instance_ids: List[str]
 
 
 if __name__ == '__main__':
-    instance_ids = ["alns-tuning-3-1-20-l", "alns-tuning-3-1-20-h",
-                    "alns-tuning-3-1-40-l", "alns-tuning-3-1-40-h",
-                    "alns-tuning-3-1-60-l",  "alns-tuning-3-1-60-h",
-                    "alns-tuning-5-2-20-l", "alns-tuning-5-2-20-h",
-                    "alns-tuning-5-2-40-l", "alns-tuning-5-2-40-h",
-                    "alns-tuning-5-2-60-l", "alns-tuning-5-2-60-h"]
-    dir_path = "../../data/output_data/removal_param_tuning/"
-    tune_param = "remove_percentage_interval"
-
-    score_param_results_dict = load_tuning_result_file(instance_ids, dir_path, tune_param)
-    write_result_to_file(dir_path=dir_path, tune_param=tune_param, instance_ids=instance_ids)
+    write_gurobi_alns_comparison_to_file()
+    # instance_ids = ["alns-tuning-3-1-20-l", "alns-tuning-3-1-20-h",
+    #                 "alns-tuning-3-1-40-l", "alns-tuning-3-1-40-h",
+    #                 "alns-tuning-3-1-60-l",  "alns-tuning-3-1-60-h",
+    #                 "alns-tuning-5-2-20-l", "alns-tuning-5-2-20-h",
+    #                 "alns-tuning-5-2-40-l", "alns-tuning-5-2-40-h",
+    #                 "alns-tuning-5-2-60-l", "alns-tuning-5-2-60-h"]
+    # dir_path = "../../data/output_data/removal_param_tuning/"
+    # tune_param = "remove_percentage_interval"
+    #
+    # score_param_results_dict = load_tuning_result_file(instance_ids, dir_path, tune_param)
+    # write_result_to_file(dir_path=dir_path, tune_param=tune_param, instance_ids=instance_ids)
