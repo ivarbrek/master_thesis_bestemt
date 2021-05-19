@@ -735,7 +735,7 @@ def parse_tune_values(parameter_tune: str) -> List[Union[Tuple[float, float], in
     return []
 
 
-def run_alns(prbl: ProblemDataExtended, parameter_tune: str, parameter_tune_value,
+def run_alns(prbl: ProblemDataExtended, parameter_tune: str = "None", parameter_tune_value=None,
              iterations: int = 0, max_time: int = 0, skip_production_problem_postprocess: bool = False,
              verbose: bool = True) -> Union[Dict[Tuple[str, str, int], int], None, Tuple[Alns, str, int, int]]:
     if iterations == 0 and max_time == 0:
@@ -746,10 +746,11 @@ def run_alns(prbl: ProblemDataExtended, parameter_tune: str, parameter_tune_valu
         max_time = 0
 
     if iterations == 0:
-        print(f"Using cooling rate of 0.999.")
         cooling_rate = 0.999
+
     else:
         cooling_rate = math.pow(0.002, (1 / iterations))
+    print(f"Using cooling rate of", cooling_rate)
 
     parameter_values = {
         'weight_min_threshold': alnsparam.weight_min_threshold,  # 0.2
@@ -824,18 +825,18 @@ def run_alns(prbl: ProblemDataExtended, parameter_tune: str, parameter_tune_valu
     _stat_repair_weights = defaultdict(list)
     _stat_destroy_weights = defaultdict(list)
     _stat_noise_weights = defaultdict(list)
-    print(round(time(), 5))
     t0 = time()
-    print(t0)
+    # print(t0)
     i = 0
     while i < iterations or (time() - t0) < max_time:
-        if verbose:
-            print("Iteration", i)
         alns.run_alns_iteration()
         i += 1
 
         if verbose:
+            print("Iteration", i)
             alns.current_sol.print_routes()
+            for f, visits in alns.current_sol.factory_visits.items():
+                print(f"{f}: {visits}")
             print(f"Obj: {alns.current_sol_cost:,}   Not served: {alns.current_sol.get_orders_not_served()}")
             print("Slack factor:", round(alns.current_sol.ppfc_slack_factor, 2),
                   "  Infeasible strike:", alns.production_infeasibility_strike)
@@ -857,16 +858,20 @@ def run_alns(prbl: ProblemDataExtended, parameter_tune: str, parameter_tune_valu
     #     alns.best_sol_production_cost = alns.production_model.get_production_cost(alns.best_sol, verbose=True,
     #                                                                               time_limit=30)
     # except ValueError:
+    # alns.best_sol_production_cost = alns.production_model.get_production_cost(alns.best_sol, verbose=True, time_limit=60)
+    # alns.production_model.print_solution_simple()
+    # print()
     alns.best_sol_production_cost = alns.production_heuristic.get_cost(alns.best_sol)
+    # alns.production_heuristic.print_sol()
 
     alns_time = time() - t0
-    print()
+    # print()
     print(f"...ALNS terminating  ({round(alns_time)}s)")
     alns.best_sol.print_routes()
 
     if verbose:
-        print("Routing obj:", alns.best_sol_cost, "Prod obj:", round(alns.best_sol_production_cost, 1),
-              "Total:", alns.best_sol_cost + round(alns.best_sol_production_cost, 1))
+        print("Routing obj:", round(alns.best_sol_cost), "Prod obj:", round(alns.best_sol_production_cost, 1),
+              "Total:", round(alns.best_sol_cost + alns.best_sol_production_cost, 1))
         print("Not served:", alns.best_sol.get_orders_not_served())
 
 
@@ -905,6 +910,7 @@ if __name__ == '__main__':
 
     # prbl = ProblemDataExtended('../../data/input_data/large_testcase.xlsx', precedence=precedence)
     # prbl = ProblemDataExtended('../../data/input_data/gurobi_testing/f1-v3-o20-t72-i0.05-tw4.xlsx', precedence=precedence)
+    print("File:", args.input_filepath.split('/')[-1])
     prbl = ProblemDataExtended(args.input_filepath, precedence=precedence)
 
     # WRITE TO FILE

@@ -12,10 +12,10 @@ start_temperature_controlparam = 0.1  # solution 10% worse than best solution is
 # cooling_rate = 0.998
 
 # TUNED PARAMS
-remove_percentage_interval = (0.05, 0.2)
+remove_percentage_interval = (0.1, 0.3)
 related_removal_weight_param = {'relatedness_location_time': [0.01, 0.5], 'relatedness_location_precedence': [0.01, 0.1]}
-score_params = [33, 9, 13]  # corresponding to sigma_1, sigma_2, sigma_3 in R&P and L&N
-reaction_param = 0.1
+score_params = [33, 9, 1]  # corresponding to sigma_1, sigma_2, sigma_3 in R&P and L&N
+reaction_param = 0.2
 noise_param = 0.1
 determinism_param = 5
 permute_chance = 0.1

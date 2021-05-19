@@ -286,7 +286,7 @@ class ProblemData:
                 for node in self.loading_unloading_times_df.index
                 for vessel in self.loading_unloading_times_df.columns}
 
-    def get_demands_dict(self) -> Dict[Tuple[str, str], int]:
+    def get_demands_dict(self) -> Dict[Tuple[str, str, str], int]:
         order_node_dict = {(order_node, order_node, product): int(self.demands_df.loc[order_node, product])
                            for order_node in self.demands_df.index
                            for product in self.demands_df.columns}
@@ -369,8 +369,20 @@ class ProblemData:
                 for factory in self.factory_max_vessels_loading_df.columns}
 
     def get_external_delivery_penalties_dict(self) -> Dict[str, int]:
-        max_transport_cost = max(self.get_transport_costs_dict().values()) * max(self.transport_times_exact.values())
-        return {order: 2 * int(max_transport_cost) for order in self.order_nodes}
+        max_transport_cost = 2 * (max(self.get_transport_costs_dict().values()) *
+                                  max(self.transport_times_exact.values()))
+        max_production_start_cost = (max(sum(self.demands[order, order, product] > 0 for product in self.products)
+                                         for order in self.order_nodes) *  # max no. products in same order
+                                     max(self.production_start_costs[factory, product]
+                                         for factory in self.factory_nodes
+                                         for product in self.products))  # max production start cost
+        max_inventory_cost = (max(self.demands[order, order, product]
+                                  for product in self.products
+                                  for order in self.order_nodes) *   # max order quantity
+                              max(self.inventory_unit_costs[factory] for factory in self.factory_nodes) *
+                              # max inventory unit cost
+                              len(self.time_periods))  # no. time periods
+        return {order: max_transport_cost + max_production_start_cost + max_inventory_cost for order in self.order_nodes}
 
     def get_factory_max_vessels_destination_dict(self) -> Dict[str, int]:
         return {factory: int(self.factory_max_vessel_destination_df.loc[factory])
