@@ -97,7 +97,7 @@ class Solution:
 
         self.temp_routes: Dict[str, List[str]] = {vessel: route[:] for vessel, route in self.routes.items()}
         self.temp_e: Dict[str, List[int]] = {vessel: e[:] for vessel, e in self.e.items()}
-        self.temp_l: Dict[str, List[int]] = {vessel: e[:] for vessel, e in self.e.items()}
+        self.temp_l: Dict[str, List[int]] = {vessel: l[:] for vessel, l in self.l.items()}
         self.temp_factory_visits: Dict[str, List[str]] = {factory: visits[:]
                                                           for factory, visits in self.factory_visits.items()}
         self.temp_factory_visits_route_index: Dict[str, List[int]] = {factory: visit_route_idxs[:]
@@ -347,8 +347,8 @@ class Solution:
         for i in range(idx - 1, -1, -1):
             l = self.get_latest(i, vessel)
             updated_l = l < self.temp_l[vessel][i]
-            self.temp_l[vessel][i] = l if updated_l else self.temp_l[vessel][
-                i]  # update temp_l if stronger bound is found
+            self.temp_l[vessel][i] = l if updated_l else self.temp_l[vessel][i]
+            # update temp_l if stronger bound is found
 
             if l < self.temp_e[vessel][i]:  # insertion squeezes out preceding node
                 if self.verbose:
@@ -491,7 +491,7 @@ class Solution:
         # if node is inserted after a destination factory, we must update e for this factory's visits
         # (the factory destination does now have a loading time as it is no longer a destination)
         if (idx == len(route) - 1 and self.prbl.nodes[route[-2]].is_factory
-                and not self.check_factory_visits_earliest_forward(route[-2], 1)):
+                and not self.check_factory_visits_earliest_forward(route[-2], idx - 1)):  # NB: Changed
             return False
 
         # if an order is inserted at the end of the route, insert a new if possible factory destination
@@ -502,7 +502,7 @@ class Solution:
         return True
 
     def check_and_set_destination_factory(self, vessel: str, noise_factor: float = 0.0) -> bool:
-        """Picks a destination factory for the route in a greedy manner"""
+        """Picks a destination factory for the route in a greedy manner, but with noise applied"""
         route = self.temp_routes[vessel]
         factory_destination_options = [(factory_node, self.get_insertion_utility(factory_node, vessel, len(route),
                                                                                  noise_factor))
@@ -535,8 +535,6 @@ class Solution:
         else:  # destination factories are unchanged or 'removed'
             return True
 
-    def check_node_for_vessel_feasibility(self, insert_node: Node, vessel: str) -> bool:
-        return self.prbl.nodes_for_vessels[(vessel, insert_node.id)] == 1
 
     def check_load_feasibility(self, insert_node: Node, vessel: str, idx: int) -> bool:
         route = self.routes[vessel]
