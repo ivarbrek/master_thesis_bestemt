@@ -70,15 +70,15 @@ def generate_parameter_tuning_instances():
 
 def generate_performance_testing_instances():
     # Input parameters and info that varies for each instance:
-    instances_per_modification = 1
+    instances_per_modification = 3
     base_settings = ['3-1', '5-2']
-    all_orders = [[15], [18]]
-    all_planning_horizon_days = [[6], [6]]
+    all_orders = [[20, 40, 60], [20, 40, 60]]
+    all_planning_horizon_days = [[6, 9, 14], [5, 8, 12]]
     all_vessels = [["Borgenfjord", "Nyksund", "Høydal"], ["Ripnes", "Vågsund", "Nyksund", "Borgenfjord", "Høydal"]]
     all_factories = [["2016"], ["2022", "482"]]
     companies = ["Mowi Feed AS", "BioMar AS"]
-    inventory_levels = [0.2, 0.5]
-    inventory_level_encoding = {0.2: "l", 0.5: "h"}
+    inventory_levels = [0.2, 0.4]
+    inventory_level_encoding = {0.2: "l", 0.4: "h"}
     no_products = [1, 5]
 
     # Input parameters kept constant:
@@ -106,7 +106,7 @@ def generate_performance_testing_instances():
                 for no_product in no_products:
                     for i in range(instances_per_modification):
                         instance_name = f"performance-{setting_name}-{no_orders}-" \
-                                        f"{inventory_level_encoding[inventory_level]}-{no_product}p-{i}"
+                                        f"{inventory_level_encoding[inventory_level]}-{i}"
                         time_periods = int(planning_horizon_days * 24 / time_period_length)
                         print(instance_name)
 
@@ -279,6 +279,6 @@ def generate_time_window_duplicate_instances():
 
 if __name__ == '__main__':
     # generate_parameter_tuning_instances()
-    generate_performance_testing_instances()
     # generate_time_period_duplicate_instances()
-    # generate_time_window_duplicate_instances()
+    # generate_performance_testing_instances()
+    generate_time_window_duplicate_instances()

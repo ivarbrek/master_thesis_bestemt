@@ -1,3 +1,8 @@
+import sys
+import os
+
+sys.path.append(os.getcwd())
+
 import math
 import random
 import numpy as np
@@ -7,17 +12,15 @@ from collections import defaultdict
 import function
 import argparse
 import pandas as pd
-import sys
-import os
-
-sys.path.append(os.getcwd())
 
 from src.alns.solution import Solution, ProblemDataExtended
 from src.models.production_model import ProductionModel
 import src.alns.alns_parameters as alnsparam
+import src.alns.alns_run_configurations as runalns
 import src.util.plot as util
 from src.alns.production_problem_heuristic import ProductionProblemHeuristic, ProductionProblem
 import locale
+
 locale.setlocale(locale.LC_ALL, '')
 
 int_inf = 999999
@@ -26,7 +29,8 @@ int_inf = 999999
 class Alns:
     it_seg_count: int
     best_sol: Solution
-    best_sol_cost: int
+    best_sol_routing_cost: int
+    best_sol_total_cost: int
     current_sol: Solution
     current_sol_cost: int
     production_model: ProductionModel
@@ -65,11 +69,13 @@ class Alns:
                  start_temperature_controlparam: float,
                  cooling_rate: float,
                  max_iter_seg: int,
+                 percentage_best_solutions_production_solved: float,
                  max_iter_same_solution: int,
                  remove_percentage_interval: Tuple[float, float],
                  remove_num_percentage_adjust: float,
                  determinism_param: int,
                  noise_param: float,
+                 noise_destination_param: float,
                  relatedness_precedence: Dict[Tuple[str, str], int],
                  related_removal_weight_param: Dict[str, List[float]],
                  inventory_reward: bool,
@@ -87,6 +93,7 @@ class Alns:
         self.remove_num_adjust = math.ceil(remove_num_percentage_adjust * len(problem_data.order_nodes))
         self.determinism_param = determinism_param
         self.noise_param = noise_param
+        self.noise_destination_param = noise_destination_param
         self.max_iter_same_solution = max_iter_same_solution
         self.iter_same_solution = 0
         self.reinsert_with_ppfc = reinsert_with_ppfc
@@ -98,12 +105,14 @@ class Alns:
                                                 inventory_reward_extension=inventory_reward)
         self.production_heuristic = ProductionProblemHeuristic(ProductionProblem(problem_data))
 
-        # ensure prod feasibility
+        # Ensure prod feasibility
         self.current_sol = self.adjust_sol_exact(self.current_sol, remove_num=self.remove_num_adjust)
         self.current_sol_cost = self.current_sol.get_solution_routing_cost()
         self.best_sol = self.current_sol
-        self.best_sol_cost = round(self.current_sol_cost)
+        self.best_sol_routing_cost = round(self.current_sol_cost)
+        self.best_sol_total_cost = self.best_sol_routing_cost + self.production_heuristic.get_cost(routing_sol=self.best_sol)
         self.record_solution(self.current_sol)
+        self.percentage_best_solutions_production_solved = percentage_best_solutions_production_solved
 
         # Operator weights, scores and usage
         noise_op = [True, False]
@@ -121,9 +130,10 @@ class Alns:
         self.score_params = {i: score_params[i] for i in range(len(score_params))}
 
         self.cooling_rate = cooling_rate
-        self.temperature = -(self.best_sol_cost * start_temperature_controlparam) / math.log(0.5)
+        self.temperature = -(self.best_sol_routing_cost * start_temperature_controlparam) / math.log(0.5)
 
         self.it_seg_count = 0  # Iterations done in one segment - can maybe do this in run_alns_iteration?
+        self.num_best_total_sol_updates = 0
 
         self.production_infeasibility_strike_max = production_infeasibility_strike_max
         self.ppfc_slack_increment = ppfc_slack_increment
@@ -140,7 +150,7 @@ class Alns:
         destroy_op = [(k, round(v, 2)) for k, v in sorted(self.destroy_op_weight.items(), key=lambda item: item[0])]
         repair_op = [(k, round(v, 2)) for k, v in sorted(self.repair_op_weight.items(), key=lambda item: item[0])]
         return (
-            f"Best solution with routing cost {self.best_sol_cost}: \n"
+            f"Best solution with routing cost {self.best_sol_routing_cost}: \n"
             f"{self.best_sol} \n"
             # f"Current solution with routing cost {self.current_sol_cost}: \n"
             # f"{self.current_sol} \n"
@@ -193,7 +203,7 @@ class Alns:
             prod_feasible, infeasible_factory = sol.check_production_feasibility()
             infeasible.append(infeasible_factory)
 
-        # print("Infeasible:", infeasible)
+        print("Infeasible:", infeasible)
         orders_not_served = len(sol.get_orders_not_served())
         if repair_op and self.reinsert_with_ppfc:  # Reinsert nodes using the ppfc check
             sol = self.repair(repair_op, sol, apply_noise=True, use_ppfc=True)
@@ -517,7 +527,7 @@ class Alns:
         while len(insertion_cand) > 0:  # try all possible insertions
             insert_node_id, vessel, idx, _ = insertions[-1]
             if sol.check_insertion_feasibility(insert_node_id, vessel, idx,
-                                               noise_factor=apply_noise * self.noise_param * 10, ppfc=ppfc):
+                                               noise_factor=apply_noise * self.noise_destination_param, ppfc=ppfc):
                 sol.insert_last_checked()
                 insertion_cand.remove(insert_node_id)
                 # recalculate profit gain and omit other insertions of node_id
@@ -559,7 +569,8 @@ class Alns:
                 while num_feasible < k and len(insertions) > 0:
                     idx, vessel, util = insertions.pop()
                     feasible = sol.check_insertion_feasibility(order, vessel, idx,
-                                                               noise_factor=apply_noise * self.noise_param * 10, ppfc=ppfc)
+                                                               noise_factor=apply_noise * self.noise_destination_param,
+                                                               ppfc=ppfc)
                     sol.clear_last_checked()
 
                     if feasible and num_feasible == 0:
@@ -582,7 +593,8 @@ class Alns:
 
             # insert the greatest regret from repair_candidates
             node_id, idx, vessel, _ = max(repair_candidates, key=lambda item: item[3])
-            sol.check_insertion_feasibility(node_id, vessel, idx, noise_factor=apply_noise * self.noise_param * 10)
+            sol.check_insertion_feasibility(node_id, vessel, idx,
+                                            noise_factor=apply_noise * self.noise_destination_param)
             sol.insert_last_checked()
             unrouted_orders.remove(node_id)
 
@@ -598,14 +610,27 @@ class Alns:
         :return: True if sol should be accepted to self.current_sol, else False, update_type and cost of new solution
         """
         sol_cost = sol.get_solution_routing_cost()
-        if sol_cost < self.best_sol_cost:
-            accept, _ = self.production_heuristic.is_feasible(sol)
-            # exact_accept = self.production_model.is_feasible(sol)
-            # if accept != exact_accept:
-            #     print(f"Heuristic result ({accept})  deviates from exact ({exact_accept}). Sol cost: {sol_cost}")
-            update_type = 0 if accept else -2  # -2 means new global best was not production feasible
-            return accept, update_type, sol_cost
-        elif sol_cost < self.current_sol_cost:
+
+        # If routing solution within 5% of best routing solution, check production cost/feasibility
+        if sol_cost < self.best_sol_routing_cost * (1 + self.percentage_best_solutions_production_solved):
+            prod_cost = self.production_heuristic.get_cost(routing_sol=sol)
+            accept = prod_cost > 0
+            if not accept:
+                return False, -2, sol_cost
+            elif (accept and prod_cost + sol_cost < self.best_sol_total_cost and
+                sol.get_solution_hash() not in self.previous_solutions):
+                self.best_sol_total_cost = prod_cost + sol_cost
+                self.num_best_total_sol_updates += 1
+                return True, 0, sol_cost
+
+        # if sol_cost < self.best_sol_cost:
+        #     accept, _ = self.production_heuristic.is_feasible(sol)
+        #     # exact_accept = self.production_model.is_feasible(sol)
+        #     # if accept != exact_accept:
+        #     #     print(f"Heuristic result ({accept})  deviates from exact ({exact_accept}). Sol cost: {sol_cost}")
+        #     update_type = 0 if accept else -2  # -2 means new global best was not production feasible
+        #     return accept, update_type, sol_cost
+        if sol_cost < self.current_sol_cost:
             update_type = -1 if sol.get_solution_hash() in self.previous_solutions else 1
             return True, update_type, sol_cost
         elif self.iter_same_solution < self.max_iter_same_solution:
@@ -661,12 +686,11 @@ class Alns:
         # set x∗ =x
         if self.update_type == 0:  # type 0 means global best solution is found
             self.best_sol = self.current_sol
-            self.best_sol_cost = round(self.current_sol_cost)
+            self.best_sol_routing_cost = round(self.current_sol_cost)
             self.new_best_solution_feasible_production_count += 1
             if self.verbose:
                 print(f'> Solution is accepted as best solution')
-
-            # print("New best solutions' routing obj:", self.best_sol_cost)
+            print("New best solutions' routing obj:", self.best_sol_routing_cost)
 
         if self.update_type == -2:  # type -2 means solution gave global best routing, but was not production feasible
             self.new_best_solution_infeasible_production_count += 1
@@ -682,10 +706,11 @@ class Alns:
         self.it_seg_count += 1
 
     def write_to_file(self, excel_writer: pd.ExcelWriter, id: int, stop_criterion: str, alns_iter: int,
-                      alns_time: int, parameter_tune: str = None, parameter_tune_value = None) -> None:
-        solution_dict = {'obj_val': round(self.best_sol_production_cost + self.best_sol_cost, 2),
+                      alns_time: int, parameter_tune: str = None, parameter_tune_value=None) -> None:
+        cooling_rate = str(0.999) if alns_iter == 0 else str(round(math.pow(0.002, (1 / alns_iter)), 4))
+        solution_dict = {'obj_val': round(self.best_sol_total_cost, 2),
                          'production_cost': round(self.best_sol_production_cost, 2),
-                         'routing_cost': round(self.best_sol_cost, 2),
+                         'routing_cost': round(self.best_sol_routing_cost, 2),
                          'num_orders_not_served': len(self.best_sol.get_orders_not_served()),
                          'stop_crierion': stop_criterion,
                          'num_iterations': alns_iter,
@@ -693,55 +718,63 @@ class Alns:
                          'score_params': str(alnsparam.score_params),
                          'reaction_param': str(alnsparam.reaction_param),
                          'start_temperature_controlparam': str(alnsparam.start_temperature_controlparam),
-                         'cooling_rate': str(round(math.pow(0.002, (1/alns_iter)), 4)),  # TODO: Support time-based run (it=0)
+                         'cooling_rate': cooling_rate,
                          'remove_percentage_interval': str(alnsparam.remove_percentage_interval),
                          'noise_param': str(alnsparam.noise_param),
                          'determinism_param': str(alnsparam.determinism_param),
-                         'related_removal_weight_param': str(alnsparam.related_removal_weight_param)}
+                         'related_removal_weight_param': str(alnsparam.related_removal_weight_param),
+                         'noise_destination_param': str(alnsparam.noise_destination_param)}
 
         if parameter_tune is not None:
             if parameter_tune == 'relatedness_location_time':
-                solution_dict['related_removal_weight_param']['relatedness_location_time'] = str(parameter_tune_value)
+                solution_dict['related_removal_weight_param'] = str(parameter_tune_value) + str(
+                    alnsparam.related_removal_weight_param['relatedness_location_precedence'])
             elif parameter_tune == 'relatedness_location_precedence':
-                solution_dict['related_removal_weight_param']['relatedness_location_precedence'] = str(parameter_tune_value)
+                solution_dict['related_removal_weight_param'] = str(
+                    alnsparam.related_removal_weight_param['relatedness_location_time']) + str(parameter_tune_value)
             else:
                 solution_dict[parameter_tune] = str(parameter_tune_value)
 
         # TODO: Add relevant data
+        if id == -1:
+            id = "initial"
         sheet_name = "run_" + str(id)
         df = pd.DataFrame(solution_dict, index=[0]).transpose()
         df.to_excel(excel_writer, sheet_name=sheet_name, startrow=1)
 
 
-def parse_tune_values(parameter_tune: str) -> List[Union[Tuple[float, float], int, float,
-                                                         Dict[str, List[float]], List[int], List[float]]]:
-    if parameter_tune == "None":
-        return []
-    if parameter_tune == "remove_percentage_interval":
-        return [(0.1, 0.3)]  # (0.05, 0.2), (0.2, 0.4), (0.3, 0.5), (0.1, 0.4)]
-    if parameter_tune == "relatedness_location_time":
-        return [[0.02, 0.25], [0.01, 0.5], [0.005, 1]]
-    if parameter_tune == "relatedness_location_precedence":
-        return [[0.02, 0.05], [0.01, 0.1], [0.005, 0.2]]
-    if parameter_tune == "score_params":
-        return [[33, 9, 1], [9, 9, 9], [33, 9, 13]]
-    if parameter_tune == "reaction_param":
-        return [0.1, 0.2, 0.5, 1]
-    if parameter_tune == "noise_param":
-        return [0, 0.1, 0.2]
-    if parameter_tune == "determinism_param":
-        return [3, 5, 7]
+def parse_experiment_values(experiment: str) -> Tuple[
+    bool, List[Union[Tuple[float, float], int, float, str, List[float]]]]:
+    if experiment == "None":
+        return False, []
+    if experiment == "remove_percentage_interval":
+        return True, [(0.05, 0.2), (0.1, 0.3), (0.2, 0.4), (0.3, 0.5), (0.1, 0.4)]
+    if experiment == "relatedness_location_time":
+        return True, [[0.02, 0.25], [0.01, 0.5], [0.005, 1]]
+    if experiment == "relatedness_location_precedence":
+        return True, [[0.02, 0.05], [0.01, 0.1], [0.005, 0.2]]
+    if experiment == "score_params":
+        return True, [[33, 9, 1], [9, 9, 9], [33, 9, 13]]
+    if experiment == "reaction_param":
+        return True, [0.1, 0.2, 0.5, 1]
+    if experiment == "noise_param":
+        return True, [0, 0.1, 0.2]
+    if experiment == "determinism_param":
+        return True, [3, 5, 7]
+    if experiment == "noise_destination_param":
+        return True, [0.1, 0.5, 1]
+    if experiment in ["convergence", "lns_config", "subproblem_integration"]:
+        return False, []
     print(f"Values could not be parsed")
-    return []
+    return False, []
 
 
-def run_alns(prbl: ProblemDataExtended, parameter_tune: str = "None", parameter_tune_value=None,
-             iterations: int = 0, max_time: int = 0, skip_production_problem_postprocess: bool = False,
-             verbose: bool = True) -> Union[Dict[Tuple[str, str, int], int], None, Tuple[Alns, str, int, int]]:
-    if iterations == 0 and max_time == 0:
-        print(f"Required input parameters not provided. Cannot run ALNS.")
-        return
-    elif iterations * max_time > 0:
+def run_alns(prbl: ProblemDataExtended, parameter_tune: str, parameter_tune_value, iterations: int = 0,
+             max_time: int = 0, skip_production_problem_postprocess: bool = False,
+             post_process_heuristically: bool = False, adaptive_weights: bool = True, all_operators: bool = True,
+             force_reinsert_ppfc_true: bool = False, verbose: bool = True) -> Union[
+    Dict[Tuple[str, str, int], int], None, Tuple[Alns, str, int, int, Dict[int, int]]]:
+    if iterations * max_time > 0:
         print(f"Multiple stopping criteria given. Choosing iterations criteria, where iterations={iterations}.")
         max_time = 0
 
@@ -760,10 +793,12 @@ def run_alns(prbl: ProblemDataExtended, parameter_tune: str = "None", parameter_
         'cooling_rate': cooling_rate,  # alnsparam.cooling_rate,  # 0.995,
         'max_iter_same_solution': alnsparam.max_iter_same_solution,  # 50,
         'max_iter_seg': alnsparam.max_iter_seg,  # 40,
+        'percentage_best_solution_production_solved': alnsparam.percentage_best_solution_production_solved,
         'remove_percentage_interval': alnsparam.remove_percentage_interval,  # (0.1, 0.3),
         'remove_num_percentage_adjust': alnsparam.remove_num_percentage_adjust,  # 0.05,
         'determinism_param': alnsparam.determinism_param,  # 5,
         'noise_param': alnsparam.noise_param,  # 0.25,
+        'noise_destination_param': alnsparam.noise_destination_param,
         'relatedness_precedence': alnsparam.relatedness_precedence,
         'related_removal_weight_param': alnsparam.related_removal_weight_param,
         'production_infeasibility_strike_max': alnsparam.production_infeasibility_strike_max,  # 0,
@@ -781,6 +816,11 @@ def run_alns(prbl: ProblemDataExtended, parameter_tune: str = "None", parameter_
         else:
             print(f"Parameter {parameter_tune} does not exist. Parameters left unchanged.")
 
+    if not adaptive_weights:
+        parameter_values['reaction_param'] = 0  # weights remain the same throughout the whole search (not adaptive)
+    if force_reinsert_ppfc_true:
+        parameter_values['reinsert_with_ppfc'] = True
+
     precedence = prbl.precedence
     destroy_op = ['d_random',
                   'd_worst',
@@ -790,11 +830,16 @@ def run_alns(prbl: ProblemDataExtended, parameter_tune: str = "None", parameter_
                   'd_route_worst',
                   'd_related_location_time']
     destroy_op += ['d_related_location_precedence'] if precedence else []
+    repair_op = ['r_greedy', 'r_2regret', 'r_3regret']
+
+    if not all_operators:
+        destroy_op = ['d_random']
+        repair_op = ['r_greedy']
 
     print("ALNS running...")
     alns = Alns(problem_data=prbl,
                 destroy_op=destroy_op,
-                repair_op=['r_greedy', 'r_2regret', 'r_3regret'],
+                repair_op=repair_op,
                 weight_min_threshold=parameter_values['weight_min_threshold'],  # 0.2
                 reaction_param=parameter_values['reaction_param'],  # 0.1,
                 score_params=parameter_values['score_params'],
@@ -802,10 +847,12 @@ def run_alns(prbl: ProblemDataExtended, parameter_tune: str = "None", parameter_
                 cooling_rate=parameter_values['cooling_rate'],  # 0.995,
                 max_iter_same_solution=parameter_values['max_iter_same_solution'],  # 50,
                 max_iter_seg=parameter_values['max_iter_seg'],  # 40,
+                percentage_best_solutions_production_solved=parameter_values['percentage_best_solution_production_solved'],
                 remove_percentage_interval=parameter_values['remove_percentage_interval'],  # (0.1, 0.3),
                 remove_num_percentage_adjust=parameter_values['remove_num_percentage_adjust'],  # 0.05,
                 determinism_param=parameter_values['determinism_param'],  # 5,
                 noise_param=parameter_values['noise_param'],  # 0.25,
+                noise_destination_param=parameter_values['noise_destination_param'],
                 relatedness_precedence=parameter_values['relatedness_precedence'],
                 related_removal_weight_param=parameter_values['related_removal_weight_param'],
                 production_infeasibility_strike_max=parameter_values['production_infeasibility_strike_max'],  # 0,
@@ -825,9 +872,12 @@ def run_alns(prbl: ProblemDataExtended, parameter_tune: str = "None", parameter_
     _stat_repair_weights = defaultdict(list)
     _stat_destroy_weights = defaultdict(list)
     _stat_noise_weights = defaultdict(list)
+    _stat_best_routing_solution_dict = {0: alns.best_sol_routing_cost}  # initializing with construction heuristic solution
+    _stat_best_total_solution_dict = {0: alns.best_sol_total_cost}
     t0 = time()
     # print(t0)
     i = 0
+
     while i < iterations or (time() - t0) < max_time:
         alns.run_alns_iteration()
         i += 1
@@ -842,6 +892,8 @@ def run_alns(prbl: ProblemDataExtended, parameter_tune: str = "None", parameter_
                   "  Infeasible strike:", alns.production_infeasibility_strike)
             print()
 
+        _stat_best_routing_solution_dict[i] = alns.best_sol_routing_cost
+        _stat_best_total_solution_dict[i] = alns.best_sol_total_cost
         _stat_solution_cost.append((i, alns.current_sol_cost))
         for op, score in alns.destroy_op_weight.items():
             _stat_destroy_weights[op].append(score)
@@ -854,54 +906,65 @@ def run_alns(prbl: ProblemDataExtended, parameter_tune: str = "None", parameter_
         alns.best_sol.print_routes()
         return alns.best_sol.get_y_dict()
 
-    # try:
-    #     alns.best_sol_production_cost = alns.production_model.get_production_cost(alns.best_sol, verbose=True,
-    #                                                                               time_limit=30)
-    # except ValueError:
-    # alns.best_sol_production_cost = alns.production_model.get_production_cost(alns.best_sol, verbose=True, time_limit=60)
-    # alns.production_model.print_solution_simple()
-    # print()
-    alns.best_sol_production_cost = alns.production_heuristic.get_cost(alns.best_sol)
-    # alns.production_heuristic.print_sol()
+    if post_process_heuristically:
+        alns.best_sol_production_cost = alns.production_heuristic.get_cost(alns.best_sol)
+        alns.production_heuristic.print_sol()
+        alns.best_sol.print_routes()
+        print("Routing obj:", alns.best_sol_routing_cost, "Prod obj:", round(alns.best_sol_production_cost, 1),
+              "Total:", alns.best_sol_total_cost + round(alns.best_sol_production_cost, 1))
+        print("Orders not_served:", len(alns.best_sol.get_orders_not_served()))
+    else:
+        try:
+            alns.best_sol_production_cost = alns.production_model.get_production_cost(alns.best_sol, verbose=True,
+                                                                                      time_limit=30)
+            alns.production_model.print_solution_simple()
+            print("Routing obj:", alns.best_sol_routing_cost, "Prod obj:", round(alns.best_sol_production_cost, 1),
+                  "Total:", alns.best_sol_routing_cost + round(alns.best_sol_production_cost, 1))
+        except ValueError:
+            print("Routing obj:", alns.best_sol_routing_cost, "Production problem not solved")
 
     alns_time = time() - t0
-    # print()
-    print(f"...ALNS terminating  ({round(alns_time)}s)")
-    alns.best_sol.print_routes()
-
     if verbose:
-        print("Routing obj:", round(alns.best_sol_cost), "Prod obj:", round(alns.best_sol_production_cost, 1),
-              "Total:", round(alns.best_sol_cost + alns.best_sol_production_cost, 1))
+        print()
+        print(f"...ALNS terminating  ({round(time() - t0)}s)")
+        alns.best_sol.print_routes()
         print("Not served:", alns.best_sol.get_orders_not_served())
 
+        try:
+            alns.production_model.print_solution_simple()
 
-        print(f"{len(alns.previous_solutions)} different solutions accepted")
+            print("Routing obj:", alns.best_sol_routing_cost, "Prod obj:", round(alns.best_sol_production_cost, 1),
+                  "Total:", alns.best_sol_routing_cost + round(alns.best_sol_production_cost, 1))
+        except AttributeError:
+            print("Routing obj:", alns.best_sol_routing_cost, "Production problem not solved")
 
         print(f"Best solution updated {alns.new_best_solution_feasible_production_count} times")
         print(f"Candidate to become best solution rejected {alns.new_best_solution_infeasible_production_count} times, "
               f"because of production infeasibility")
+        print(f"{len(alns.previous_solutions)} different solutions accepted")
         print(f"Repaired solution rejected {alns.ppfc_infeasible_count} times, because of PPFC infeasibility")
 
         # util.plot_alns_history(_stat_solution_cost)
         # util.plot_operator_weights(_stat_destroy_weights)
         # util.plot_operator_weights(_stat_repair_weights)
         # util.plot_operator_weights(_stat_noise_weights)
+        # util.plot_alns_history(_stat_best_routing_solution)
 
-    stop_criterion = str(max_time) + " sec" if iterations == 0 else str(iterations) + " iterations"
-    return alns, stop_criterion, i, int(alns_time)
+    stop_criterion = str(iterations) + " iterations" if max_time == 0 else str(max_time) + " sec"
+    return alns, stop_criterion, i, int(alns_time), _stat_best_total_solution_dict
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='process ALNS input parameters')
     parser.add_argument('input_filepath', type=str, help='path of input data file')
     parser.add_argument('num_runs', type=int, help='number of runs using same input data file')
-    parser.add_argument('parameter_tune', type=str, help="parameter to tune, or 'None'")
+    parser.add_argument('experiment', type=str, help="parameter to tune, or convergence/lns_config/subproblem_integration")
     parser.add_argument('num_iterations', type=int,
                         help="number of ALNS iterations")
     args = parser.parse_args()
     # Execution line format: python3 src/alns/alns.py data/input_data/f1-v3-o20-t50.xlsx 5
 
-    parameter_tune_values = parse_tune_values(args.parameter_tune)
+    tuning, tuning_values = parse_experiment_values(args.experiment)
 
     precedence: bool = True
     num_alns_iterations = args.num_iterations
@@ -913,32 +976,13 @@ if __name__ == '__main__':
     print("File:", args.input_filepath.split('/')[-1])
     prbl = ProblemDataExtended(args.input_filepath, precedence=precedence)
 
-    # WRITE TO FILE
-    if args.parameter_tune != "None":
-        for idx in range(len(parameter_tune_values)):
-            output_filepath_orig = "data/output_data/alns-" + str(args.input_filepath.split("/")[-1])
-            val = parameter_tune_values[idx]
-            output_filepath = output_filepath_orig[:-5] + "-" + args.parameter_tune + ":" + str(val) + ".xlsx"
-            excel_writer = pd.ExcelWriter(output_filepath, engine='openpyxl', mode='w',
-                                          options={'strings_to_formulas': False})
-
-            for i in range(args.num_runs):
-                alns, stop_crierion, alns_iter, run_time = run_alns(prbl, iterations=num_alns_iterations,
-                                                                    parameter_tune=args.parameter_tune,
-                                                                    parameter_tune_value=val)
-                alns.write_to_file(excel_writer, i, stop_crierion, alns_iter, run_time,
-                                   parameter_tune=args.parameter_tune, parameter_tune_value=val)
-
-            excel_writer.close()
-    else:
-        output_filepath = "data/output_data/alns-" + str(args.input_filepath.split("/")[-1])
-        excel_writer = pd.ExcelWriter(output_filepath, engine='openpyxl', mode='w',
-                                      options={'strings_to_formulas': False})
-        for i in range(args.num_runs):
-            alns, stop_crierion, alns_iter, run_time = run_alns(prbl, iterations=num_alns_iterations,
-                                                                parameter_tune="None",
-                                                                parameter_tune_value="None")
-            alns.write_to_file(excel_writer, i, stop_crierion, alns_iter, run_time)
-
-        excel_writer.close()
-
+    # WRITE SUMMARY OF RESULT DATA TO FILE
+    if tuning:
+        runalns.run_alns_for_tuning(prbl=prbl, experiment_values=tuning_values, args=args,
+                                    num_alns_iterations=num_alns_iterations)
+    elif args.experiment == "convergence":
+        runalns.run_alns_for_convergence(prbl=prbl, args=args, num_alns_iterations=num_alns_iterations)
+    elif args.experiment == "lns_config":
+        runalns.run_alns_for_lns_config(prbl=prbl, args=args, num_alns_iterations=num_alns_iterations)
+    elif args.experiment == "subproblem_integration":
+        runalns.run_alns_for_subproblem_integration(prbl=prbl, args=args, num_alns_iterations=num_alns_iterations)
