@@ -17,7 +17,8 @@ from src.alns.solution import Solution, ProblemDataExtended
 from src.models.production_model import ProductionModel
 import src.alns.alns_parameters as alnsparam
 import src.alns.alns_run_configurations as runalns
-import src.util.plot as util
+from src.util import plot
+from src.util import stats
 from src.alns.production_problem_heuristic import ProductionProblemHeuristic, ProductionProblem
 import locale
 
@@ -30,6 +31,7 @@ class Alns:
     it_seg_count: int
     best_sol: Solution
     best_sol_routing_cost: int
+    best_sol_production_cost: int
     best_sol_total_cost: int
     current_sol: Solution
     current_sol_cost: int
@@ -772,7 +774,7 @@ def parse_experiment_values(experiment: str) -> Tuple[
 def run_alns(prbl: ProblemDataExtended, parameter_tune: str, parameter_tune_value, iterations: int = 0,
              max_time: int = 0, skip_production_problem_postprocess: bool = False,
              post_process_heuristically: bool = False, adaptive_weights: bool = True, all_operators: bool = True,
-             force_reinsert_ppfc_true: bool = False, verbose: bool = True) -> Union[
+             force_reinsert_ppfc_true: bool = False, save_weights: bool = False, verbose: bool = True) -> Union[
     Dict[Tuple[str, str, int], int], None, Tuple[Alns, str, int, int, Dict[int, int]]]:
     if iterations * max_time > 0:
         print(f"Multiple stopping criteria given. Choosing iterations criteria, where iterations={iterations}.")
@@ -921,6 +923,7 @@ def run_alns(prbl: ProblemDataExtended, parameter_tune: str, parameter_tune_valu
             print("Routing obj:", alns.best_sol_routing_cost, "Prod obj:", round(alns.best_sol_production_cost, 1),
                   "Total:", alns.best_sol_routing_cost + round(alns.best_sol_production_cost, 1))
         except ValueError:
+            alns.best_sol_production_cost = alns.production_heuristic.get_cost(alns.best_sol)
             print("Routing obj:", alns.best_sol_routing_cost, "Production problem not solved")
 
     alns_time = time() - t0
@@ -944,12 +947,16 @@ def run_alns(prbl: ProblemDataExtended, parameter_tune: str, parameter_tune_valu
         print(f"{len(alns.previous_solutions)} different solutions accepted")
         print(f"Repaired solution rejected {alns.ppfc_infeasible_count} times, because of PPFC infeasibility")
 
-        # util.plot_alns_history(_stat_solution_cost)
-        # util.plot_operator_weights(_stat_destroy_weights)
-        # util.plot_operator_weights(_stat_repair_weights)
-        # util.plot_operator_weights(_stat_noise_weights)
-        # util.plot_alns_history(_stat_best_routing_solution)
+        # plot.plot_alns_history(_stat_solution_cost)
+        # plot.plot_operator_weights(_stat_destroy_weights)
+        # plot.plot_operator_weights(_stat_repair_weights)
+        # plot.plot_operator_weights(_stat_noise_weights)
+        # plot.plot_alns_history(_stat_best_routing_solution)
 
+    if save_weights:
+        stats.save_weights_stats(prbl, _stat_destroy_weights, _stat_repair_weights, _stat_noise_weights)
+
+    print("Orders not_served:", len(alns.best_sol.get_orders_not_served()))
     stop_criterion = str(iterations) + " iterations" if max_time == 0 else str(max_time) + " sec"
     return alns, stop_criterion, i, int(alns_time), _stat_best_total_solution_dict
 
@@ -986,3 +993,5 @@ if __name__ == '__main__':
         runalns.run_alns_for_lns_config(prbl=prbl, args=args, num_alns_iterations=num_alns_iterations)
     elif args.experiment == "subproblem_integration":
         runalns.run_alns_for_subproblem_integration(prbl=prbl, args=args, num_alns_iterations=num_alns_iterations)
+    else:
+        runalns.run_alns_basic(prbl=prbl, args=args, num_alns_iterations=num_alns_iterations)
