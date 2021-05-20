@@ -10,7 +10,10 @@ def create_excel_writer(args, config: str):
     output_filepath_orig = "data/output_data/alns-" + str(args.input_filepath.split("/")[-1])
     # Just for Ivar's instances
     # output_filepath_orig = "data/output_data/ivars_instances/" + str(args.input_filepath.split("/")[-1])
-    output_filepath = output_filepath_orig[:-5] + "-" + str(args.experiment) + ":" + config + ".xlsx"
+    if args.experiment == "None":
+        output_filepath = output_filepath_orig
+    else:
+        output_filepath = output_filepath_orig[:-5] + "-" + str(args.experiment) + ":" + config + ".xlsx"
     return pd.ExcelWriter(output_filepath, engine='openpyxl', mode='w', options={'strings_to_formulas': False})
 
 
@@ -110,3 +113,16 @@ def run_alns_for_subproblem_integration(prbl, args, num_alns_iterations):
 
     excel_writer_default.close()
     excel_writer_reinsertppfc.close()
+
+
+def run_alns_basic(prbl, args, num_alns_iterations):
+    excel_writer = create_excel_writer(args, config="")
+
+    for i in range(args.num_runs):
+        alns, stop_criterion, alns_iter, run_time, solution_stats = a.run_alns(prbl,
+                                                                               iterations=num_alns_iterations,
+                                                                               parameter_tune="None",
+                                                                               parameter_tune_value="None")
+        alns.write_to_file(excel_writer, i, stop_criterion, alns_iter, run_time)
+
+    excel_writer.close()
