@@ -908,23 +908,15 @@ def run_alns(prbl: ProblemDataExtended, parameter_tune: str, parameter_tune_valu
         alns.best_sol.print_routes()
         return alns.best_sol.get_y_dict()
 
-    if post_process_heuristically:
-        alns.best_sol_production_cost = alns.production_heuristic.get_cost(alns.best_sol)
-        alns.production_heuristic.print_sol()
-        alns.best_sol.print_routes()
-        print("Routing obj:", alns.best_sol_routing_cost, "Prod obj:", round(alns.best_sol_production_cost, 1),
-              "Total:", alns.best_sol_total_cost + round(alns.best_sol_production_cost, 1))
-        print("Orders not_served:", len(alns.best_sol.get_orders_not_served()))
+    exact_method_prod_cost = alns.production_model.get_production_cost(alns.best_sol, verbose=True, time_limit=30)
+    heuristic_method_prod_cost = alns.production_heuristic.get_cost(alns.best_sol)
+    if exact_method_prod_cost < heuristic_method_prod_cost:
+        alns.best_sol_production_cost = exact_method_prod_cost
+        exact_prod_sol_is_best = True
     else:
-        try:
-            alns.best_sol_production_cost = alns.production_model.get_production_cost(alns.best_sol, verbose=True,
-                                                                                      time_limit=30)
-            alns.production_model.print_solution_simple()
-            print("Routing obj:", alns.best_sol_routing_cost, "Prod obj:", round(alns.best_sol_production_cost, 1),
-                  "Total:", alns.best_sol_routing_cost + round(alns.best_sol_production_cost, 1))
-        except ValueError:
-            alns.best_sol_production_cost = alns.production_heuristic.get_cost(alns.best_sol)
-            print("Routing obj:", alns.best_sol_routing_cost, "Production problem not solved")
+        alns.best_sol_production_cost = heuristic_method_prod_cost
+        exact_prod_sol_is_best = False
+    alns.best_sol_total_cost = alns.best_sol_routing_cost + alns.best_sol_production_cost
 
     alns_time = time() - t0
     if verbose:
@@ -932,14 +924,10 @@ def run_alns(prbl: ProblemDataExtended, parameter_tune: str, parameter_tune_valu
         print(f"...ALNS terminating  ({round(time() - t0)}s)")
         alns.best_sol.print_routes()
         print("Not served:", alns.best_sol.get_orders_not_served())
+        alns.production_model.print_solution_simple()
 
-        try:
-            alns.production_model.print_solution_simple()
-
-            print("Routing obj:", alns.best_sol_routing_cost, "Prod obj:", round(alns.best_sol_production_cost, 1),
-                  "Total:", alns.best_sol_routing_cost + round(alns.best_sol_production_cost, 1))
-        except AttributeError:
-            print("Routing obj:", alns.best_sol_routing_cost, "Production problem not solved")
+        print("Routing obj:", alns.best_sol_routing_cost, "Prod obj:", round(alns.best_sol_production_cost, 1),
+              "Total:", alns.best_sol_total_cost)
 
         print(f"Best solution updated {alns.new_best_solution_feasible_production_count} times")
         print(f"Candidate to become best solution rejected {alns.new_best_solution_infeasible_production_count} times, "
