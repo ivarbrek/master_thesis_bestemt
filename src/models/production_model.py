@@ -318,9 +318,23 @@ class ProductionModel:
 
     def reconstruct_demand(self, new_demands: Dict[Tuple[str, str, int], int]) -> None:
         """ Helper function for get_production_cost and for production feasibility check of initial solution """
-        self.m.demands.reconstruct(new_demands)
-        self.m.constr_initial_inventory.reconstruct()
-        self.m.constr_inventory_balance.reconstruct()
+        # New workaround for reconstruct
+        self.m.demands.clear()
+        self.m.demands._constructed = False
+        self.m.demands.construct(new_demands)
+
+        self.m.constr_initial_inventory.clear()
+        self.m.constr_initial_inventory._constructed = False
+        self.m.constr_initial_inventory.construct()
+
+        self.m.constr_inventory_balance.clear()
+        self.m.constr_inventory_balance._constructed = False
+        self.m.constr_inventory_balance.construct()
+
+        # Old reconstruct
+        # self.m.demands.reconstruct(new_demands)
+        # self.m.constr_initial_inventory.reconstruct()
+        # self.m.constr_inventory_balance.reconstruct()
 
     def get_production_cost(self, sol: Solution, verbose: bool = False, time_limit: int = 60) -> float:
         demand = sol.get_demand_dict()
