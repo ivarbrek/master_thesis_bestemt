@@ -7,7 +7,7 @@ from tabulate import tabulate
 import numpy as np
 from time import time
 from src.alns.solution import Solution, ProblemDataExtended
-
+import math
 
 class ProductionProblem:
 

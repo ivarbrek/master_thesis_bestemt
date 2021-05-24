@@ -616,7 +616,7 @@ class Alns:
         # If routing solution within 5% of best routing solution, check production cost/feasibility
         if sol_cost < self.best_sol_routing_cost * (1 + self.percentage_best_solutions_production_solved):
             prod_cost = self.production_heuristic.get_cost(routing_sol=sol)
-            accept = prod_cost > 0
+            accept = prod_cost < math.inf
             if not accept:
                 return False, -2, sol_cost
             elif (accept and prod_cost + sol_cost < self.best_sol_total_cost and
