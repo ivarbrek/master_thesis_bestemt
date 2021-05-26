@@ -384,6 +384,20 @@ class ProblemData:
                               len(self.time_periods))  # no. time periods
         return {order: max_transport_cost + max_production_start_cost + max_inventory_cost for order in self.order_nodes}
 
+    def get_diff(self):
+        max_production_start_cost = (max(sum(self.demands[order, order, product] > 0 for product in self.products)
+                                         for order in self.order_nodes) *  # max no. products in same order
+                                     max(self.production_start_costs[factory, product]
+                                         for factory in self.factory_nodes
+                                         for product in self.products))  # max production start cost
+        max_inventory_cost = (max(self.demands[order, order, product]
+                                  for product in self.products
+                                  for order in self.order_nodes) *  # max order quantity
+                              max(self.inventory_unit_costs[factory] for factory in self.factory_nodes) *
+                              # max inventory unit cost
+                              len(self.time_periods))  # no. time periods
+        return max_inventory_cost + max_production_start_cost
+
     def get_factory_max_vessels_destination_dict(self) -> Dict[str, int]:
         return {factory: int(self.factory_max_vessel_destination_df.loc[factory])
                 for factory in self.factory_max_vessel_destination_df.index}

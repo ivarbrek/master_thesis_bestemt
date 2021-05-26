@@ -59,6 +59,7 @@ class Alns:
     production_infeasibility_strike = 0
     production_infeasibility_strike_max: int
     previous_solutions: Set[str] = set()
+    demands: List[Dict]
 
     def __init__(self, problem_data: ProblemDataExtended,
                  destroy_op: List[str],
@@ -76,12 +77,15 @@ class Alns:
                  determinism_param: int,
                  noise_param: float,
                  noise_destination_param: float,
+                 permute_chance: float,
                  relatedness_precedence: Dict[Tuple[str, str], int],
                  related_removal_weight_param: Dict[str, List[float]],
                  inventory_reward: bool,
                  production_infeasibility_strike_max: int,
                  ppfc_slack_increment: float,
                  reinsert_with_ppfc: bool,
+                 ppfc: str = "default",
+                 record_demand: bool = False,
                  verbose: bool = False) -> None:
 
         self.verbose = verbose
@@ -94,6 +98,7 @@ class Alns:
         self.determinism_param = determinism_param
         self.noise_param = noise_param
         self.noise_destination_param = noise_destination_param
+        self.permute_chance = permute_chance
         self.max_iter_same_solution = max_iter_same_solution
         self.iter_same_solution = 0
         self.reinsert_with_ppfc = reinsert_with_ppfc
@@ -110,7 +115,7 @@ class Alns:
         self.current_sol_cost = self.current_sol.get_solution_routing_cost()
         self.best_sol = self.current_sol
         self.best_sol_routing_cost = round(self.current_sol_cost)
-        self.best_sol_total_cost = self.best_sol_routing_cost + self.production_heuristic.get_cost(routing_sol=self.best_sol)
+        self.best_sol_total_cost = self.best_sol_routing_cost + self.production_heuristic.get_cost(routing_sol=self.best_sol)[0]
         self.record_solution(self.current_sol)
         self.percentage_best_solutions_production_solved = percentage_best_solutions_production_solved
 
@@ -135,8 +140,15 @@ class Alns:
         self.it_seg_count = 0  # Iterations done in one segment - can maybe do this in run_alns_iteration?
         self.num_best_total_sol_updates = 0
 
+        # PPFC
         self.production_infeasibility_strike_max = production_infeasibility_strike_max
         self.ppfc_slack_increment = ppfc_slack_increment
+        self.ppfc = True  # Default
+        self.ppfc_insertion = False  # Default
+        if ppfc == "all_ppfc":
+            self.ppfc_insertion = True
+        elif ppfc == "no_ppfc":
+            self.ppfc = False
 
         self.unique_initial_factory_visits: Set = set()
         self.performed_initial_factory_visits_permutations = 0
@@ -145,6 +157,10 @@ class Alns:
         self.related_removal_weight_param = related_removal_weight_param
         if problem_data.precedence:
             self.relatedness_precedence = self.set_relatedness_precedence_dict(relatedness_precedence)
+
+        self.record_demand = record_demand
+        if self.record_demand:
+            self.demands = []
 
     def __repr__(self):
         destroy_op = [(k, round(v, 2)) for k, v in sorted(self.destroy_op_weight.items(), key=lambda item: item[0])]
@@ -278,14 +294,14 @@ class Alns:
         # print(destroy_op, repair_op, 'noise' if noise_op else 'no noise')
         return destroy_op, repair_op, noise_op
 
-    def generate_new_solution(self, destroy_op: str, repair_op: str, apply_noise: bool) -> Solution:
+    def generate_new_solution(self, destroy_op: str, repair_op: str, apply_noise: bool, use_ppfc: bool = False) -> Solution:
         # Generate new feasible solution x' based on given operators
         # Return x'
         candidate_sol = self.current_sol.copy()
         candidate_sol = self.destroy(destroy_op, candidate_sol)
-        if random.random() < alnsparam.permute_chance:
+        if random.random() < self.permute_chance:
             candidate_sol = self.permute_initial_factory_visits(candidate_sol)
-        candidate_sol = self.repair(repair_op, candidate_sol, apply_noise)
+        candidate_sol = self.repair(repair_op, candidate_sol, apply_noise, use_ppfc=use_ppfc)
         return candidate_sol
 
     def permute_initial_factory_visits(self, candidate_sol: Solution) -> Solution:
@@ -510,7 +526,7 @@ class Alns:
             print("Repair operator does not exist")
             return None
 
-        if not use_ppfc:  # If PPFC was not used during repair, we remove orders until PPFC is satisfied
+        if not use_ppfc and self.ppfc:  # If PPFC was not used during repair, we remove orders until PPFC is satisfied
             repaired_sol = self.adjust_sol_ppfc(repaired_sol, self.remove_num_adjust, repair_op)
 
         return repaired_sol
@@ -613,8 +629,10 @@ class Alns:
 
         # If routing solution within 5% of best routing solution, check production cost/feasibility
         if sol_cost < self.best_sol_routing_cost * (1 + self.percentage_best_solutions_production_solved):
-            prod_cost = self.production_heuristic.get_cost(routing_sol=sol)
+            prod_cost, _ = self.production_heuristic.get_cost(routing_sol=sol)
             accept = prod_cost > 0
+            if self.record_demand:
+                self.demands.append(sol.get_demand_dict())
             if not accept:
                 return False, -2, sol_cost
             elif (accept and prod_cost + sol_cost < self.best_sol_total_cost and
@@ -657,7 +675,8 @@ class Alns:
 
         # Generate a candidate solution x′ from the current solution x using the chosen destroy and repair heuristics
         candidate_sol: Solution
-        candidate_sol = self.generate_new_solution(destroy_op=d_op, repair_op=r_op, apply_noise=noise_op)
+        candidate_sol = self.generate_new_solution(destroy_op=d_op, repair_op=r_op, apply_noise=noise_op,
+                                                   use_ppfc=self.ppfc_insertion)
 
         # if x′ is accepted by a simulated annealing–based acceptance criterion then set x = x′
         accept_solution, self.update_type, cost = self.accept_solution(candidate_sol)
@@ -723,7 +742,8 @@ class Alns:
                          'noise_param': str(alnsparam.noise_param),
                          'determinism_param': str(alnsparam.determinism_param),
                          'related_removal_weight_param': str(alnsparam.related_removal_weight_param),
-                         'noise_destination_param': str(alnsparam.noise_destination_param)}
+                         'noise_destination_param': str(alnsparam.noise_destination_param),
+                         'permute_chance': str(alnsparam.permute_chance)}
 
         if parameter_tune is not None:
             if parameter_tune == 'relatedness_location_time':
@@ -763,7 +783,11 @@ def parse_experiment_values(experiment: str) -> Tuple[
         return True, [3, 5, 7]
     if experiment == "noise_destination_param":
         return True, [0.1, 0.5, 1]
-    if experiment in ["convergence", "lns_config", "subproblem_integration"]:
+    if experiment == "permute_chance":
+        return True, [0, 0.05, 0.1, 0.3]
+    if experiment == "percentage_best_solution_production_solved":
+        return True, [0, 0.05, 0.1]
+    if experiment in ["convergence", "lns_config", "subproblem_integration", "production_heuristic_performance"]:
         return False, []
     print(f"Values could not be parsed")
     return False, []
@@ -772,8 +796,9 @@ def parse_experiment_values(experiment: str) -> Tuple[
 def run_alns(prbl: ProblemDataExtended, parameter_tune: str, parameter_tune_value, iterations: int = 0,
              max_time: int = 0, skip_production_problem_postprocess: bool = False,
              post_process_heuristically: bool = False, adaptive_weights: bool = True, all_operators: bool = True,
-             force_reinsert_ppfc_true: bool = False, verbose: bool = True) -> Union[
-    Dict[Tuple[str, str, int], int], None, Tuple[Alns, str, int, int, Dict[int, int]]]:
+             force_reinsert_ppfc_true: bool = False, ppfc: str = "default", record_demand: bool = False,
+             verbose: bool = True) -> Union[
+    Dict[Tuple[str, str, int], int], None, Tuple[Alns, str, int, int, Dict[int, int]], List[Dict]]:
     if iterations * max_time > 0:
         print(f"Multiple stopping criteria given. Choosing iterations criteria, where iterations={iterations}.")
         max_time = 0
@@ -804,7 +829,8 @@ def run_alns(prbl: ProblemDataExtended, parameter_tune: str, parameter_tune_valu
         'production_infeasibility_strike_max': alnsparam.production_infeasibility_strike_max,  # 0,
         'ppfc_slack_increment': alnsparam.ppfc_slack_increment,  # 0.05,
         'inventory_reward': alnsparam.inventory_reward,  # False,
-        'reinsert_with_ppfc': alnsparam.reinsert_with_ppfc}
+        'reinsert_with_ppfc': alnsparam.reinsert_with_ppfc,
+        'permute_chance': alnsparam.permute_chance}
 
     if parameter_tune != "None":
         if parameter_tune == 'relatedness_location_time':
@@ -853,12 +879,15 @@ def run_alns(prbl: ProblemDataExtended, parameter_tune: str, parameter_tune_valu
                 determinism_param=parameter_values['determinism_param'],  # 5,
                 noise_param=parameter_values['noise_param'],  # 0.25,
                 noise_destination_param=parameter_values['noise_destination_param'],
+                permute_chance=parameter_values['permute_chance'],
                 relatedness_precedence=parameter_values['relatedness_precedence'],
                 related_removal_weight_param=parameter_values['related_removal_weight_param'],
                 production_infeasibility_strike_max=parameter_values['production_infeasibility_strike_max'],  # 0,
                 ppfc_slack_increment=parameter_values['ppfc_slack_increment'],  # 0.05,
                 inventory_reward=parameter_values['inventory_reward'],  # False,
                 reinsert_with_ppfc=parameter_values['reinsert_with_ppfc'],  # False,
+                ppfc=ppfc,
+                record_demand=record_demand,
                 verbose=False
                 )
 
@@ -906,8 +935,11 @@ def run_alns(prbl: ProblemDataExtended, parameter_tune: str, parameter_tune_valu
         alns.best_sol.print_routes()
         return alns.best_sol.get_y_dict()
 
+    if record_demand:
+        return alns.demands
+
     if post_process_heuristically:
-        alns.best_sol_production_cost = alns.production_heuristic.get_cost(alns.best_sol)
+        alns.best_sol_production_cost, _ = alns.production_heuristic.get_cost(alns.best_sol)
         alns.production_heuristic.print_sol()
         alns.best_sol.print_routes()
         print("Routing obj:", alns.best_sol_routing_cost, "Prod obj:", round(alns.best_sol_production_cost, 1),
@@ -922,6 +954,7 @@ def run_alns(prbl: ProblemDataExtended, parameter_tune: str, parameter_tune_valu
                   "Total:", alns.best_sol_routing_cost + round(alns.best_sol_production_cost, 1))
         except ValueError:
             print("Routing obj:", alns.best_sol_routing_cost, "Production problem not solved")
+            alns.best_sol_production_cost, _ = alns.production_heuristic.get_cost(alns.best_sol)
 
     alns_time = time() - t0
     if verbose:
@@ -986,3 +1019,5 @@ if __name__ == '__main__':
         runalns.run_alns_for_lns_config(prbl=prbl, args=args, num_alns_iterations=num_alns_iterations)
     elif args.experiment == "subproblem_integration":
         runalns.run_alns_for_subproblem_integration(prbl=prbl, args=args, num_alns_iterations=num_alns_iterations)
+    elif args.experiment == "production_heuristic_performance":
+        runalns.run_alns_for_production_heuristic_performance(prbl=prbl, args=args, num_alns_iterations=num_alns_iterations)

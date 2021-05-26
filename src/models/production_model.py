@@ -6,6 +6,7 @@ import logging
 from tabulate import tabulate
 from pyomo.opt import SolverStatus, TerminationCondition
 from src.alns.solution import ProblemDataExtended, Solution
+import pandas as pd
 
 logging.getLogger('pyomo.core').setLevel(logging.ERROR)
 
@@ -170,9 +171,9 @@ class ProductionModel:
             if t == 0:
                 return pyo.Constraint.Feasible
             return (model.s[i, p, t] == (model.s[i, p, (t - 1)] +
-                    sum(model.production_max_capacities[l, p] * model.g[l, p, (t-1)]
-                        for (ii, l) in model.PRODUCTION_LINES_FOR_FACTORIES_TUP if ii == i) -
-                    model.demands[i, p, t]))
+                                         sum(model.production_max_capacities[l, p] * model.g[l, p, (t - 1)]
+                                             for (ii, l) in model.PRODUCTION_LINES_FOR_FACTORIES_TUP if ii == i) -
+                                         model.demands[i, p, t]))
 
         self.m.constr_inventory_balance = pyo.Constraint(self.m.FACTORY_NODES,
                                                          self.m.PRODUCTS,
@@ -262,7 +263,10 @@ class ProductionModel:
         self.solver_factory.options['SolutionLimit'] = 1 if feasibility_check else 1e8
         self.solver_factory.options['TimeLimit'] = time_limit if time_limit else 1e6
         t = time()
-        self.results = self.solver_factory.solve(self.m, tee=verbose, load_solutions=(not feasibility_check))
+        try:
+            self.results = self.solver_factory.solve(self.m, tee=verbose, load_solutions=(not feasibility_check))
+        except ValueError:
+            self.results = None
         if verbose:
             if self.results.solver.termination_condition != pyo.TerminationCondition.optimal:
                 print("Not optimal termination condition: ", self.results.solver.termination_condition)
@@ -322,14 +326,28 @@ class ProductionModel:
         self.m.constr_initial_inventory.reconstruct()
         self.m.constr_inventory_balance.reconstruct()
 
-    def get_production_cost(self, sol: Solution, verbose: bool = False, time_limit: int = 60) -> float:
-        demand = sol.get_demand_dict()
-        self.reconstruct_demand(demand)
-        self.solve(verbose=verbose, time_limit=time_limit)
+    def get_production_cost(self, sol: Solution = None, verbose: bool = False, time_limit: int = 60,
+                            demand_dict: Dict[Tuple[str, str, int], int] = None) -> float:
 
-        if self.results.solver.termination_condition in [TerminationCondition.maxTimeLimit, TerminationCondition.optimal]:
-            return self.m.objective()
+        if sol is None and demand_dict is None:
+            if verbose:
+                print(f"No data given. Cannot find cost.")
+            return math.inf
+        elif sol is None:
+            demand = demand_dict
         else:
+            demand = sol.get_demand_dict()
+        self.reconstruct_demand(demand)
+
+        try:
+            self.solve(verbose=verbose, time_limit=time_limit)
+            if self.results.solver.termination_condition in [TerminationCondition.maxTimeLimit,
+                                                             TerminationCondition.optimal]:
+                return self.m.objective()
+            else:
+                return math.inf
+        except (AttributeError, ValueError, TypeError) as e:
+            print(f"Error: {e}")
             return math.inf
 
     def is_feasible(self, sol: Solution, verbose: bool = False) -> bool:
@@ -338,10 +356,42 @@ class ProductionModel:
         t0 = time()
         self.solve(verbose=verbose, time_limit=5, feasibility_check=True)
         print(round(time() - t0, 1), "s", sep="")
-        if self.results.solver.termination_condition not in [TerminationCondition.infeasible, TerminationCondition.maxTimeLimit]:
+        if self.results.solver.termination_condition not in [TerminationCondition.infeasible,
+                                                             TerminationCondition.maxTimeLimit]:
             return True
         else:
             return False
+
+    def get_production_start_cost(self) -> int:
+        return int(sum(self.m.production_start_costs[i, p] * pyo.value(self.m.delta[l, p, t])
+                       for i in self.m.FACTORY_NODES
+                       for (ii, l) in self.m.PRODUCTION_LINES_FOR_FACTORIES_TUP if i == ii
+                       for p in self.m.PRODUCTS
+                       for t in self.m.TIME_PERIODS))
+
+    def get_inventory_cost(self) -> int:
+        return int(sum(self.m.inventory_unit_costs[i] * pyo.value(self.m.s[i, p, t])
+                       for t in self.m.TIME_PERIODS
+                       for p in self.m.PRODUCTS
+                       for i in self.m.FACTORY_NODES))
+
+    def write_to_file(self, excel_writer: pd.ExcelWriter, id: int = 0) -> None:
+        inventory_cost = self.get_inventory_cost()
+        production_start_cost = self.get_production_start_cost()
+        lb = self.results.Problem._list[0].lower_bound
+        ub = self.results.Problem._list[0].upper_bound
+
+        solution_dict = {'obj_val': round(pyo.value(self.m.objective), 2),
+                         'production_start_cost': round(production_start_cost, 2),
+                         'inventory_cost': round(inventory_cost, 2),
+                         'lower_bound': round(lb, 2),
+                         'upper_bound': round(ub, 2),
+                         'mip_gap': str(round(((ub - lb) / ub) * 100, 2)) + "%",
+                         'time_limit [sec]': self.solver_factory.options['TimeLimit']}
+
+        sheet_name = "run_" + str(id)
+        df = pd.DataFrame(solution_dict, index=[0]).transpose()
+        df.to_excel(excel_writer, sheet_name=sheet_name, startrow=1)
 
 
 def hardcode_demand_dict(prbl: ProblemDataExtended) -> Dict[Tuple[str, str, int], int]:

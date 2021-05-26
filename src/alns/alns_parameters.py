@@ -9,7 +9,6 @@ production_infeasibility_strike_max = 0
 ppfc_slack_increment = 0.00
 relatedness_precedence = {('green', 'yellow'): 6, ('green', 'red'): 10, ('yellow', 'red'): 4}
 start_temperature_controlparam = 0.1
-percentage_best_solution_production_solved = 0.05  # if 0, then only new best routing solutions are evaluated
 
 # TUNED PARAMS
 remove_percentage_interval = (0.1, 0.3)
@@ -19,4 +18,5 @@ reaction_param = 0.2
 noise_param = 0.1
 determinism_param = 5
 noise_destination_param = 1
-permute_chance = 0.1
+permute_chance = 0.05
+percentage_best_solution_production_solved = 0.05  # if 0, then only new best routing solutions are evaluated

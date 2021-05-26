@@ -1,5 +1,5 @@
 from src.read_problem_data import ProblemData
-from typing import Dict, Tuple, List, Any
+from typing import Dict, Tuple, List, Any, Union
 from collections import defaultdict
 import itertools
 import bisect
@@ -7,11 +7,15 @@ from tabulate import tabulate
 import numpy as np
 from time import time
 from src.alns.solution import Solution, ProblemDataExtended
+import pandas as pd
+import argparse
+import json
 
 
 class ProductionProblem:
 
-    def __init__(self, base_problem_data: ProblemDataExtended, demand_dict: Dict[Tuple[str, str, int], int] = None) -> None:
+    def __init__(self, base_problem_data: ProblemDataExtended,
+                 demand_dict: Dict[Tuple[str, str, int], int] = None) -> None:
         self.base_problem = base_problem_data
         self.products_index_map = {product: i for i, product in enumerate(self.base_problem.products)}
         self.index_product_map = {i: product for i, product in enumerate(self.base_problem.products)}
@@ -66,7 +70,6 @@ class ProductionProblemSolution:
         self.inventory: Dict[int, List[int]] = self._init_inventory()
         self.filled_ranges: Dict[str, List[Tuple[int, int]]] = self._set_filled_ranges()  # new
 
-
     def _init_inventory(self) -> Dict[int, List[int]]:
         init_inventory = np.array(self.prbl.init_inventory[self.factory])
         cumul_demand = np.zeros(len(self.prbl.base_problem.products))
@@ -98,7 +101,6 @@ class ProductionProblemSolution:
                       for t_insert in self._get_t_insert_cands(prod_line, t_demand)  # new
                       if self.insertion_is_feasible(prod_line, t_insert, product_idx, t_demand)]
         return candidates
-
 
     def insertion_is_feasible(self, prod_line: str, t_insert: int, product: int, t_demand: int,
                               check_min_periods: bool = True) -> bool:
@@ -200,9 +202,43 @@ class ProductionProblemSolution:
         return production_start_cost + inventory_cost
 
     def get_cost(self) -> float:
+        # product_name = self.prbl.index_product_map
+        # prod_start_costs = self.prbl.base_problem.production_start_costs
+        #
+        # inventory_cost = 0
+        # temp_inventory = sum(self.prbl.init_inventory[self.factory])
+        #
+        # for t in self.prbl.base_problem.time_periods:
+        #     if t in self.prbl.pickup_times[self.factory]:
+        #         temp_inventory -= sum(self.prbl.demands[self.factory][t])
+        #     inventory_cost += temp_inventory * self.prbl.base_problem.inventory_unit_costs[self.factory]
+        #     temp_inventory += sum(self._get_produced_amount(activities[t], prod_line)
+        #                           for prod_line, activities in self.activities.items())
+        #
+        # production_start_cost = (sum(prod_start_costs[self.factory, product_name[activities[0]]]
+        #                              for prod_line, activities in self.activities.items()
+        #                              if activities[0] not in [None, 'stop'])
+        #                          + sum(int(activities[t - 1] != activities[t])
+        #                                * prod_start_costs[self.factory, product_name[activities[t]]]
+        #                                for prod_line, activities in self.activities.items()
+        #                                for t in range(1, len(activities))
+        #                                if activities[t] not in [None, 'stop']))
+
+        return self.get_production_start_cost() + self.get_inventory_cost()
+
+    def get_production_start_cost(self) -> float:
         product_name = self.prbl.index_product_map
         prod_start_costs = self.prbl.base_problem.production_start_costs
+        return (sum(prod_start_costs[self.factory, product_name[activities[0]]]
+                    for prod_line, activities in self.activities.items()
+                    if activities[0] not in [None, 'stop'])
+                + sum(int(activities[t - 1] != activities[t])
+                      * prod_start_costs[self.factory, product_name[activities[t]]]
+                      for prod_line, activities in self.activities.items()
+                      for t in range(1, len(activities))
+                      if activities[t] not in [None, 'stop']))
 
+    def get_inventory_cost(self) -> float:
         inventory_cost = 0
         temp_inventory = sum(self.prbl.init_inventory[self.factory])
 
@@ -212,16 +248,7 @@ class ProductionProblemSolution:
             inventory_cost += temp_inventory * self.prbl.base_problem.inventory_unit_costs[self.factory]
             temp_inventory += sum(self._get_produced_amount(activities[t], prod_line)
                                   for prod_line, activities in self.activities.items())
-
-        production_start_cost = (sum(prod_start_costs[self.factory, product_name[activities[0]]]
-                                     for prod_line, activities in self.activities.items()
-                                     if activities[0] not in [None, 'stop'])
-                                 + sum(int(activities[t - 1] != activities[t])
-                                       * prod_start_costs[self.factory, product_name[activities[t]]]
-                                       for prod_line, activities in self.activities.items()
-                                       for t in range(1, len(activities))
-                                       if activities[t] not in [None, 'stop']))
-        return production_start_cost + inventory_cost
+        return inventory_cost
 
     def _get_produced_amount(self, activity: int, prod_line: str):
         prod_cap = self.prbl.base_problem.production_max_capacities
@@ -247,7 +274,7 @@ class ProductionProblemSolution:
         return insert_times
 
     def _update_filled_ranges(self, prod_line: str, t_insert: int):
-        next_range_idx = bisect.bisect(self.filled_ranges[prod_line], (t_insert, ))
+        next_range_idx = bisect.bisect(self.filled_ranges[prod_line], (t_insert,))
         if len(self.filled_ranges[prod_line]) == 0:
             self.filled_ranges[prod_line].append((t_insert, t_insert))
         elif next_range_idx == 0:
@@ -306,7 +333,8 @@ class ProductionProblemSolution:
 
     def _get_activity_before_and_after(self, prod_line: str, t_insert: int) -> Tuple[Any, Any]:
         activity_before = self.activities[prod_line][t_insert - 1] if t_insert > 0 else 'stop'
-        activity_after = self.activities[prod_line][t_insert + 1] if t_insert < len(self.activities[prod_line]) else 'stop'
+        activity_after = self.activities[prod_line][t_insert + 1] if t_insert < len(
+            self.activities[prod_line]) else 'stop'
         return activity_before, activity_after
 
     def print(self):
@@ -361,9 +389,16 @@ class ProductionProblemHeuristic:
         # print(round(time() - t0, 3), "s (h)", sep="")
         return True, ''
 
-    def get_cost(self, routing_sol: Solution):
-        self.prbl.set_demands_and_pickup_times(routing_sol.get_demand_dict())
+    def get_cost(self, routing_sol: Solution = None, demands: Dict[Tuple[str, str, int], int] = None):
+        if routing_sol is None and demands is None:
+            print(f"No production problem to solve")
+            return 0, 0
+        if routing_sol is None:
+            self.prbl.set_demands_and_pickup_times(demands)
+        else:
+            self.prbl.set_demands_and_pickup_times(routing_sol.get_demand_dict())
         cost = 0
+        t0 = time()
         for factory in self.prbl.base_problem.factory_nodes:
             sol = ProductionProblemSolution(self.prbl, factory)
             is_feasible = self.construct_greedy(sol)
@@ -372,14 +407,14 @@ class ProductionProblemHeuristic:
                 cost += sol.get_cost()
             else:
                 print("Infeasible production problem")
-                return 0
-        return cost
+                return 0, round(time() - t0, 2)
+        return cost, round(time() - t0, 2)
+
 
     def print_sol(self):
         for factory, sub_sol in self.solution.items():
             print(factory)
             sub_sol.print()
-
 
 
 def hardcode_demand_dict(prbl: ProblemData) -> Dict[Tuple[str, str, int], int]:
@@ -430,23 +465,57 @@ def hardcode_demand_dict(prbl: ProblemData) -> Dict[Tuple[str, str, int], int]:
     return demands
 
 
+# TODO: Assert this one correct (not checked _at all_)
+def read_demand_dict_from_file(file_path: str) -> List[Dict[Tuple[str, str, int], int]]:
+    with open(file_path) as f:
+        demands_str = f.read()
+    demands_dict = json.loads(demands_str)
+    demands: List[Dict] = []
+    for k, v in demands_dict.items():
+        demands.append(eval(v))
+    return demands
+
+
+def write_to_file(out_filepath: str, cost: float, time: float) -> None:
+    solution_dict = pd.DataFrame(data={'obj_val': round(cost, 2),
+                     'time [sec]': round(time, 2)}, index=[0]).transpose()
+
+    excel_writer = pd.ExcelWriter(out_filepath, engine='openpyxl', mode='w', options={'strings_to_formulas': False})
+    solution_dict.to_excel(excel_writer, sheet_name="_")
+    excel_writer.close()
+
 if __name__ == '__main__':
-    file_path = '../../data/testoutputfile.xlsx'
-    problem_data = ProblemData(file_path)
-    problem_data_ext = ProblemDataExtended(file_path)
-    demands = hardcode_demand_dict(problem_data_ext)
-    production_problem = ProductionProblem(problem_data_ext, demands)
+    parser = argparse.ArgumentParser(description='process production problem heuristic import parameters')
+    parser.add_argument('prbl_input_filepath', type=str, help='path of problem data file')
+    parser.add_argument('demands_input_filepath', type=str, help='path of demand data input file')
+    args = parser.parse_args()
+    # Execution line format: python3 src/alns/alns.py data/input_data/f1-v3-o20-t50.xlsx 5
 
-    total_cost = 0
-    for factory in ['f_0', 'f_1', 'f_2']:
-        solution = ProductionProblemSolution(production_problem, factory)
+    print("File:", args.input_filepath.split('/')[-1])
+    problem_data = ProblemData(args.prbl_input_filepath)
+    problem_data_ext = ProblemDataExtended(args.prbl_input_filepath)
+    demands = read_demand_dict_from_file(args.demands_input_filepath)
+    production_problem = ProductionProblem(base_problem_data=problem_data_ext, demand_dict=demands)
+    production_heuristic = ProductionProblemHeuristic(prbl=production_problem)
+    cost, time = production_heuristic.get_cost(routing_sol=None, demands=demands)
+    write_to_file()
 
-        t0 = time()
-        print(ProductionProblemHeuristic.construct_greedy(solution))
-        print(round(time() - t0, 8), 's')
-        solution.print()
-        cost = solution.get_cost()
-        print(cost)
-        total_cost += cost
-    print('Total:', total_cost)
 
+    # file_path = '../../data/testoutputfile.xlsx'
+    # problem_data = ProblemData(file_path)
+    # problem_data_ext = ProblemDataExtended(file_path)
+    # demands = hardcode_demand_dict(problem_data_ext)
+    # production_problem = ProductionProblem(problem_data_ext, demands)
+    #
+    # total_cost = 0
+    # for factory in ['f_0', 'f_1', 'f_2']:
+    #     solution = ProductionProblemSolution(production_problem, factory)
+    #
+    #     t0 = time()
+    #     print(ProductionProblemHeuristic.construct_greedy(solution))
+    #     print(round(time() - t0, 8), 's')
+    #     solution.print()
+    #     cost = solution.get_cost()
+    #     print(cost)
+    #     total_cost += cost
+    # print('Total:', total_cost)
