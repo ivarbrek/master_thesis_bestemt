@@ -44,6 +44,9 @@ class ProblemDataExtended(ProblemData):
                                                for (v, i, j), t in self.transport_times.items() if v == vessel)
                                    for vessel in self.vessels}
         self.no_time_periods = len(self.time_periods)
+        self.exernal_depot_ids = self._get_external_depots()
+        self.init_inventory_lists = {factory: [self.factory_initial_inventories[factory, p] for p in self.products]
+                                     for factory in self.factory_nodes}
 
     def _init_nodes(self) -> None:
         f_nodes = self.factory_nodes[:]
@@ -79,6 +82,13 @@ class ProblemDataExtended(ProblemData):
         self.quay_capacity: Dict[str, List[int]] = quay_capacity
         self.quay_cap_incr_times: Dict[str, List[int]] = quay_cap_incr_times
         self.quay_cap_decr_times: Dict[str, List[int]] = quay_cap_decr_times
+
+    def _get_external_depots(self) -> List[str]:
+        return [factory for factory in self.factory_nodes
+                if sum(self.production_max_capacities[p_line, product]
+                       for f, p_line in self.production_lines_for_factories if f == factory
+                       for product in self.products)
+                == 0]
 
 
 class Solution:
@@ -165,6 +175,9 @@ class Solution:
             return False
 
         if not self.check_no_products_feasibility(node, vessel, idx):
+            return False
+
+        if not self.check_external_depot_feasibility(node_id, vessel, idx):
             return False
 
         if not self.check_time_feasibility(node_id, vessel, idx, noise_factor):
@@ -523,6 +536,17 @@ class Solution:
             print(f"Check failed at: check_and_set_destination_factory for {vessel}")
         return False
 
+    def check_external_depot_feasibility(self, node_id: str, vessel: str, idx: int):
+        prev_factory = self.routes[vessel][self.get_voyage_start_idx(vessel, idx)]
+        if prev_factory in self.prbl.exernal_depot_ids:
+            node_demand = self.prbl.nodes[node_id].demand
+            return all(init_inv_p >= loaded_amount_p + demand_p
+                       for demand_p, init_inv_p, loaded_amount_p in
+                       zip(node_demand, self.prbl.init_inventory_lists[prev_factory],
+                           self.get_factory_loaded_amount(prev_factory)))
+        else:
+            return True
+
     def check_final_factory_destination_feasibility(self, vessel: str, idx: int):
         # Check assumes that the insertion is already present in temp variables
         node_id = self.temp_routes[vessel][idx]
@@ -530,11 +554,10 @@ class Solution:
 
         if node.is_factory:
             return (len([v for v in self.prbl.vessels if
-                         (self.temp_routes[v][-1] == node_id and len(self.temp_routes[v]) > 1)])
+                         (self.temp_routes[v][-1] == node_id)])  # and len(self.temp_routes[v]) > 1)])
                     <= self.prbl.factory_max_vessels_destination[node_id])
         else:  # destination factories are unchanged or 'removed'
             return True
-
 
     def check_load_feasibility(self, insert_node: Node, vessel: str, idx: int) -> bool:
         route = self.routes[vessel]
@@ -844,6 +867,15 @@ class Solution:
                 voyage_start_idxs_for_vessels.pop(v, None)
         return voyage_start_idxs_for_vessels
 
+    def get_factory_loaded_amount(self, factory_id: str) -> List[int]:
+        load = np.zeros(len(self.prbl.products))
+        for v, voyage_start_idx in zip(self.factory_visits[factory_id], self.factory_visits_route_index[factory_id]):
+            i = voyage_start_idx + 1
+            while i < len(self.routes[v]) and not self.prbl.nodes[self.routes[v][i]].is_factory:
+                load += np.array(self.prbl.nodes[self.routes[v][i]].demand)
+                i += 1
+        return list(load)
+
     def get_order_vessel_idx_for_factory(self, factory_node_id: str) -> List[Tuple[str, int]]:
         return [(vessel, idx)
                 for vessel, voyage_start_idx in zip(self.factory_visits[factory_node_id],
@@ -879,6 +911,16 @@ class Solution:
         assert voyage_start_idx != -1, "Illegal voyage, no initial factory"
         return voyage_start_idx, voyage_end_idx
 
+    def get_voyage_start_idx(self, vessel: str, idx: int) -> int:
+        route = self.temp_routes[vessel]
+        voyage_start_idx = -1
+        for i in range(idx - 1, -1, -1):
+            if self.prbl.nodes[route[i]].is_factory:
+                voyage_start_idx = i
+                break
+        assert voyage_start_idx != -1, "Illegal voyage, no initial factory"
+        return voyage_start_idx
+
     def get_temp_voyage_end_idx(self, vessel: str, start_idx: int) -> int:
         route = self.temp_routes[vessel]
         for i in range(start_idx + 1, len(route)):
@@ -903,7 +945,6 @@ class Solution:
             initial_factory = self.prbl.vessel_initial_locations[vessel]
             factory_visits[initial_factory].append(vessel)
         return factory_visits
-
 
     def _get_factory_visit_earliest_if_swapped(self, factory: str) -> List[int]:
         """Get the earliest time for an factory visit if the visit was swapped with the previous vessel visiting the
@@ -937,10 +978,10 @@ class Solution:
         return earliest
 
     def permute_factory_visits(self) -> bool:
-
         # Find candidate pairs of vessels for permutation
         cand_pairs = []
-        for factory in self.prbl.factory_nodes:
+        factories_with_visits = [f for f, visits in self.factory_visits.items() if visits]
+        for factory in factories_with_visits:
             earliest_if_swapped_with_previous = self._get_factory_visit_earliest_if_swapped(factory)
             for i, vessel in enumerate(self.factory_visits[factory][:-1]):
                 if (self.factory_visits_route_index[factory][i] != 0 or
