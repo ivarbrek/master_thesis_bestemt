@@ -314,7 +314,9 @@ class ProductionModel:
                         prod_line_activities[l].append(' ')
             activities = [[prod_line] + activities for prod_line, activities in prod_line_activities.items()]
             print(tabulate(activities, headers=['prod_line'] + list(self.m.TIME_PERIODS)))
+            print("Final inventory:", [self.m.s[i, p, len(self.m.TIME_PERIODS)]() for p in self.m.PRODUCTS])
             print()
+
 
     def reconstruct_demand(self, new_demands: Dict[Tuple[str, str, int], int]) -> None:
         """ Helper function for get_production_cost and for production feasibility check of initial solution """
@@ -339,11 +341,13 @@ class ProductionModel:
     def get_production_cost(self, sol: Solution, verbose: bool = False, time_limit: int = 60) -> float:
         demand = sol.get_demand_dict()
         self.reconstruct_demand(demand)
-        self.solve(verbose=verbose, time_limit=time_limit)
-
-        if self.results.solver.termination_condition in [TerminationCondition.maxTimeLimit, TerminationCondition.optimal]:
-            return self.m.objective()
-        else:
+        try:
+            self.solve(verbose=verbose, time_limit=time_limit)
+            if self.results.solver.termination_condition in [TerminationCondition.maxTimeLimit, TerminationCondition.optimal]:
+                return self.m.objective()
+            else:
+                return math.inf
+        except Exception:
             return math.inf
 
     def is_feasible(self, sol: Solution, verbose: bool = False) -> bool:
@@ -360,18 +364,18 @@ class ProductionModel:
 
 def hardcode_demand_dict(prbl: ProblemDataExtended) -> Dict[Tuple[str, str, int], int]:
     y_locks = [
-        ('f_1', 'o_6', 2),
-        ('f_1', 'o_7', 2),
-        ('f_1', 'o_8', 2),
-        ('f_1', 'o_10', 2),
-        ('f_1', 'o_11', 2),
+        ('f_1', 'o_6', 10),
+        ('f_1', 'o_7', 10),
+        ('f_1', 'o_8', 10),
+        ('f_1', 'o_10', 10),
+        ('f_1', 'o_11', 10),
 
-        ('f_2', 'o_16', 8),
-        ('f_2', 'o_13', 8),
-        ('f_2', 'o_12', 8),
-
-        ('f_1', 'o_4', 11),
-        ('f_1', 'o_1', 11)
+        # ('f_1', 'o_16', 8),
+        # ('f_1', 'o_13', 8),
+        # ('f_1', 'o_12', 8),
+        #
+        # ('f_1', 'o_4', 11),
+        # ('f_1', 'o_1', 11)
     ]
 
     demands: Dict[Tuple[str, str, int], int] = {(i, p, t): 0 for i in prbl.factory_nodes

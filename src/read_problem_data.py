@@ -1,7 +1,4 @@
-import os
 import pandas as pd
-import joblib
-import json
 from typing import List, Dict, Tuple
 from collections import defaultdict
 
@@ -58,6 +55,7 @@ class ProblemData:
         self.factory_nodes = self.get_factory_nodes()
         self.order_nodes = self.get_order_nodes()
         self.orders_for_zones = self.get_zone_orders_dict()
+        self.zones = self.get_zones()
         self.nodes_for_vessels = self.get_nodes_for_vessels_dict()
         self.products = self.get_products()
         self.vessels = self.get_vessels()
@@ -67,8 +65,6 @@ class ProblemData:
         self.time_windows_for_orders = self.get_time_windows_for_orders_dict()
         self.tw_start = {i: self.get_time_window_start(i) for i in self.order_nodes}
         self.tw_end = {i: self.get_time_window_end(i) for i in self.order_nodes}
-        # self.max_tw_violation = self.get_max_time_window_violation()
-        # self.tw_violation_unit_cost = self.get_tw_violation_cost()
         self.vessel_ton_capacities = self.get_vessel_ton_capacities_dict()
         self.vessel_nprod_capacities = self.get_vessel_nprod_capacities_dict()
         self.factory_inventory_capacities = self.get_inventory_capacities_dict()
@@ -78,7 +74,6 @@ class ProblemData:
         self.transport_unit_costs = self.get_transport_costs_dict()
         self.transport_times = self.get_transport_times_per_vessel_dict()
         self.transport_times_exact = self.get_transport_times_per_vessel_dict(exact=True)
-        # self.transport_times = self.get_transport_times_dict()  # depreciated
         self.arcs_for_vessels = self.generate_arcs_for_vessels()
         self.demands = self.get_demands_dict()
         self.production_stops = self.get_production_stops_dict()
@@ -312,9 +307,8 @@ class ProblemData:
                 for production_line in self.production_max_capacities_df.columns}
 
     def get_production_lines_for_factories_list(self) -> List[Tuple[str, str]]:
-        return [(self.production_lines_for_factories_df.at[production_line, 'factory'], production_line) for
-                production_line
-                in self.production_lines_for_factories_df.index]
+        return [(self.production_lines_for_factories_df.at[production_line, 'factory'], production_line)
+                for production_line in self.production_lines_for_factories_df.index]
 
     def get_key_value(self, key):
         return self.key_values_df.loc[key, 'value']

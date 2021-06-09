@@ -35,11 +35,12 @@ def plot_avg_weights(op_type: str, match_string: str = "", update_interval: int 
             with open(dir_path + file_name) as f:
                 json_obj = json.load(f)[op_type]
                 for operator, stats_list in json_obj.items():
-                    assert list_len == len(stats_list) or not list_len, "Input files have a varying number of iterations"
+                    assert list_len == len(stats_list) or not list_len, (f"Input file {file_name} ({len(stats_list)}) "
+                                                                         f"have a different number of iterations than "
+                                                                         f"previous file ({list_len})")
                     list_len = len(stats_list)
                     shortened_stats_list = _shorten_weight_stats(stats_list, update_interval)
                     data[operator].append(shortened_stats_list)
-
 
     assert data, "No raw data was found to base the mean computation on"
     mean_scores_for_operators = {}

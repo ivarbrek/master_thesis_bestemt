@@ -43,7 +43,7 @@ def get_intermediate(experiment: str) -> List[str]:
     elif experiment == "time_windows":
         return ["tw_length=3d", "tw_length=4d", "tw_length=5d"]
     else:
-        return []
+        return [""]
 
 
 def get_best_obj_vals_in_experiment(instance_ids: List[str], dir_path: str, experiment: str) -> Dict[str, float]:
@@ -84,6 +84,14 @@ def get_results_raw(instance_ids: List[str], dir_path: str, configs: List[str], 
                     sheet_names_d[inst_id] = list(sheet_names)
                     for sheet_name in sheet_names:  # e.g. run_0 and run_1
                         results[(config, inst_id, sheet_name)] = file.parse(sheet_name, index_col=[0])
+    elif experiment == "None":
+        for inst_id in instance_ids:  # e.g. alns-test_10o_40t
+                file_path = dir_path + inst_id
+                file = pd.ExcelFile(file_path)
+                sheet_names = file.sheet_names
+                sheet_names_d[inst_id] = list(sheet_names)
+                for sheet_name in sheet_names:  # e.g. run_0 and run_1
+                    results[("", inst_id, sheet_name)] = file.parse(sheet_name, index_col=[0])
     else:
         for config in configs:
             for inst_id in instance_ids:  # e.g. alns-test_10o_40t
@@ -123,9 +131,8 @@ def get_results(instance_ids: List[str], dir_path: str, experiment: str) -> pd.D
         d = {}
         for inst_id in instance_ids:
             sheet_names = sheet_names_d[inst_id] if config != "construction_heuristic_solution" else ["run_initial"]
-            d[inst_id] = float(
-                sum(results[(config, inst_id, sheet_name)].loc['obj_val'] for sheet_name in
-                    sheet_names)) / len(sheet_names)
+            d[inst_id] = float(sum(results[(config, inst_id, sheet_name)].loc['obj_val']
+                                   for sheet_name in sheet_names)) / len(sheet_names)
         df[config, 'obj_val'] = df.index.to_series().map(d)
 
     # Add prod_obj_% column
@@ -147,6 +154,35 @@ def get_results(instance_ids: List[str], dir_path: str, experiment: str) -> pd.D
                 sum(results[(config, inst_id, sheet_name)].loc['time [sec]'] for sheet_name in
                     sheet_names)) / len(sheet_names)
         df[config, 'time [sec]'] = df.index.to_series().map(d)
+
+    # Add unserved orders row
+    for config in configs:  # e.g. score_params:[9,9,9]
+        d = {}
+        for inst_id in instance_ids:
+            sheet_names = sheet_names_d[inst_id] if config != "construction_heuristic_solution" else ["run_initial"]
+            d[inst_id] = float(
+                sum(results[(config, inst_id, sheet_name)].loc['num_orders_not_served'] for sheet_name in
+                    sheet_names)) / len(sheet_names)
+        df[config, 'num_orders_not_served'] = df.index.to_series().map(d)
+
+    for config in configs:  # e.g. score_params:[9,9,9]
+        d = {}
+        for inst_id in instance_ids:
+            sheet_names = sheet_names_d[inst_id] if config != "construction_heuristic_solution" else ["run_initial"]
+            d[inst_id] = float(
+                sum(results[(config, inst_id, sheet_name)].loc['transport_cost'] for sheet_name in
+                    sheet_names)) / len(sheet_names)
+        df[config, 'transport_cost'] = df.index.to_series().map(d)
+
+    # Add best obj row
+    for config in configs:  # e.g. score_params:[9,9,9]
+        d = {}
+        for inst_id in instance_ids:
+            sheet_names = sheet_names_d[inst_id] if config != "construction_heuristic_solution" else ["run_initial"]
+            d[inst_id] = float(
+                min(results[(config, inst_id, sheet_name)].loc[
+                        'obj_val', results[(config, inst_id, sheet_name)].columns[0]] for sheet_name in sheet_names))
+        df[config, 'min_obj_val'] = df.index.to_series().map(d)
 
     # Add average row
     avg_d = {}
@@ -199,36 +235,64 @@ def get_results(instance_ids: List[str], dir_path: str, experiment: str) -> pd.D
 def load_performance_results(result_filenames: List[str], dir_path: str) -> pd.DataFrame:
 
     # TODO: Include production problem gap between Gurobi and ALNS
-    gurobi_attrs = ['obj_val', 'time_limit [sec]', 'number_orders_not_served', 'lower_bound', 'production_start_cost', 'inventory_cost']
+    gurobi_attrs = ['obj_val', 'number_orders_not_served', 'lower_bound', 'production_start_cost', 'inventory_cost']
     alns_attrs = ['obj_val', 'time [sec]', 'num_orders_not_served', 'production_cost']  #, 'num_iterations']
-    gurobi_file_names = [instance_id for instance_id in result_filenames if instance_id.split('-')[0] == 'gurobi']
-    alns_file_names = [instance_id for instance_id in result_filenames if instance_id.split('-')[0] == 'alns']
-    if len(gurobi_file_names) == len(alns_file_names):
-        print(f"Different number of Gurobi ({len(gurobi_file_names)}) and ALNS ({alns_file_names}) files:")
+    # gurobi_file_names = [instance_id for instance_id in result_filenames if instance_id.split('-')[0] == 'gurobi']
+    gurobi3600_file_names = [name for name in os.listdir(dir_path + '/gurobi-3600')]
+    gurobi600_file_names = [name for name in os.listdir(dir_path + '/gurobi-600')]
+    alns_file_names = [name for name in os.listdir(dir_path + '/alns_performance')]
+    # alns_file_names = [instance_id for instance_id in result_filenames if instance_id.split('-')[0] == 'alns']
+    if len(gurobi3600_file_names) != len(alns_file_names) or len(gurobi3600_file_names) != len(gurobi600_file_names):
+        print(f"Different number of Gurobi ({len(gurobi3600_file_names), len(gurobi600_file_names)}) "
+              f"and ALNS ({len(alns_file_names)}) files:")
 
-    gurobi_data = []
-    alns_data = []
-    for filename in gurobi_file_names:
-        df = pd.read_excel(f'{dir_path}/{filename}', skiprows=[0], index_col=0)
+    gurobi_data_600 = []
+    gurobi_data_3600 = []
+    best_solution = {}
+    for filename in gurobi3600_file_names:
+        try:
+            df_600 = pd.read_excel(f'{dir_path}/gurobi-600/{filename}', skiprows=[0], index_col=0)
+            solve_time = df_600.loc['solve_time', 0] if 'solve_time' in df_600.index else df_600.loc['time_limit [sec]', 0]
+            gurobi_data_600.append((filename.replace("gurobi-", ""), solve_time) + tuple(df_600.loc[attr, 0] for attr in gurobi_attrs))
+        except ValueError:
+            gurobi_data_600.append((filename.replace("gurobi-", ""), 600) + (0, 0, 0, 0, 0))
+
+        df_3600 = pd.read_excel(f'{dir_path}/gurobi-3600/{filename}', skiprows=[0], index_col=0)
+        solve_time = df_3600.loc['solve_time', 0] if 'solve_time' in df_3600.index else df_3600.loc['time_limit [sec]', 0]
+        gurobi_data_3600.append((filename.replace("gurobi-", ""), solve_time) + tuple(df_3600.loc[attr, 0] for attr in gurobi_attrs))
+        best_solution[filename[7:]] = df_3600.loc['obj_val', 0]
         # print(df)
-        gurobi_data.append((filename.replace("gurobi-", ""),) + tuple(df.loc[attr, 0] for attr in gurobi_attrs))
 
-    gurobi_df = pd.DataFrame(gurobi_data).set_index(0)
-    gurobi_df.columns = gurobi_attrs
+    gurobi_df_600 = pd.DataFrame(gurobi_data_600).set_index(0)
+    gurobi_df_3600 = pd.DataFrame(gurobi_data_3600).set_index(0)
+    gurobi_df_600.columns = gurobi_df_3600.columns = ['time'] + gurobi_attrs
 
-    if alns_file_names:
-        for filename in alns_file_names:
-            file = pd.ExcelFile(f'{dir_path}/{filename}')
-            sheet_names = file.sheet_names
-            sheet_dfs = [file.parse(sheet_name, index_col=[0], skiprows=[1]) for sheet_name in sheet_names]
-            alns_data.append((filename.replace("alns-", ""),) +
-                             tuple(mean(df.loc[attr, df.columns[0]] for df in sheet_dfs) for attr in alns_attrs))
-        alns_df = pd.DataFrame(alns_data).set_index(0)
-        alns_df.columns = alns_attrs
-        new_df = gurobi_df.join(alns_df, lsuffix='_gurobi', rsuffix='_alns')
-    else:
-        new_df = gurobi_df
+    gurobi_df = gurobi_df_3600.join(gurobi_df_600, lsuffix='_gurobi_3600', rsuffix='_gurobi_600')
+
+    alns_data = []
+    for filename in alns_file_names:
+        file = pd.ExcelFile(f'{dir_path}/alns_performance/{filename}')
+        sheet_names = file.sheet_names
+        sheet_dfs = [file.parse(sheet_name, index_col=[0], skiprows=[1]) for sheet_name in sheet_names]
+        min_obj = min(*(df.loc['obj_val', df.columns[0]] for df in sheet_dfs), best_solution[filename[5:]])
+        best_solution[filename[5:]] = min_obj
+        avg_obj = mean(df.loc['obj_val', df.columns[0]] for df in sheet_dfs)
+        avg_gap = mean(df.loc['obj_val', df.columns[0]] - min_obj for df in sheet_dfs) / min_obj
+        avg_prod_share = mean(df.loc['production_cost', df.columns[0]] for df in sheet_dfs) / avg_obj
+        alns_data.append((filename.replace("alns-", ""),) +
+                         tuple(mean(df.loc[attr, df.columns[0]] for df in sheet_dfs) for attr in alns_attrs) +
+                         (avg_gap, avg_prod_share))
+    alns_df = pd.DataFrame(alns_data).set_index(0)
+    alns_df.columns = alns_attrs + ['gap', 'prod_obj_%']
+
+    # Add gurobi gap
+    gurobi_df['gap_gurobi_3600'] = [(gurobi_df.loc[fname[7:], 'obj_val_gurobi_3600'] - best_solution[fname[7:]]) / best_solution[fname[7:]]
+                                    for fname in gurobi3600_file_names]
+    gurobi_df['gap_gurobi_600'] = [(gurobi_df.loc[fname[7:], 'obj_val_gurobi_600'] - best_solution[fname[7:]]) / best_solution[fname[7:]]
+                                   for fname in gurobi600_file_names]
+    new_df = gurobi_df.join(alns_df, rsuffix='_alns')
     writer = pd.ExcelWriter('../../data/output_aggregates/performance_aggregates2.xlsx', engine='openpyxl', mode='w')
+    new_df.sort_index(inplace=True)
     new_df.to_excel(writer)
     writer.close()
 
@@ -250,6 +314,7 @@ def write_result_to_file(dir_path: str, experiment: str, instance_ids: List[str]
     excel_writer = pd.ExcelWriter(out_filepath, engine='openpyxl', mode='w', options={'strings_to_formulas': False})
     df.to_excel(excel_writer, sheet_name="_")
     excel_writer.close()
+    print("Results written to", out_filepath)
 
 
 def get_solution_development_df(inst_id: str, dir_path: str) -> pd.DataFrame:
@@ -276,10 +341,10 @@ def plot_solution_development(solution_dev_df: pd.DataFrame, inst_id: str):
 
 if __name__ == '__main__':
     dir_path = "../../data/output_data/"  # noise_destination_param_tuning/"
-    experiment = "time_windows"  # supported: tuning / convergence / lns_config / subproblem_integration / time_periods
+    experiment = "None"  # supported: tuning / convergence / lns_config / subproblem_integration / time_periods
 
     assert (experiment in ["tuning", "convergence", "lns_config", "subproblem_integration", "time_periods",
-                           "time_windows", "performance"])
+                           "time_windows", "performance", "None"])
 
     if experiment == "tuning":
         instance_ids = ["alns-tuning-3-1-20-l", "alns-tuning-3-1-20-h",
@@ -302,48 +367,14 @@ if __name__ == '__main__':
         results_dict = get_results(instance_ids, dir_path, experiment=experiment)
         write_result_to_file(dir_path=dir_path, experiment=experiment, instance_ids=instance_ids)
     elif experiment == "time_windows":
-        instance_ids =  [filename[:-5] for filename in os.listdir("../../data/output_data/time_windows")
-                         if filename.startswith('alns')]
+        instance_ids = [filename[:-5] for filename in os.listdir("../../data/output_data/time_windows")
+                        if filename.startswith('alns')]
     elif experiment == "performance":
         write_gurobi_alns_comparison_to_file()
     else:
-        instance_ids = ["alns-3-1-20-l", "alns-3-1-20-h"]  # TODO: Endre til relevante filnavn
-        dir_path += experiment + "/"
-
-        # # Just for Ivar's instances
-        # instance_ids = ["performance-3-1-8-h-1p-0",
-        #                 "performance-3-1-8-h-5p-0",
-        #                 "performance-3-1-8-l-1p-0",
-        #                 "performance-3-1-8-l-5p-0",
-        #                 "performance-3-1-10-h-1p-0",
-        #                 "performance-3-1-10-h-5p-0",
-        #                 "performance-3-1-10-l-1p-0",
-        #                 "performance-3-1-10-l-5p-0",
-        #                 "performance-3-1-12-h-1p-0",
-        #                 "performance-3-1-12-h-5p-0",
-        #                 "performance-3-1-12-l-1p-0",
-        #                 "performance-3-1-12-l-5p-0",
-        #                 "performance-3-1-15-h-1p-0",
-        #                 "performance-3-1-15-h-5p-0",
-        #                 "performance-3-1-15-l-1p-0",
-        #                 "performance-3-1-15-l-5p-0",
-        #                 "performance-5-2-10-h-1p-0",
-        #                 "performance-5-2-10-h-5p-0",
-        #                 "performance-5-2-10-l-1p-0",
-        #                 "performance-5-2-10-l-5p-0",
-        #                 "performance-5-2-12-h-1p-0",
-        #                 "performance-5-2-12-h-5p-0",
-        #                 "performance-5-2-12-l-1p-0",
-        #                 "performance-5-2-12-l-5p-0",
-        #                 "performance-5-2-15-h-1p-0",
-        #                 "performance-5-2-15-h-5p-0",
-        #                 "performance-5-2-15-l-1p-0",
-        #                 "performance-5-2-15-l-5p-0",
-        #                 "performance-5-2-18-h-1p-0",
-        #                 "performance-5-2-18-h-5p-0",
-        #                 "performance-5-2-18-l-1p-0",
-        #                 "performance-5-2-18-l-5p-0"]
-        # dir_path += "ivars_instances/"
+        file_prefix = 'alns-'
+        dir_path = '../../data/output_data/external_depot_60/'
+        instance_ids = [inst_id for inst_id in os.listdir(dir_path) if inst_id.startswith(file_prefix)]
 
         results_dict = get_results(instance_ids, dir_path, experiment=experiment)
         write_result_to_file(dir_path=dir_path, experiment=experiment, instance_ids=instance_ids)

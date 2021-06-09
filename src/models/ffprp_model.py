@@ -16,11 +16,6 @@ from src.read_problem_data import ProblemData
 import src.alns.alns
 
 
-# TODO IN THIS FILE
-# ----------------------------------------------------------------------------------------------------------------------------
-# TODO: Check code marked with TODO
-
-
 class FfprpModel:
     def __init__(self,
                  prbl: ProblemData,
@@ -1217,6 +1212,7 @@ class FfprpModel:
 
         lb = self.results.Problem._list[0].lower_bound
         ub = self.results.Problem._list[0].upper_bound
+        solve_time = self.results.Solver._list[0].wall_time
 
         solution_dict = {'obj_val': round(pyo.value(self.m.objective), 2),
                          'production_start_cost': round(production_start_cost, 2),
@@ -1227,7 +1223,8 @@ class FfprpModel:
                          'lower_bound': round(lb, 2),
                          'upper_bound': round(ub, 2),
                          'mip_gap': str(round(((ub-lb)/ub)*100, 2)) + "%",
-                         'time_limit [sec]': self.solver_factory.options['TimeLimit']}
+                         'time_limit [sec]': self.solver_factory.options['TimeLimit'],
+                         'solve_time': solve_time}  # TODO
         # TODO: Add relevant data
         sheet_name = "run_" + str(id)
         df = pd.DataFrame(solution_dict, index=[0]).transpose()

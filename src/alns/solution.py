@@ -12,6 +12,7 @@ import joblib
 import numpy as np
 import bisect
 import random
+import copy
 from src.read_problem_data import ProblemData
 from src.util.print import bcolors
 
@@ -35,9 +36,8 @@ class Node:
 
 class ProblemDataExtended(ProblemData):
 
-    def __init__(self, file_path: str, precedence: bool = True) -> None:
+    def __init__(self, file_path: str) -> None:
         super().__init__(file_path)
-        self.precedence = precedence
         self._init_nodes()
         self._init_quay_capacities()
         self.max_transport_cost = {vessel: max(self.transport_unit_costs[v] * t
@@ -64,10 +64,9 @@ class ProblemDataExtended(ProblemData):
             node.tw_end = self.tw_end[i]
             node.demand = [self.demands[i, i, p] for p in self.products]
             self.order_nodes[i] = node
-        if self.precedence:
-            for zone in self.orders_for_zones.keys():
-                for order_node in self.orders_for_zones[zone]:
-                    self.order_nodes[order_node].zone = zone
+        for zone in self.orders_for_zones.keys():
+            for order_node in self.orders_for_zones[zone]:
+                self.order_nodes[order_node].zone = zone
         self.nodes: Dict[str, Node] = {**self.factory_nodes, **self.order_nodes}
 
     def _init_quay_capacities(self) -> None:
@@ -89,6 +88,95 @@ class ProblemDataExtended(ProblemData):
                        for f, p_line in self.production_lines_for_factories if f == factory
                        for product in self.products)
                 == 0]
+
+    def get_factory_sub_problem(self, factory: str, orders: List[str], vessels: List[str]) -> ProblemDataExtended:
+        new_prbl = copy.copy(self)
+        new_prbl.nodes = [factory] + orders
+        new_prbl.factory_nodes = [factory]
+        new_prbl.order_nodes = orders
+        new_prbl.products = self.products
+        new_prbl.vessels = vessels
+        new_prbl.orders_for_zones = {zone: [order for order in o_list if order in orders]
+                                     for zone, o_list in self.orders_for_zones.items()}
+        new_prbl.zones = self.zones
+        new_prbl.nodes_for_vessels = {(vessel, node): val
+                                      for (vessel, node), val in self.nodes_for_vessels.items()
+                                      if node in new_prbl.nodes and vessel in vessels}
+        new_prbl.time_periods = self.time_periods
+        new_prbl.start_times_for_vessels = {vessel: t for vessel, t in self.start_times_for_vessels.items()
+                                            if vessel in vessels}
+        new_prbl.vessel_initial_locations = {vessel: loc for vessel, loc in self.vessel_initial_locations.items()
+                                             if vessel in vessels}
+        new_prbl.time_windows_for_orders = {(order, t): v
+                                            for (order, t), v in self.time_windows_for_orders.items()
+                                            if order in orders}
+        new_prbl.tw_start = {i: self.tw_start[i] for i in orders}
+        new_prbl.tw_end = {i: self.tw_end[i] for i in orders}
+        new_prbl.vessel_ton_capacities = {vessel: cap for vessel, cap in self.vessel_ton_capacities.items()
+                                          if vessel in vessels}
+        new_prbl.vessel_nprod_capacities = {vessel: cap
+                                            for vessel, cap in self.vessel_nprod_capacities.items()
+                                            if vessel in vessels}
+        new_prbl.factory_inventory_capacities = {f: cap
+                                                 for f, cap in self.factory_inventory_capacities.items()
+                                                 if f == factory}
+        print(self.factory_inventory_capacities.items())
+        print(new_prbl.factory_inventory_capacities)
+        new_prbl.factory_initial_inventories = {(f, p): inv
+                                                for (f, p), inv in self.factory_initial_inventories.items()
+                                                if f == factory}
+        new_prbl.inventory_unit_costs = {f: cost for f, cost in self.inventory_unit_costs.items()
+                                         if f == factory}
+        new_prbl.loading_unloading_times = {(vessel, node): cost
+                                            for (vessel, node), cost in self.loading_unloading_times.items()
+                                            if vessel in vessels and node in new_prbl.nodes}
+        new_prbl.transport_unit_costs = {vessel: cost for vessel, cost in self.transport_unit_costs.items()
+                                         if vessel in vessels}
+        new_prbl.transport_times = {(v, i, j): t for (v, i, j), t in self.transport_times.items()
+                                    if v in vessels
+                                    and i in new_prbl.nodes + ['d_0', 'd_-1']
+                                    and j in new_prbl.nodes + ['d_0', 'd_-1']}
+        new_prbl.transport_times_exact = {(v, i, j): t for (v, i, j), t in self.transport_times.items()
+                                          if v in vessels
+                                          and i in new_prbl.nodes + ['d_0', 'd_-1']
+                                          and j in new_prbl.nodes + ['d_0', 'd_-1']}
+        # new_prbl.arcs_for_vessels = self.generate_arcs_for_vessels()  # Skipped due to restricted time available
+        new_prbl.demands = {(i, j, p): d for (i, j, p), d in self.demands.items()
+                            if i in new_prbl.nodes and j in new_prbl.nodes}
+        new_prbl.production_stops = {(f, t): stop
+                                     for (f, t), stop in self.production_stops.items()
+                                     if f == factory}
+        new_prbl.production_start_costs = {(f, p): cost
+                                           for (f, p), cost in self.production_start_costs.items()
+                                           if f == factory}
+        new_prbl.production_lines_for_factories = [(f, l) for f, l in self.production_lines_for_factories
+                                                   if f == factory]
+        new_prbl.production_lines = [l for f, l in new_prbl.production_lines_for_factories]
+        new_prbl.production_max_capacities = {(l, p): cap
+                                              for (l, p), cap in self.production_max_capacities.items()
+                                              if l in new_prbl.production_lines}
+        new_prbl.production_line_min_times = {(l, p): min_t
+                                              for (l, p), min_t in self.production_line_min_times.items()
+                                              if l in new_prbl.production_lines}
+        new_prbl.product_groups = self.product_groups
+        new_prbl.factory_max_vessels_destination = {f: max_v
+                                                    for f, max_v in
+                                                    self.factory_max_vessels_destination.items()
+                                                    if f == factory}
+        new_prbl.factory_max_vessels_loading = {(f, t): max_v
+                                                for (f, t), max_v in
+                                                self.factory_max_vessels_loading.items()
+                                                if f == factory}
+        new_prbl.min_wait_if_sick = {(v, i, j): t for (v, i, j), t in self.min_wait_if_sick.items()
+                                     if v in vessels and i in new_prbl.nodes and j in new_prbl.nodes}
+        new_prbl.min_wait_if_sick_abs = self.min_wait_if_sick_abs
+        new_prbl.external_delivery_penalties = {order: penalty
+                                                for (order, penalty) in
+                                                self.external_delivery_penalties.items()
+                                                if order in orders}
+        new_prbl.no_time_periods = len(self.time_periods)
+        new_prbl._init_nodes()
+        return new_prbl
 
 
 class Solution:
@@ -206,9 +294,8 @@ class Solution:
         earliest = max(node.tw_start, prev_e + prev_loading_unloading_time + prev_transport_time)
 
         # If the precedence extension is included, earliest visiting time must also incorporate minimum waiting time
-        if self.prbl.precedence and prev_node_id and (
-                (self.prbl.nodes[prev_node_id].zone, self.prbl.nodes[node.id].zone) in
-                [("red", "green"), ("red", "yellow"), ("yellow", "green")]):
+        if prev_node_id and ((self.prbl.nodes[prev_node_id].zone, self.prbl.nodes[node.id].zone) in
+                             [("red", "green"), ("red", "yellow"), ("yellow", "green")]):
             earliest = max(earliest, prev_e + prev_loading_unloading_time + self.prbl.min_wait_if_sick_abs)
         return earliest
 
@@ -233,9 +320,8 @@ class Solution:
             latest = min(latest, len(self.prbl.time_periods) - time_to_factory - loading_unloading_time - 1)
 
         # If the precedence extension is included, latest visiting time must also incorporate minimum waiting time
-        if self.prbl.precedence and next_node_id is not None and (
-                (node.zone, self.prbl.nodes[next_node_id].zone) in
-                [("red", "green"), ("red", "yellow"), ("yellow", "green")]):
+        if next_node_id is not None and ((node.zone, self.prbl.nodes[next_node_id].zone) in
+                                         [("red", "green"), ("red", "yellow"), ("yellow", "green")]):
             latest = min(latest, next_l - loading_unloading_time - self.prbl.min_wait_if_sick_abs)
         return latest
 
@@ -790,6 +876,13 @@ class Solution:
                                for order_node in self.get_orders_not_served())
         return round(transport_cost + unmet_order_cost)
 
+    def get_solution_transport_cost(self) -> int:
+        transport_times = self.prbl.transport_times_exact
+        transport_cost = sum(transport_times[vessel, route[i - 1], route[i]] * self.prbl.transport_unit_costs[vessel]
+                             for vessel, route in self.routes.items()
+                             for i in range(1, len(route)))
+        return transport_cost
+
     def get_route_profit(self, vessel: str):
         route = self.routes[vessel]
         transport_times = self.prbl.transport_times_exact
@@ -1010,7 +1103,7 @@ class Solution:
 
         # Swap factory visits for the chosen pair
         self.factory_visits[f][i], self.factory_visits[f][i+1] = self.factory_visits[f][i+1],  self.factory_visits[f][i]
-        self.temp_factory_visits = self.factory_visits
+        self.temp_factory_visits = {f: visits[:] for f, visits in self.factory_visits.items()}
         self.recompute_solution_variables()
 
         return True
@@ -1179,7 +1272,7 @@ class Solution:
 
 
 if __name__ == '__main__':
-    problem = ProblemDataExtended('../../data/input_data/large_testcase.xlsx', precedence=True)
+    problem = ProblemDataExtended('../../data/input_data/large_testcase.xlsx')
     sol = Solution(problem)
 
     insertions = [  # large testcase
