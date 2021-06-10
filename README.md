@@ -2,7 +2,8 @@
 
 Repo for our masters thesis. By Ivar Brekkå and Solveig Randøy
 
-Requirements: `python3`, `pipenv`
+Using pipenv:
+`pipenv sync`, `pipenv run python ...`
 
 or if all requirements are in pip:
 ```
@@ -10,5 +11,3 @@ python src/alns/run_alns.py data/input_data/performance_testing/performance-5-2-
 ```
 Arguments are: number of runs per instance, experiment, number of iterations
 
-Using pipenv:
-`pipenv sync`, `pipenv run python ...`
