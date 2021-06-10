@@ -258,18 +258,4 @@ if __name__ == '__main__':
         alns_run_configurations.run_alns_decompose_per_factory(prbl=prbl, args=args, num_alns_iterations=num_alns_iterations)
     else:
         alns_run_configurations.run_alns_basic(prbl=prbl, args=args, num_alns_iterations=num_alns_iterations)
-
-
-if __name__ == '__main__':
-    print("HEI!")
-    parser = argparse.ArgumentParser(description='process ALNS input parameters')
-    parser.add_argument('input_filepath', type=str, help='path of input data file')
-    parser.add_argument('num_iterations', type=int,
-                        help="number of ALNS iterations")
-    args = parser.parse_args()
-
-    num_alns_iterations = args.num_iterations
-    print("File:", args.input_filepath.split('/')[-1])
-    prbl = ProblemDataExtended(args.input_filepath)
-
-    run_alns(prbl, parameter_tune="None", iterations=num_alns_iterations)
+   
