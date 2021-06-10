@@ -30,7 +30,7 @@ def get_preprocessed_historical_orders(company: str = None) -> pd.DataFrame:
 
     # Filter to order rows
     df_orders = df_orders[df_orders['supplierNo'].astype('int64') > 2100]  # skip factory visits
-    df_orders = df_orders[df_orders['qty kg'] > 100]  # cut away some tiny orders
+    df_orders = df_orders[df_orders['qty kg'] > 2000]  # cut away some tiny orders
     df_orders = df_orders[df_orders['product name'] != "Empty bags"]  # remove some Mowi orders for empty bags
 
     return df_orders
@@ -43,8 +43,10 @@ def get_random_products(n: int, products: List[str], distr: str = 'triangular') 
         return np.random.choice(products, n)
 
 
-def sample_orders_df(n: int = None, company: str = None, no_products: int = 10) -> pd.DataFrame:
+def sample_orders_df(n: int = None, company: str = None, no_products: int = 10,
+                     order_size_factor: float = 1.0) -> pd.DataFrame:
     orders = get_preprocessed_historical_orders(company=company)
+    orders['qty kg'] *= order_size_factor
 
     orders['shipment_supplierNo'] = orders['shipment'] + '_' + orders['supplierNo']
     orders['no products'] = np.ones(len(orders), dtype=int)
@@ -92,13 +94,13 @@ def _describe_grouped_orders(orders: pd.DataFrame) -> None:
 
 
 if __name__ == '__main__':
-    df = sample_orders_df(n=32, company=None)
-    file_path = '../../data/input_data/testcase.xlsx'
-    excel_writer = pd.ExcelWriter('../../data/test.xlsx', engine='openpyxl', mode='w')
+    # df = sample_orders_df(n=32, company=None)
+    # file_path = '../../data/input_data/testcase.xlsx'
+    # excel_writer = pd.ExcelWriter('../../data/test.xlsx', engine='openpyxl', mode='w')
     # with excel_writer as writer:
     #     df.to_excel(writer, sheet_name='test')
-    df.to_excel(excel_writer, sheet_name='test')
-    excel_writer.save()
+    # df.to_excel(excel_writer, sheet_name='test')
+    # excel_writer.save()
 
     # Save locations
     # locations_df = pd.DataFrame({'location id': list(df2['supplierNo'].unique())})
@@ -108,3 +110,27 @@ if __name__ == '__main__':
     # locations_df.to_excel(excel_writer, sheet_name='Ark1')
     # excel_writer.save()
     # excel_writer.close()
+
+    # company = "Mowi Feed AS"
+    company = "BioMar AS"
+    location_ids = get_preprocessed_historical_orders(company=company)['supplierNo'].unique()
+    print(len(location_ids))
+    import src.util.plot as plot
+    factory_coords = {"Mowi Feed AS": [(63.816547, 9.637033)], "BioMar AS": [(59.3337534, 5.3041314), (68.914112, 15.064642)]}
+    plot.plot_locations(location_ids, special_locations=factory_coords[company])
+
+
+    # df = get_preprocessed_historical_orders(company='BioMar AS')
+    # print(df)
+    # print(df.columns)
+
+    # print(df['qty kg'].sum() / len(df['qty kg']))
+    # print(len(df))
+    # 2022: 11.2786502472518,64.857954476573
+    # 2015: 15.0646427525587,68.9141123038669
+    # 0482: 5.30413145167106,59.3337534309431
+    # 2016: 9.63703351188352,63.8165474587579
+
+
+
+

@@ -25,14 +25,14 @@ def _transform_time_period(old_time_period: int, time_period_length_change_facto
 
 class NodeLocationMapping:
 
-    node_location_mapping: Dict[str, str] = {}
-    location_node_mapping: Dict[str, List[str]] = {}
-
     def __init__(self, order_locations: List[str], factory_locations: List[str]):
         """
         :param order_locations: location id for aquaculture farm
         :param factory_locations: location id for aquaculture farm
         """
+        self.node_location_mapping: Dict[str, str] = {}
+        self.location_node_mapping: Dict[str, List[str]] = {}
+
         for i in range(len(order_locations)):
             self.node_location_mapping["o_" + str(i)] = order_locations[i]
 
@@ -62,6 +62,10 @@ class NodeLocationMapping:
         return list(loc for loc in self.location_node_mapping.keys()
                     if self.node_is_order(self.location_node_mapping[loc][0]))
 
+    def get_factory_locations(self) -> List:
+        return list(loc for loc in self.location_node_mapping.keys()
+                    if self.node_is_factory(self.location_node_mapping[loc][0]))
+
     def get_order_nodes(self) -> List[str]:
         return [node for node in self.node_location_mapping.keys() if node.startswith("o")]
 
@@ -82,7 +86,7 @@ class NodeLocationMapping:
 
 class TestDataGenerator:
     excel_writer: pd.ExcelWriter
-    nlm: NodeLocationMapping
+    nlm: NodeLocationMapping = None
     prod_lines_for_factory: Dict[str, List[str]]
     time_windows_df: pd.DataFrame
 
@@ -117,33 +121,48 @@ class TestDataGenerator:
                                     delivery_delay_unit_penalty: int,
                                     min_wait_if_sick_hours: int,
                                     orders_from_company: str = None,
-                                    plot_locations: bool = False,
+                                    plot_locations: str = "",
+                                    order_size_factor: float = 1,
+                                    ensure_vessel_positions: bool = False,
+                                    assign_to_closest_factory: bool = False
                                     ):
 
         self.excel_writer = pd.ExcelWriter(out_filepath, engine='openpyxl', mode='w',
                                            options={'strings_to_formulas': False})
 
         # Set orders and factories
-        orders = orders_generator.sample_orders_df(no_orders, company=orders_from_company, no_products=no_products)
+        orders = orders_generator.sample_orders_df(no_orders, company=orders_from_company, no_products=no_products,
+                                                   order_size_factor=order_size_factor)
         order_locations = list(orders.index)
-        if plot_locations:
-            plot.plot_locations(order_locations)
         self.nlm = NodeLocationMapping(order_locations, factory_locations)
         self.factories_df = self.factories_df.loc[factory_locations]
         vessels: List[str] = [self.vessels_df.index[self.vessels_df['vessel_name'] == v].tolist()[0]
                               for v in vessel_names]
 
+        factory_coords_map = {'482': (59.3337534309431, 5.30413145167106),
+                              '2022': (68.9141123038669, 15.0646427525587),
+                              '2015': (64.857954476573, 11.2786502472518),
+                              '2016': (63.8165474587579, 9.63703351188352),
+                              }
+        factory_coords = [factory_coords_map[f] for f in factory_locations]
+        if plot_locations == "basic":
+            plot.plot_locations(order_locations, special_locations=factory_coords)
+        elif plot_locations == "factories":
+            plot.plot_locations([], special_locations=factory_coords)
+        elif plot_locations == "factory_decompose":
+            self.plot_clustered_locations()
+
         # Write sheets to file
         self.write_demands_to_file(orders)
         self.write_transport_times_to_file(relevant_vessels=vessels,
                                            time_period_length=time_period_length)
-        self.write_transport_costs_to_file(relevant_vessels=vessels)
+        self.write_transport_costs_to_file(vessels, time_period_length)
         self.write_loading_times_to_file(relevant_vessels=vessels, orders=orders,
                                          time_period_length=time_period_length)
         self.write_time_windows_to_file(time_periods, tw_length_hours // time_period_length, earliest_tw_start)
         self.write_factory_max_vessel_destination_to_file(vessels)
         self.write_factory_max_vessel_loading_to_file(quay_activity_level, time_periods, time_period_length)
-        self.write_initial_inventory_to_file(factory_level, ext_depot_level, orders)
+        self.write_initial_inventory_to_file(factory_level, ext_depot_level, orders, assign_to_closest_factory)
         self.write_inventory_capacity_to_file()
         self.write_inventory_cost_to_file(time_period_length)
         self.write_production_start_cost_to_file(no_products)
@@ -151,7 +170,7 @@ class TestDataGenerator:
         self.write_production_lines_for_factory_to_file()
         self.write_production_max_capacity_to_file(no_products, time_period_length)
         self.write_prod_line_min_time_to_file(time_period_length, no_products)
-        self.write_vessel_availability_to_file(vessels, share_time_periods_vessel_availability, time_periods)
+        self.write_vessel_availability_to_file(vessels, share_time_periods_vessel_availability, time_periods, ensure_vessel_positions)
         self.write_vessel_capacities_to_file(relevant_vessels=vessels)
         self.write_order_zones_to_file(share_red=share_red_nodes, radius_red=radius_red, radius_yellow=radius_yellow)
         self.write_nodes_for_vessels_to_file(relevant_vessels=vessels, share_bag_locations=share_bag_locations,
@@ -164,7 +183,6 @@ class TestDataGenerator:
                                       time_period_length=time_period_length)
         self.excel_writer.close()
         print("Write to", out_filepath, "finished")
-
 
     def write_duplicate_test_instances_to_file_time_periods(self, out_filepaths: List[str],
                                                             vessel_names: List[str],
@@ -280,6 +298,97 @@ class TestDataGenerator:
             writer.close()
             print("Write to", file_path, "finished")
 
+    def write_duplicate_test_instances_to_file_time_windows(self,
+                                                            out_filepaths: List[str],
+                                                            vessel_names: List[str],
+                                                            factory_locations: List[str],
+                                                            time_periods: int,
+                                                            time_period_length: int,
+                                                            tw_length_hours_list: List[int],
+                                                            earliest_tw_start_hour: int,
+                                                            hours_production_stop: int,
+                                                            no_orders: int,
+                                                            no_products: int,
+                                                            no_product_groups: int,
+                                                            factory_level: float,
+                                                            ext_depot_level: float,
+                                                            quay_activity_level: float,
+                                                            share_red_nodes: float,
+                                                            radius_red: int,
+                                                            radius_yellow: int,
+                                                            share_bag_locations: float,
+                                                            share_small_fjord_locations: float,
+                                                            share_time_periods_vessel_availability: float,
+                                                            small_fjord_radius: int,
+                                                            delivery_delay_unit_penalty: int,
+                                                            min_wait_if_sick_hours: int,
+                                                            orders_from_company: str = None,
+                                                            plot_locations: bool = False,
+                                                            ):
+        assert len(out_filepaths) == len(tw_length_hours_list)
+
+        excel_writers = [pd.ExcelWriter(file_path, engine='openpyxl', mode='w',
+                                        options={'strings_to_formulas': False})
+                         for file_path in out_filepaths]
+
+        # Set orders and factories
+        orders = orders_generator.sample_orders_df(no_orders, company=orders_from_company, no_products=no_products)
+        order_locations = list(orders.index)
+        if plot_locations:
+            plot.plot_locations(order_locations)
+        self.nlm = NodeLocationMapping(order_locations, factory_locations)
+        self.factories_df = self.factories_df.loc[factory_locations]
+        vessels: List[str] = [self.vessels_df.index[self.vessels_df['vessel_name'] == v].tolist()[0]
+                              for v in vessel_names]
+
+        tw_lengths = [tw_length_hours // time_period_length for tw_length_hours in tw_length_hours_list]
+
+        # Sheets unique per tw length
+        tw_dfs = self.generate_random_time_windows_different_lengths(time_periods, tw_lengths,
+                                                                     earliest_tw_start_hour // time_period_length)
+
+        # Sheets similar across different time period lengths
+        production_stops = self.generate_production_stops(time_period_length, hours_production_stop, time_periods)
+        vessel_availability = self.generate_vessel_availability(vessels, share_time_periods_vessel_availability,
+                                                                time_periods)
+        max_vessels_loading = self.get_factory_max_vessel_loading(quay_activity_level, time_periods,
+                                                                  time_period_length)
+
+        init_inventory = self.generate_initial_inventory(factory_level, ext_depot_level, orders)
+        product_groups = self.get_product_groups(no_product_groups, no_products)
+        nodes_for_vessels = self.generate_nodes_for_vessels(vessels, share_bag_locations,
+                                                            share_small_fjord_locations, small_fjord_radius)
+        order_zones = self.generate_order_zones(share_red_nodes, radius_red, radius_yellow)
+
+        # Write sheets to file
+        for writer, tw_length, tw_df in zip(excel_writers, tw_length_hours_list, tw_dfs):
+            tw_df.to_excel(writer, sheet_name="time_windows_for_order", startrow=1)
+            max_vessels_loading.to_excel(writer, sheet_name="factory_max_vessel_loading", startrow=1)
+            production_stops.to_excel(writer, sheet_name="production_stop", startrow=1)
+            vessel_availability.to_excel(writer, sheet_name="vessel_availability", startrow=1)
+            self.write_demands_to_file(orders, excel_writer=writer)
+            self.write_loading_times_to_file(vessels, orders, time_period_length, excel_writer=writer)
+            self.write_transport_times_to_file(vessels, time_period_length, excel_writer=writer)
+            self.write_transport_costs_to_file(vessels, time_period_length, excel_writer=writer)
+            self.write_factory_max_vessel_destination_to_file(vessels, excel_writer=writer)
+            init_inventory.to_excel(writer, sheet_name="initial_inventory", startrow=1)
+            self.write_inventory_capacity_to_file(excel_writer=writer)
+            self.write_inventory_cost_to_file(time_period_length, excel_writer=writer)
+            self.write_production_start_cost_to_file(no_products, excel_writer=writer)
+            product_groups.to_excel(writer, sheet_name="product_group", startrow=1)
+            self.write_production_lines_for_factory_to_file(excel_writer=writer)
+            self.write_production_max_capacity_to_file(no_products, time_period_length, excel_writer=writer)
+            self.write_prod_line_min_time_to_file(time_period_length, no_products, excel_writer=writer)
+            self.write_key_values_to_file(delivery_delay_unit_penalty, min_wait_if_sick_hours, time_period_length,
+                                          excel_writer=writer)
+            self.write_vessel_capacities_to_file(relevant_vessels=vessels, excel_writer=writer)
+            order_zones.to_excel(writer, sheet_name="order_zones", startrow=1)
+            nodes_for_vessels.to_excel(writer, sheet_name="nodes_for_vessel", startrow=1)
+
+        for writer, file_path in zip(excel_writers, out_filepaths):
+            writer.close()
+            print("Write to", file_path, "finished")
+
     def generate_random_time_windows(self, time_periods: int, tw_length: int, earliest_tw_start: int) -> pd.DataFrame:
         data = []
         for order in self.nlm.get_order_nodes():
@@ -291,6 +400,26 @@ class TestDataGenerator:
         df = df.set_index('order')
         self.time_windows_df = df
         return df
+
+    def generate_random_time_windows_different_lengths(self, time_periods: int, tw_lengths: List[int],
+                                                       earliest_tw_start: int) -> List[pd.DataFrame]:
+        tw_lengths.sort()
+        tw_df_min_length = self.generate_random_time_windows(time_periods, tw_lengths[0], earliest_tw_start)
+        tw_df_min_length.to_dict()
+        all_tw_dfs = [tw_df_min_length]
+        for tw_length in tw_lengths[1:]:
+            # make one tw_df for each tw_length, based on tw_df_min_length
+            data = []
+            for order in tw_df_min_length.index:
+                added_time = tw_length - tw_lengths[0]
+                tw_start = max(tw_df_min_length.loc[order, 'tw_start'] - added_time // 2, 0)
+                tw_end = min(tw_df_min_length.loc[order, 'tw_end'] + added_time // 2, time_periods - 1)
+                data.append((order, tw_start, tw_end))
+            tw_df = pd.DataFrame(data)
+            tw_df.columns = ['order', 'tw_start', 'tw_end']
+            tw_df = tw_df.set_index('order')
+            all_tw_dfs.append(tw_df)
+        return all_tw_dfs
 
     def generate_duplicate_time_windows(self, time_windows_df: pd.DataFrame,
                                         time_period_length_change: int) -> pd.DataFrame:
@@ -304,7 +433,8 @@ class TestDataGenerator:
                                   for order in time_windows_df.index]
         return duplicate_df
 
-    def generate_initial_inventory(self, factory_level: float, ext_depot_level: float, orders: pd.DataFrame):
+    def generate_initial_inventory(self, factory_level: float, ext_depot_level: float, orders: pd.DataFrame,
+                                   assign_to_closest_factory: bool = False):
         """
         :param factory_level: percentage of total demand stored on factories (excl. external depots)
         :param ext_depot_level: percentage of inventory capacity stored on external depots
@@ -328,7 +458,12 @@ class TestDataGenerator:
 
         # Add a proportion of earliest orders until desired factory_level is reached
         for idx, row in orders.iterrows():
-            chosen_factory = random.choice(factories)
+            if assign_to_closest_factory:
+                chosen_factory = min(((f, self.distances_df.loc[int(self.nlm.get_location_from_node(idx)),
+                                                                int(self.nlm.get_location_from_node(f))])
+                                      for f in self.nlm.get_factory_nodes()), key=lambda item: item[1])[0]
+            else:
+                chosen_factory = random.choice(factories)
             init_inventory[chosen_factory] += (row.to_numpy() * 0.8).astype('int64')
             if sum(inventory.sum() for factory, inventory in init_inventory.items()) > factory_level * total_demand:
                 break
@@ -540,7 +675,7 @@ class TestDataGenerator:
         return self.vessels_df.loc[vessel_id, "vessel_name"]
 
     def generate_vessel_availability(self, relevant_vessels: List[str], share_time: float,
-                                     time_periods: int) -> pd.DataFrame:
+                                     time_periods: int, ensure_vessel_pos: bool) -> pd.DataFrame:
         """
         :param relevant_vessels: relevant vessels
         :param share_time: Availability time period is drawn random from {0, share_time * time_periods}
@@ -549,14 +684,23 @@ class TestDataGenerator:
         """
         factories = self.nlm.get_factory_nodes()
         data = []
-        factory_assignments = {f: 0 for f in factories}
-        max_vessels_destination_df = self.get_factory_max_vessel_destination(relevant_vessels)
-        for vessel in relevant_vessels:
-            available_factories = [f for f in factories
-                                   if factory_assignments[f] < max_vessels_destination_df.loc[f, 'vessel_number']]
-            chosen_factory = random.choice(available_factories)
-            chosen_time_period = int(random.triangular(0, int(share_time * time_periods), 0))
-            data.append((vessel, chosen_time_period, chosen_factory))
+        if ensure_vessel_pos:
+            vessel_sets = [["v_1", "v_2"], ["v_3", "v_4", "v_5"]]
+            factories = factories[:]
+            random.shuffle(factories)
+            assert len(vessel_sets) == len(factories)
+            data = [(vessel, int(random.triangular(0, int(share_time * time_periods), 0)), factory)
+                    for factory, vessels in zip(factories, vessel_sets) for vessel in vessels]
+        else:
+            factory_assignments = {f: 0 for f in factories}
+            max_vessels_destination_df = self.get_factory_max_vessel_destination(relevant_vessels)
+            for vessel in relevant_vessels:
+                available_factories = [f for f in factories
+                                       if factory_assignments[f] < max_vessels_destination_df.loc[f, 'vessel_number']]
+                chosen_factory = random.choice(available_factories)
+                chosen_time_period = int(random.triangular(0, int(share_time * time_periods), 0))
+                data.append((vessel, chosen_time_period, chosen_factory))
+                factory_assignments[chosen_factory] += 1
         df = pd.DataFrame(data)
         df.columns = ['vessel', 'time_period', 'location']
         df = df.set_index('vessel')
@@ -705,7 +849,7 @@ class TestDataGenerator:
         df = df.set_index('key')
         return df
 
-    def write_transport_times_to_file(self, relevant_vessels: List[str], time_period_length: Union[int, List[int]],
+    def write_transport_times_to_file(self, relevant_vessels: List[str], time_period_length: int,
                                       excel_writer: pd.ExcelWriter = None) -> None:
         if not excel_writer:
             excel_writer = self.excel_writer
@@ -742,10 +886,11 @@ class TestDataGenerator:
         vessel_capacities_df.to_excel(excel_writer, sheet_name="vessel_capacity", startrow=1)
 
     def write_vessel_availability_to_file(self, relevant_vessels: List[str], share_time: float,
-                                          time_periods: int, excel_writer: pd.ExcelWriter = None) -> None:
+                                          time_periods: int, ensure_vessel_pos: bool = False,
+                                          excel_writer: pd.ExcelWriter = None) -> None:
         if not excel_writer:
             excel_writer = self.excel_writer
-        vessel_availability_df = self.generate_vessel_availability(relevant_vessels, share_time, time_periods)
+        vessel_availability_df = self.generate_vessel_availability(relevant_vessels, share_time, time_periods, ensure_vessel_pos)
         vessel_availability_df.to_excel(excel_writer, sheet_name="vessel_availability", startrow=1)
 
     def write_order_zones_to_file(self, share_red: float, radius_red: int, radius_yellow: int,
@@ -788,12 +933,12 @@ class TestDataGenerator:
         tw_df.to_excel(self.excel_writer, sheet_name="time_windows_for_order", startrow=1)
 
     def write_initial_inventory_to_file(self, factory_level: float, ext_depot_level: float,
-                                        orders: pd.DataFrame, excel_writer: pd.ExcelWriter = None,
-                                        df: pd.DataFrame = None) -> None:
+                                        orders: pd.DataFrame, assign_to_closest_factory: bool = False,
+                                        excel_writer: pd.ExcelWriter = None, df: pd.DataFrame = None) -> None:
         if not excel_writer:
             excel_writer = self.excel_writer
         if df is None:
-            df = self.generate_initial_inventory(factory_level, ext_depot_level, orders)
+            df = self.generate_initial_inventory(factory_level, ext_depot_level, orders, assign_to_closest_factory)
         df.to_excel(excel_writer, sheet_name="initial_inventory", startrow=1)
 
     def write_inventory_capacity_to_file(self, excel_writer: pd.ExcelWriter = None) -> None:
@@ -860,76 +1005,147 @@ class TestDataGenerator:
     def _is_external_depot_node(self, factory_node):
         return self.factories_df.loc[self.nlm.get_location_from_node(factory_node), 'production_lines'] == 0
 
+    def plot_clustered_locations(self):
+
+        order_assignments = {f: [] for f in self.nlm.get_factory_locations()}
+        for o_loc in self.nlm.get_order_locations():
+            closest_factory = min(((f_loc, self.distances_df.loc[int(o_loc), int(f_loc)])
+                                   for f_loc in self.nlm.get_factory_locations()),
+                                  key=lambda item: item[1])[0]
+            order_assignments[closest_factory].append(o_loc)
+
+        factory_coords = {'482': (59.3337534309431, 5.30413145167106), '2022': (68.9141123038669, 15.0646427525587)}
+        location_ids_list = list(order_assignments.values())
+        factories_list = [[factory_coords[f_loc]] for f_loc in order_assignments.keys()]
+        plot.plot_clustered_locations(location_ids_list, factories_list)
+
 
 if __name__ == '__main__':
-    tdg = TestDataGenerator()
-    # (orders, time_periods, tw_length, factory_level)
-    # data = [(12, 50, 24*4, 0.05),
-    #         (13, 55, 24*4, 0.05),
-    #         (14, 60, 24*4, 0.05)]
-    #
-    # for orders, time_periods, tw_length, inventory_level in data:
-    #     tdg.write_test_instance_to_file(out_filepath=f"../../data/input_data/test_"
-    #                                                  f"{orders}o_{time_periods}t_{tw_length}tw.xlsx",
-    #                                     # Input parameters varying:
-    #                                     vessel_names=["Ripnes", "Vågsund", "Nyksund", "Borgenfjord", "Høydal"],
-    #                                     factory_locations=["2016"],  # Biomar Myre, Biomar Karmøy
-    #                                     orders_from_company='Mowi Feed AS',
-    #                                     no_orders=orders,
-    #                                     factory_level=inventory_level,
-    #                                     ext_depot_level=0.1,
-    #                                     time_periods=time_periods,
-    #                                     tw_length_hours=tw_length,
-    #                                     # Input parameters kept constant:
-    #                                     time_period_length=2,
-    #                                     no_products=10,
-    #                                     no_product_groups=4,
-    #                                     quay_activity_level=0.1,
-    #                                     hours_production_stop=12,
-    #                                     share_red_nodes=0.1,
-    #                                     radius_red=10000,
-    #                                     radius_yellow=30000,
-    #                                     share_bag_locations=0.2,
-    #                                     share_small_fjord_locations=0.05,
-    #                                     share_time_periods_vessel_availability=0.5,
-    #                                     small_fjord_radius=50000,
-    #                                     min_wait_if_sick_hours=12,
-    #                                     delivery_delay_unit_penalty=10000,
-    #                                     earliest_tw_start=5,
-    #                                     plot_locations=False
-    #                                     )
+    for i in range(0, 10):
+        generator = TestDataGenerator()
+        no_orders = 60
+        vessels = ["Ripnes", "Vågsund", "Nyksund", "Borgenfjord", "Høydal"]
+        factories = ["2022", "482", "2015"]
+        company = "BioMar AS"
+        inventory_level = 0.2
+        inventory_level_encoding = {0.2: "l", 0.5: "h"}
+        no_product = 10
+        time_periods = 9 * 24
 
-    time_periods_list = [320, 160]
-    time_period_lengths = [1, 2]
-    no_orders = 20
-    tdg.write_duplicate_test_instances_to_file_time_periods(
-        out_filepaths=[f"../../data/input_data/test_{no_orders}o_{tps}t.xlsx" for tps in time_periods_list],
-        # Input parameters varying:
-        vessel_names=["Ripnes", "Vågsund", "Borgenfjord"],
-        factory_locations=["2022", "482"],  # Biomar Myre, Biomar Karmøy
-        orders_from_company='BioMar AS',
-        no_orders=no_orders,
-        factory_level=0.2,
-        ext_depot_level=0.1,
-        time_periods_list=time_periods_list,
-        tw_length_hours=4*24,
-        # Input parameters kept constant:
-        time_period_lengths=time_period_lengths,
-        no_products=10,
-        no_product_groups=4,
-        quay_activity_level=0.1,
-        hours_production_stop=12,
-        share_red_nodes=0.1,
-        radius_red=10000,
-        radius_yellow=30000,
-        share_bag_locations=0.2,
-        share_small_fjord_locations=0.05,
-        share_time_periods_vessel_availability=0.5,
-        small_fjord_radius=50000,
-        min_wait_if_sick_hours=12,
-        delivery_delay_unit_penalty=10000,
-        earliest_tw_start_hour=24,
-        plot_locations=False
-    )
+        tw_length_hours = 4 * 24
+        time_period_length = 1
+        no_product_groups = 4
+        quay_activity_level = 0.1
+        hours_production_stop = 12
+        share_red_nodes = 0.1
+        radius_red = 10000
+        radius_yellow = 30000
+        share_bag_locations = 0.2
+        share_small_fjord_locations = 0.05
+        share_time_periods_vessel_availability = 0.5
+        small_fjord_radius = 50000
+        min_wait_if_sick_hours = 12
+        delivery_delay_unit_penalty = 10000
+        earliest_tw_start = 5
+
+        instance_name = 'external_depot_testing_' + str(i)
+
+        generator.write_test_instance_to_file(
+            # Input parameters varying:
+            out_filepath=f"../../data/input_data/performance_testing/{instance_name}.xlsx",
+            vessel_names=vessels,
+            factory_locations=factories,
+            orders_from_company=company,
+            no_orders=no_orders,
+            factory_level=inventory_level,
+            ext_depot_level=1,
+            time_periods=time_periods,
+            tw_length_hours=tw_length_hours,
+            # Input parameters kept constant:
+            time_period_length=time_period_length,
+            no_products=no_product,
+            no_product_groups=no_product_groups,
+            quay_activity_level=quay_activity_level,
+            hours_production_stop=hours_production_stop,
+            share_red_nodes=share_red_nodes,
+            radius_red=radius_red,
+            radius_yellow=radius_yellow,
+            share_bag_locations=share_bag_locations,
+            share_small_fjord_locations=share_small_fjord_locations,
+            share_time_periods_vessel_availability=share_time_periods_vessel_availability,
+            small_fjord_radius=small_fjord_radius,
+            min_wait_if_sick_hours=min_wait_if_sick_hours,
+            delivery_delay_unit_penalty=delivery_delay_unit_penalty,
+            earliest_tw_start=earliest_tw_start,
+            order_size_factor=3,
+            plot_locations="basic"
+        )
+
+    # time_periods_list = [320, 160]
+    # time_period_lengths = [1, 2]
+    # no_orders = 20
+    # tdg.write_duplicate_test_instances_to_file_time_periods(
+    #     out_filepaths=[f"../../data/input_data/test_{no_orders}o_{tps}t.xlsx" for tps in time_periods_list],
+    #     # Input parameters varying:
+    #     vessel_names=["Ripnes", "Vågsund", "Borgenfjord", "Høydal", "Nyksund"],
+    #     factory_locations=["2022", "482"],  # Biomar Myre, Biomar Karmøy
+    #     orders_from_company='BioMar AS',
+    #     no_orders=no_orders,
+    #     factory_level=0.1,
+    #     ext_depot_level=0.1,
+    #     time_periods_list=time_periods_list,
+    #     # Input parameters kept constant:
+    #     tw_length_hours=4*24,
+    #     time_period_lengths=time_period_lengths,
+    #     no_products=10,
+    #     no_product_groups=4,
+    #     quay_activity_level=0.1,
+    #     hours_production_stop=12,
+    #     share_red_nodes=0.1,
+    #     radius_red=10000,
+    #     radius_yellow=30000,
+    #     share_bag_locations=0.2,
+    #     share_small_fjord_locations=0.05,
+    #     share_time_periods_vessel_availability=0.5,
+    #     small_fjord_radius=50000,
+    #     min_wait_if_sick_hours=12,
+    #     delivery_delay_unit_penalty=10000,
+    #     earliest_tw_start_hour=24,
+    #     plot_locations=False)
+
+    # tw_length_hours_list = [24 * days for days in [3, 4]]
+    # no_orders = 35
+    # days_planning_horizon = 14
+    # time_period_length = 2
+    # time_periods = 24 * days_planning_horizon // time_period_length
+    # tdg.write_duplicate_test_instances_to_file_time_windows(
+    #     out_filepaths=[f"../../data/input_data/test_{no_orders}o_{days_planning_horizon}d_{tw_length // 24}tw.xlsx"
+    #                    for tw_length in tw_length_hours_list],
+    #     # Input parameters varying:
+    #     vessel_names=["Ripnes", "Vågsund", "Borgenfjord", "Høydal", "Nyksund"],
+    #     factory_locations=["2022", "482"],  # Biomar Myre, Biomar Karmøy
+    #     orders_from_company='BioMar AS',
+    #     no_orders=no_orders,
+    #     factory_level=0.1,
+    #     ext_depot_level=0.1,
+    #     tw_length_hours_list=tw_length_hours_list,
+    #     # Input parameters kept constant:
+    #     time_periods=time_periods,
+    #     time_period_length=time_period_length,
+    #     no_products=10,
+    #     no_product_groups=4,
+    #     quay_activity_level=0.1,
+    #     hours_production_stop=12,
+    #     share_red_nodes=0.1,
+    #     radius_red=10000,
+    #     radius_yellow=30000,
+    #     share_bag_locations=0.2,
+    #     share_small_fjord_locations=0.05,
+    #     share_time_periods_vessel_availability=0.5,
+    #     small_fjord_radius=50000,
+    #     min_wait_if_sick_hours=12,
+    #     delivery_delay_unit_penalty=10000,
+    #     earliest_tw_start_hour=12,
+    #     plot_locations=False)
 
 

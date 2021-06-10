@@ -7,6 +7,7 @@ from tabulate import tabulate
 import numpy as np
 from time import time
 from src.alns.solution import Solution, ProblemDataExtended
+import math
 
 
 class ProductionProblem:
@@ -66,7 +67,6 @@ class ProductionProblemSolution:
         self.inventory: Dict[int, List[int]] = self._init_inventory()
         self.filled_ranges: Dict[str, List[Tuple[int, int]]] = self._set_filled_ranges()  # new
 
-
     def _init_inventory(self) -> Dict[int, List[int]]:
         init_inventory = np.array(self.prbl.init_inventory[self.factory])
         cumul_demand = np.zeros(len(self.prbl.base_problem.products))
@@ -99,7 +99,6 @@ class ProductionProblemSolution:
                       if self.insertion_is_feasible(prod_line, t_insert, product_idx, t_demand)]
         return candidates
 
-
     def insertion_is_feasible(self, prod_line: str, t_insert: int, product: int, t_demand: int,
                               check_min_periods: bool = True) -> bool:
         if not self.activities[prod_line][t_insert] is None:
@@ -120,7 +119,7 @@ class ProductionProblemSolution:
         return True
 
     def insertion_is_inventory_feasible(self, prod_line: str, product: int, t_demand: int) -> bool:
-        # Note: This check assumes that insertions are done chronologically (eariest pickup first)
+        # Note: This check assumes that insertions are done chronologically (earliest pickup first)
         product_name = self.prbl.index_product_map[product]
         extra_production = self.prbl.base_problem.production_max_capacities[prod_line, product_name]
         return sum(self.inventory[t_demand]) + extra_production <= self.inventory_capacity
@@ -248,7 +247,9 @@ class ProductionProblemSolution:
 
     def _update_filled_ranges(self, prod_line: str, t_insert: int):
         next_range_idx = bisect.bisect(self.filled_ranges[prod_line], (t_insert, ))
-        if next_range_idx == 0:
+        if len(self.filled_ranges[prod_line]) == 0:
+            self.filled_ranges[prod_line].append((t_insert, t_insert))
+        elif next_range_idx == 0:
             next_range_start, next_range_end = self.filled_ranges[prod_line][next_range_idx]
             if next_range_start - t_insert <= 2:
                 self.filled_ranges[prod_line][next_range_idx] = (t_insert, next_range_end)
@@ -307,7 +308,7 @@ class ProductionProblemSolution:
         activity_after = self.activities[prod_line][t_insert + 1] if t_insert < len(self.activities[prod_line]) else 'stop'
         return activity_before, activity_after
 
-    def print(self):
+    def print(self, first_n_time_periods=None):
 
         def get_print_symbol(activity_symbol):
             if activity_symbol is None:
@@ -317,10 +318,16 @@ class ProductionProblemSolution:
             else:
                 return self.prbl.index_product_map[activity_symbol]
 
+        if not first_n_time_periods:
+            first_n_time_periods = self.prbl.base_problem.no_time_periods
+
         activities = [[prod_line] + [get_print_symbol(activity) for activity in activities]
                       for prod_line, activities in self.activities.items()]
 
-        print(tabulate(activities, headers=['prod_line'] + list(self.prbl.base_problem.time_periods)))
+        activities = [prod_line_act[:first_n_time_periods + 1] for prod_line_act in activities]
+
+        print(tabulate(activities, headers=['prod_line'] + [str(t) for t in range(first_n_time_periods)]))
+        print("Final inventory:", sum(self.inventory[self.prbl.time_periods]), self.inventory[self.prbl.time_periods])
         print()
 
 
@@ -353,10 +360,10 @@ class ProductionProblemHeuristic:
             is_feasible = self.construct_greedy(sol)
             # sol.print()
             if not is_feasible:
-                print(round(time() - t0, 3), "s (h) (infeasible)", sep="")
+                # print(round(time() - t0, 3), "s (h) (infeasible)", sep="")
                 return False, factory
             self.solution[factory] = sol
-        print(round(time() - t0, 3), "s (h)", sep="")
+        # print(round(time() - t0, 3), "s (h)", sep="")
         return True, ''
 
     def get_cost(self, routing_sol: Solution):
@@ -369,14 +376,14 @@ class ProductionProblemHeuristic:
                 self.solution[factory] = sol
                 cost += sol.get_cost()
             else:
-                print("Infeasible production problem")
-                return 0
+                # print("Infeasible production problem")
+                return math.inf
         return cost
 
-    def print_sol(self):
+    def print_sol(self, first_n_time_periods=None):
         for factory, sub_sol in self.solution.items():
             print(factory)
-            sub_sol.print()
+            sub_sol.print(first_n_time_periods)
 
 
 
