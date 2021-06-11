@@ -19,4 +19,4 @@ reaction_param = 0.2
 noise_param = 0.1
 determinism_param = 5
 noise_destination_param = 1
-permute_chance = 0.1
+permute_chance = 0.05

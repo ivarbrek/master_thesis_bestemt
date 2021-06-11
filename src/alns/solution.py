@@ -841,10 +841,11 @@ class Solution:
         self.insert_last_checked()
 
     def remove_consecutive_factories(self) -> None:
+        illegal_route_removals = self.get_illegal_route_removals()
         for vessel, route in self.temp_routes.items():
             if len(route) < 2:
                 continue
-            elif len(route) == 2 and self.prbl.nodes[route[-1]].is_factory:
+            elif len(route) == 2 and self.prbl.nodes[route[-1]].is_factory and vessel not in illegal_route_removals:
                 self.remove_node(vessel, 1)
                 continue
             # iterate backwards so that we can delete without messing up indexes
@@ -1027,6 +1028,38 @@ class Solution:
             if self.prbl.nodes[route[i]].is_factory:
                 return self.temp_routes[vessel][i]
         return self.temp_routes[vessel][0]
+
+    def get_illegal_route_removals(self) -> List[str]:
+        illegals = []
+        factory_dest_count = {f: 0 for f in self.prbl.factory_nodes}
+        for vessel, route in self.routes.items():
+            factory_dest_count[route[-1]] += 1
+        for vessel, route in self.routes.items():
+            if len(route) == 1:
+                continue
+            f_first = route[0]
+            f_last = route[-1]
+            if (f_first != f_last
+                    and factory_dest_count[f_first]) >= self.prbl.factory_max_vessels_destination[f_first]:
+                illegals.append(vessel)
+        return illegals
+
+    def get_illegal_voyage_removals(self) -> List[Tuple[str, int]]:
+        illegal_removals = []
+        f_dest_count = {f: 0 for f in self.prbl.factory_nodes}
+        for vessel, route in self.routes.items():
+            f_dest_count[route[-1]] += 1
+
+        for vessel, route in self.routes.items():
+            if len(route) == 1:
+                continue
+            last_voy_start_idx = 0 if len(route) == 2 else self.get_voyage_start_idx(vessel, len(route) - 2)
+            f_last_voy_start = route[last_voy_start_idx]
+            f_last = route[-1]
+            if (f_last_voy_start != f_last
+                    and f_dest_count[f_last_voy_start]) >= self.prbl.factory_max_vessels_destination[f_last_voy_start]:
+                illegal_removals.append((vessel, last_voy_start_idx))
+        return illegal_removals
 
     def _init_factory_visits(self) -> Dict[str, List[str]]:
         vessel_starting_times = list(self.prbl.start_times_for_vessels.items())

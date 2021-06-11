@@ -355,11 +355,13 @@ class Alns:
 
     def destroy_voyage_random(self, sol: Solution, remove_num: int) -> Solution:
         # voyage: factory visit + orders until next factory visit
+        illegal_removals = sol.get_illegal_voyage_removals()
         voyage_start_indexes = [(vessel, idx)
                                 for vessel in sol.prbl.vessels
                                 for idx in range(len(sol.routes[vessel]) - 1)
                                 if sol.prbl.nodes[sol.routes[vessel][idx]].is_factory
-                                and len(sol.routes[vessel]) > 1]
+                                and len(sol.routes[vessel]) > 1
+                                and (vessel, idx) not in illegal_removals]
         random.shuffle(voyage_start_indexes)
         destroy_voyage_vessels = []
         orders_removed = 0
@@ -381,11 +383,13 @@ class Alns:
 
     def destroy_voyage_worst(self, sol: Solution, remove_num: int) -> Solution:
         # voyage: factory visit + orders until next factory visit
+        illegal_removals = sol.get_illegal_voyage_removals()
         voyage_start_indexes = [(vessel, idx, sol.get_voyage_profit(vessel, idx))
                                 for vessel in sol.prbl.vessels
                                 for idx in range(len(sol.routes[vessel]) - 1)
                                 if sol.prbl.nodes[sol.routes[vessel][idx]].is_factory
-                                and len(sol.routes[vessel]) > 1]
+                                and len(sol.routes[vessel]) > 1
+                                and (vessel, idx) not in illegal_removals]
         voyage_start_indexes.sort(key=lambda item: item[2], reverse=True)
         destroy_voyage_vessels = []
         orders_removed = 0
@@ -408,7 +412,10 @@ class Alns:
 
     def destroy_route_random(self, sol: Solution, remove_num: int) -> Solution:
         # choose a vessel that has a route
-        vessel = random.choice([vessel for vessel in sol.prbl.vessels if len(sol.routes[vessel]) > 1])
+        illegal_removals = sol.get_illegal_route_removals()
+        vessel = random.choice([vessel for vessel in sol.prbl.vessels
+                                if len(sol.routes[vessel]) > 1
+                                and vessel not in illegal_removals])
         route = sol.routes[vessel]
         for idx in range(len(route) - 1, 0, -1):
             sol.remove_node(vessel, idx)
@@ -416,9 +423,11 @@ class Alns:
         return sol
 
     def destroy_route_worst(self, sol: Solution, remove_num: int) -> Solution:
+        illegal_removals = sol.get_illegal_route_removals()
         route_profits = [(vessel, sol.get_route_profit(vessel))
                          for vessel in sol.prbl.vessels
-                         if len(sol.routes[vessel]) > 1]
+                         if len(sol.routes[vessel]) > 1
+                         and vessel not in illegal_removals]
         route_profits.sort(key=lambda item: item[1], reverse=True)  # descending order
 
         chosen_idx = int(pow(random.random(), self.determinism_param) * len(route_profits))
